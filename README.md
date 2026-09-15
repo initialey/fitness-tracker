@@ -31,14 +31,17 @@ src/
   Styles.html       CSS
   AppJs.html        クライアント JS（5 画面）
 test/               Node のテスト（GAS モック上でサーバー API を実行）
+scripts/build-bundle.js  src/ を 1 ファイルに束ねる
+dist/Code.gs        単一ファイル版（貼り付け用、自動生成）
 ```
 
 ## セットアップ
 
 1. Google スプレッドシートを新規作成 → 「拡張機能 → Apps Script」
-2. コードを入れる（どちらか）
+2. コードを入れる（いずれか）
+   - **単一ファイル（最短）**: `dist/Code.gs` の中身を、エディタに最初からある `コード.gs` に丸ごと貼り付けて保存。これだけで動く（HTML も同梱）
    - **clasp**: `.clasp.json.example` を `.clasp.json` にコピーし `scriptId` を入れて `npx clasp push`
-   - **手動**: `src/` の各ファイルをスクリプトエディタに同名で作成して貼り付け（`.js` → スクリプト、`.html` → HTML）。`appsscript.json` は「プロジェクトの設定 → マニフェストを表示」で編集
+   - **手動（ファイル分割）**: `src/` の各ファイルをスクリプトエディタに同名で作成して貼り付け（`.js` → スクリプト、`.html` → HTML）。`appsscript.json` は「プロジェクトの設定 → マニフェストを表示」で編集
 3. スクリプトエディタで `setupSheets` を実行（初回は承認ダイアログ）
    - 全シート作成、初期データ投入、`plan_sets` 展開、Drive `TrainingLog` フォルダ作成
 4. AI 推定を使う場合: 「プロジェクトの設定 → スクリプト プロパティ」に `ANTHROPIC_API_KEY` を追加
@@ -97,6 +100,7 @@ Body photos: <Drive link>
 
 ```
 npm test        # Node 22+。GAS モック上でサーバー API 全体を実行
+npm run build   # src/ → dist/Code.gs（単一ファイル版）を再生成。src を変えたら実行してコミット
 npx clasp push  # .clasp.json を用意してから
 ```
 

@@ -100,10 +100,15 @@ function makeContext(opts = {}) {
     _ss: ss, _files: files, _props: props
   };
   vm.createContext(ctx);
-  const dir = path.join(__dirname, '..', 'src');
-  fs.readdirSync(dir).filter(f => f.endsWith('.js')).sort().forEach(f => {
-    vm.runInContext(fs.readFileSync(path.join(dir, f), 'utf8'), ctx, { filename: f });
-  });
+  if (opts.bundle) {
+    const bundle = path.join(__dirname, '..', 'dist', 'Code.gs');
+    vm.runInContext(fs.readFileSync(bundle, 'utf8'), ctx, { filename: 'Code.gs' });
+  } else {
+    const dir = path.join(__dirname, '..', 'src');
+    fs.readdirSync(dir).filter(f => f.endsWith('.js')).sort().forEach(f => {
+      vm.runInContext(fs.readFileSync(path.join(dir, f), 'utf8'), ctx, { filename: f });
+    });
+  }
   return ctx;
 }
 

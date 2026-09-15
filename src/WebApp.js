@@ -1,6 +1,8 @@
 /** Web アプリのエントリ。 */
 function doGet(e) {
-  var t = HtmlService.createTemplateFromFile('Index');
+  var t = typeof BUNDLED_FILES !== 'undefined'
+    ? HtmlService.createTemplate(BUNDLED_FILES.Index)
+    : HtmlService.createTemplateFromFile('Index');
   t.bootstrap = JSON.stringify(bootstrap_());
   return t.evaluate()
     .setTitle('Training Log')
@@ -10,7 +12,9 @@ function doGet(e) {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
+/** 単一ファイル版（dist/Code.gs）では BUNDLED_FILES から、通常はファイルから読む。 */
 function include(name) {
+  if (typeof BUNDLED_FILES !== 'undefined') return BUNDLED_FILES[name];
   return HtmlService.createHtmlOutputFromFile(name).getContent();
 }
 

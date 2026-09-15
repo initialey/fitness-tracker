@@ -5,6 +5,7 @@
   "description": "Training log (GAS + Google Sheets)",
   "scripts": {
     "test": "node --test test/*.test.js",
+    "build": "node scripts/build-bundle.js",
     "push": "clasp push",
     "open": "clasp open"
   }
