@@ -30,7 +30,38 @@ var DEFAULT_SETTINGS = {
   water_goal_ml: '5000',
   coach_name: 'Albert',
   drive_folder_id: '',
-  ai_model: 'claude-sonnet-4-6'
+  ai_model: 'claude-sonnet-4-6',
+  // 1 日の流れのテンプレ時刻（実績時刻で上書き表示）
+  time_weight: '06:40',
+  time_morning: '06:45',
+  time_meal1: '07:00',
+  time_after_meal: '07:15',
+  time_pre: '08:30',
+  time_workout: '08:45',
+  time_meal2: '10:30',
+  time_meal3: '13:30',
+  time_meal4: '16:30',
+  time_meal5: '19:30',
+  time_cardio: '21:00',
+  time_night: '22:30',
+  // タイマー（分）: 朝ルーティン→1食目、食後サプリ→食後ルーティン（サイリウム）
+  timer_morning_min: '15',
+  timer_after_meal_min: '15',
+  // 休憩タイマー（秒）
+  rest_top_sec: '150',
+  rest_other_sec: '90',
+  // 提案重量の増分（kg）: ダンベル / バー・マシン
+  inc_db_kg: '1',
+  inc_bar_kg: '2'
+};
+
+/** 自由入力の略称 → food_id（foods に存在するときだけ有効）。 */
+var FOOD_ALIASES = {
+  '米': 'rice_cooked', 'ご飯': 'rice_cooked', 'ごはん': 'rice_cooked', '白米': 'rice_cooked', 'rice': 'rice_cooked',
+  '鶏': 'chicken_cooked', '鶏肉': 'chicken_cooked', '鶏胸': 'chicken_cooked', '鶏むね': 'chicken_cooked', 'chicken': 'chicken_cooked',
+  '卵': 'egg_whole', 'たまご': 'egg_whole', 'egg': 'egg_whole', '牛': 'beef_lean_cooked', '牛肉': 'beef_lean_cooked', 'beef': 'beef_lean_cooked',
+  '鮭': 'salmon', 'サーモン': 'salmon', 'pb': 'peanut_butter', 'ピーナッツバター': 'peanut_butter',
+  'プロテイン': 'whey', 'ホエイ': 'whey', 'whey': 'whey', '豆': 'green_beans', 'インゲン': 'green_beans', 'オイル': 'olive_oil', '油': 'olive_oil'
 };
 
 var TIMINGS = ['morning', 'pre', 'intra', 'post', 'night', 'after_meal', 'anytime'];

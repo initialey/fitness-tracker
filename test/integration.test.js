@@ -40,7 +40,7 @@ test('getToday: Day 自動判定、休日、未入力インジケータ', () => 
   assert.equal(t.is_rest, true);
   assert.equal(t.week_no, 1);
   assert.equal(t.weight, null);
-  assert.equal(t.supplements.length, 8);
+  assert.equal(t.supplements.length, 10);
   assert.equal(t.routine.filter(r => r.is_water).length, 1);
   assert.equal(t.water_goal_ml, 5000);
   const t1 = g.getToday('2026-09-16');
@@ -201,7 +201,7 @@ test('サマリー / 週次レポート', () => {
     g.saveWeight(d, String(72.4 - i * 0.1), 'kg', '', '');
     g.saveCardio(d, 'walk', 30, '');
     for (let m = 1; m <= 5; m++) g.mealPlanDone(d, m);
-    for (let s = 1; s <= 8; s++) g.toggleSupplement(d, s, s !== 8);
+    for (let s = 1; s <= 10; s++) g.toggleSupplement(d, s, s !== 10);
     g.addWater(d, 5000);
   });
   g.addMealItem('2026-09-19', 5, 'salmon', 150, 'sub', '');
@@ -224,7 +224,7 @@ test('サマリー / 週次レポート', () => {
   assert.equal(s.adherence.cardio.done, 7);
   assert.equal(s.adherence.meals.on_plan, 35);
   assert.equal(s.adherence.meals.subs, 1);
-  assert.equal(s.adherence.supplements.pct, 88);
+  assert.equal(s.adherence.supplements.pct, 90);
   assert.equal(s.adherence.water.ok, 7);
   assert.ok(s.top_sets.find(t => t.name === 'Incline DB press').points.length === 2);
 
@@ -236,7 +236,7 @@ test('サマリー / 週次レポート', () => {
   assert.match(lines[3], /^Top sets: .*Incline DB press 24kg×7/);
   assert.match(lines[3], /Squat 60kg×7/);
   assert.equal(lines[4], 'Meals: 35/35 on plan (1 subs: Salmon x1)');
-  assert.equal(lines[5], 'Supplements: 88%');
+  assert.equal(lines[5], 'Supplements: 90%');
   assert.equal(lines[6], 'Water: 7/7 days ≥ 5L');
   assert.match(lines[7], /^Notes: slept badly; Lateral raise: right shoulder/);
   assert.match(lines[8], /^Form check videos: https:\/\/drive\.google\.com\/file\/d\/file_0/);
@@ -272,4 +272,119 @@ test('AI 推定: Claude API のレスポンスを foods に source=ai で追加'
   // 同名 2 回目は id が衝突しない
   const f2 = g.estimateFoodWithAi('納豆');
   assert.notEqual(f2.food_id, 'natto');
+});
+
+test('タイムライン: 順序・いまカード・タイマー・実績時刻', () => {
+  const g = fresh({ now: new Date('2026-09-16T06:50:00+08:00') });
+  let t = g.getToday('2026-09-16');
+  const ids = t.timeline.map(x => x.id);
+  deq(ids.slice(0, 5), ['weight', 'routine:1', 'meal:1', 'supp:after_meal', 'routine:2']);
+  assert.ok(ids.includes('supp:pre') && ids.includes('workout') && ids.includes('cardio') && ids.includes('water'));
+  assert.equal(ids[ids.length - 1], 'water');
+  assert.equal(t.now.kind, 'weight');
+  assert.equal(t.timeline[0].time, '06:40');
+  assert.equal(t.timeline[0].state, 'cur');
+  assert.equal(t.timeline[1].state, 'future');
+
+  g.saveWeight('2026-09-16', '72.4', 'kg', '', '');
+  t = g.getToday('2026-09-16');
+  assert.equal(t.timeline[0].state, 'done');
+  assert.equal(t.timeline[0].time, '06:50');
+  assert.equal(t.timeline[0].value, '72.4kg');
+  assert.equal(t.now.kind, 'routine');
+  assert.equal(t.now.button, '飲んだ');
+
+  // リンゴ酢 → 15 分タイマー → 1食目
+  g.toggleRoutine('2026-09-16', 1, true);
+  t = g.getToday('2026-09-16');
+  const meal1 = t.timeline.find(x => x.id === 'meal:1');
+  assert.equal(meal1.state, 'cur');
+  assert.equal(meal1.time, '07:05');
+  assert.equal(meal1.timer_until, '07:05');
+  assert.equal(t.now.kind, 'meal');
+  assert.equal(t.now.title, '1食目まで');
+  assert.equal(t.now.timer_until, '07:05');
+  assert.equal(t.next_meal_no, 1);
+
+  g.mealPlanDone('2026-09-16', 1);
+  t = g.getToday('2026-09-16');
+  assert.equal(t.now.kind, 'supp_group');
+  assert.equal(t.now.items.length, 7);
+  g.toggleSupplementGroup('2026-09-16', 'after_meal', true);
+  t = g.getToday('2026-09-16');
+  assert.equal(t.now.step_id, 'routine:2');
+  assert.equal(t.now.timer_until, '07:05');
+
+  // 休みの日は筋トレ・トレ前サプリが出ない
+  const rest = g.getToday('2026-09-18');
+  assert.ok(!rest.timeline.some(x => x.id === 'workout' || x.id === 'supp:pre'));
+
+  // 筋トレ完了マーカー
+  g.finishWorkout('2026-09-16');
+  t = g.getToday('2026-09-16');
+  assert.equal(t.timeline.find(x => x.id === 'workout').done, true);
+  assert.equal(g.getWorkout('2026-09-16').finished, true);
+  assert.equal(g.getSummary(1).adherence.workouts.done, 0, 'DONE マーカーはセット数に数えない');
+});
+
+test('提案重量: TOP 上限到達で +inc、BO=TOP×0.85、DROP=直前×0.7、DB は +1kg', () => {
+  const g = fresh();
+  // 前回 Day1: インクライン DB プレス TOP 22×8（上限 8 到達）, ケーブルフライ MAIN 15×15
+  g.saveSet('2026-09-16', 2, 1, 'WU', 12, 'kg', 12, '');
+  g.saveSet('2026-09-16', 2, 2, 'TOP', 22, 'kg', 8, '');
+  g.saveSet('2026-09-16', 2, 3, 'BO', 18, 'kg', 11, '');
+  g.saveSet('2026-09-16', 6, 1, 'MAIN', 30, 'kg', 10, '');
+  g.saveSet('2026-09-16', 6, 4, 'DROP', 20, 'kg', 14, '');
+  const w = g.getWorkout('2026-09-23');
+  const incline = w.exercises[1];
+  assert.equal(incline.is_db, true);
+  assert.equal(incline.inc_kg, 1);
+  const [wu, top, bo] = incline.sets;
+  assert.equal(top.suggest_weight_kg, 23);
+  assert.equal(top.suggest_reps, 6);
+  assert.match(top.suggest_reason, /上限到達/);
+  assert.equal(bo.suggest_weight_kg, Math.round(23 * 0.85));
+  assert.equal(wu.suggest_weight_kg, 12);
+  assert.equal(wu.suggest_reps, 12);
+  const pushdown = w.exercises[5];
+  assert.equal(pushdown.is_db, false);
+  assert.equal(pushdown.sets[0].suggest_weight_kg, 30, '上限未到達なら据え置き');
+  assert.equal(pushdown.sets[0].suggest_reps, 10);
+  assert.equal(pushdown.sets[3].set_type, 'DROP');
+  assert.equal(pushdown.sets[3].suggest_weight_kg, 21, '直前(MAIN 30) × 0.7');
+  // 今日 TOP を 24 で実施したら BO は 24 基準
+  g.saveSet('2026-09-23', 2, 2, 'TOP', 24, 'kg', 6, '');
+  const w2 = g.getWorkout('2026-09-23');
+  assert.equal(w2.exercises[1].sets[2].suggest_weight_kg, Math.round(24 * 0.85));
+  assert.equal(w2.rest_top_sec, 150);
+  assert.equal(w2.rest_other_sec, 90);
+});
+
+test('食事: 半分だけ / よく使う差替え / 自由入力（ローカル一致）', () => {
+  const g = fresh();
+  const h = g.mealHalf('2026-09-16', 2);
+  assert.equal(h.meals[1].status, 'sub');
+  assert.equal(h.meals[1].items.find(i => i.food_id === 'chicken_cooked').grams, 75);
+  let m = g.logMealText('2026-09-16', 5, 'サーモン150 米150', true);
+  const items = m.meals[4].items;
+  deq(items.map(i => [i.food_id, i.grams]), [['salmon', 150], ['rice_cooked', 150]]);
+  assert.equal(items[0].kcal, 312);
+  g.logMealText('2026-09-17', 5, 'サーモン150', true);
+  g.logMealText('2026-09-18', 5, 'salmon 150', true);
+  m = g.getMeals('2026-09-18');
+  assert.equal(m.quick_subs[0].food_id, 'salmon');
+  assert.equal(m.quick_subs[0].grams, 150);
+  assert.equal(m.quick_subs[0].label, 'サーモン 150g');
+  assert.throws(() => g.logMealText('2026-09-16', 3, 'ぜんぜん知らない食品 100', true), /ANTHROPIC_API_KEY/);
+  assert.throws(() => g.logMealText('2026-09-16', 3, 'なにも', true), /形式/);
+});
+
+test('食事: 自由入力の未知食品は AI で foods に追加してから記録', () => {
+  const g = fresh({
+    fetch: () => ({ getResponseCode: () => 200, getContentText: () => JSON.stringify({ stop_reason: 'end_turn', content: [{ type: 'text', text: '[{"food_id":"salmon","name_ja":"サーモン","name_en":"Salmon","amount":150,"kcal":0,"p":0,"f":0,"c":0,"note":""},{"food_id":null,"name_ja":"納豆","name_en":"Natto","amount":45,"kcal":190,"p":16.5,"f":10,"c":12.1,"note":"1 pack"}]' }] }) })
+  });
+  g._props.ANTHROPIC_API_KEY = 'sk-test';
+  const m = g.logMealText('2026-09-16', 5, 'サーモン150 納豆45', true);
+  deq(m.meals[4].items.map(i => [i.food_id, i.grams, i.kcal]), [['salmon', 150, 312], ['natto', 45, 85.5]]);
+  assert.equal(g.readRows_('foods').find(f => f.food_id === 'natto').source, 'ai');
 });

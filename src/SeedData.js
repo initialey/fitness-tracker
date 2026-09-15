@@ -91,26 +91,28 @@ function seedFoods_() {
 function seedPlanMeals_() {
   var j = function (items) { return JSON.stringify(items); };
   return [
-    { meal_no: 1, label: '食事1（朝）', default_items: j([{ food_id: 'egg_whole', grams: 100 }, { food_id: 'egg_white', grams: 200 }, { food_id: 'rice_cooked', grams: 150 }]) },
-    { meal_no: 2, label: '食事2（昼）', default_items: j([{ food_id: 'chicken_cooked', grams: 150 }, { food_id: 'rice_cooked', grams: 200 }, { food_id: 'green_beans', grams: 100 }, { food_id: 'olive_oil', grams: 5 }]) },
-    { meal_no: 3, label: '食事3（トレ前）', default_items: j([{ food_id: 'whey', grams: 1 }, { food_id: 'rice_flour', grams: 50 }, { food_id: 'peanut_butter', grams: 15 }]) },
-    { meal_no: 4, label: '食事4（トレ後）', default_items: j([{ food_id: 'beef_lean_cooked', grams: 150 }, { food_id: 'rice_cooked', grams: 200 }, { food_id: 'broccoli', grams: 100 }, { food_id: 'gummy', grams: 30 }]) },
-    { meal_no: 5, label: '食事5（夜）', default_items: j([{ food_id: 'salmon', grams: 150 }, { food_id: 'broccoli', grams: 100 }, { food_id: 'olive_oil', grams: 5 }]) }
+    { meal_no: 1, label: '1食目', default_items: j([{ food_id: 'egg_whole', grams: 100 }, { food_id: 'egg_white', grams: 200 }, { food_id: 'rice_cooked', grams: 150 }]) },
+    { meal_no: 2, label: '2食目', default_items: j([{ food_id: 'chicken_cooked', grams: 150 }, { food_id: 'rice_cooked', grams: 200 }, { food_id: 'green_beans', grams: 100 }, { food_id: 'olive_oil', grams: 5 }]) },
+    { meal_no: 3, label: '3食目', default_items: j([{ food_id: 'whey', grams: 1 }, { food_id: 'rice_flour', grams: 50 }, { food_id: 'peanut_butter', grams: 15 }]) },
+    { meal_no: 4, label: '4食目', default_items: j([{ food_id: 'beef_lean_cooked', grams: 150 }, { food_id: 'rice_cooked', grams: 200 }, { food_id: 'broccoli', grams: 100 }, { food_id: 'gummy', grams: 30 }]) },
+    { meal_no: 5, label: '5食目', default_items: j([{ food_id: 'salmon', grams: 150 }, { food_id: 'broccoli', grams: 100 }, { food_id: 'olive_oil', grams: 5 }]) }
   ];
 }
 
 function seedPlanSupplements_() {
   var rows = [
-    [1, 'マルチビタミン', 'morning'], [2, 'ビタミンD', 'morning'], [3, 'フィッシュオイル', 'after_meal'],
-    [4, 'カフェイン', 'pre'], [5, 'EAA', 'intra'], [6, 'クレアチン', 'post'], [7, 'マグネシウム', 'night'], [8, '亜鉛', 'night']
+    // 食後（1食目のあと）7 種 → 15 分後にサイリウム
+    [1, 'マルチビタミン', 'after_meal'], [2, 'ビタミンD', 'after_meal'], [3, 'ビタミンC', 'after_meal'],
+    [4, 'フィッシュオイル', 'after_meal'], [5, '亜鉛', 'after_meal'], [6, 'プロバイオティクス', 'after_meal'], [7, 'グルタミン', 'after_meal'],
+    [8, 'クレアチン', 'pre'], [9, 'EAA', 'intra'], [10, 'マグネシウム', 'night']
   ];
   return rows.map(function (r, i) { return { id: r[0], name: r[1], dose: '', timing: r[2], order: i + 1, active: true }; });
 }
 
 function seedPlanRoutine_() {
   return [
-    { id: 1, name: 'ACV（アップルサイダービネガー）', timing: 'morning', order: 1, active: true },
-    { id: 2, name: 'サイリウム', timing: 'night', order: 2, active: true },
+    { id: 1, name: 'リンゴ酢 ＋ 水500ml', timing: 'morning', order: 1, active: true },
+    { id: 2, name: 'サイリウム', timing: 'after_meal', order: 2, active: true },
     { id: 3, name: '水 5L', timing: 'anytime', order: 3, active: true }
   ];
 }

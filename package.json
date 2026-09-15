@@ -6,6 +6,7 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "build": "node scripts/build-bundle.js",
+    "e2e": "PW_CHROMIUM=/opt/pw-browsers/chromium node test/e2e.js",
     "push": "clasp push",
     "open": "clasp open"
   }

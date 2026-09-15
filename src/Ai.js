@@ -42,6 +42,46 @@ function estimateFoodWithAi(foodName) {
   return row;
 }
 
+/**
+ * 自由入力の食事テキストを foods に対応付ける。無い食品は 100g あたり栄養も返させる。
+ * 戻り値: [{food_id|null, name_ja, name_en, amount, kcal, p, f, c, note}]
+ */
+function parseMealTextWithAi_(text, foods) {
+  var apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  if (!apiKey) throw new Error('スクリプトプロパティ ANTHROPIC_API_KEY が未設定です');
+  var model = getSettings().ai_model || 'claude-sonnet-4-6';
+  var catalog = Object.keys(foods).map(function (k) { var f = foods[k]; return k + ' | ' + f.name_ja + ' | ' + f.name_en + ' | per ' + f.per; }).join('\n');
+  var system = [
+    'You map a short Japanese/English meal note to items from a food catalog.',
+    'Catalog (food_id | name_ja | name_en | unit):', catalog, '',
+    'Rules: numbers are grams unless the catalog unit is 1pc/1scoop (then count). Plain "米"/"rice" means cooked white rice. "鶏" means cooked chicken breast.',
+    'If an item is not in the catalog, set food_id null and give typical nutrition per 100 g edible portion.',
+    'Respond with ONLY a JSON array, no prose, no code fence. Each element:',
+    '{"food_id":string|null,"name_ja":string,"name_en":string,"amount":number,"kcal":number,"p":number,"f":number,"c":number,"note":string}',
+    'For catalog items kcal/p/f/c may be 0.'
+  ].join('\n');
+  var res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+    method: 'post', contentType: 'application/json',
+    headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+    payload: JSON.stringify({ model: model, max_tokens: 1024, system: system, messages: [{ role: 'user', content: String(text).trim() }] }),
+    muteHttpExceptions: true
+  });
+  if (res.getResponseCode() !== 200) throw new Error('Claude API エラー ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 300));
+  var msg = JSON.parse(res.getContentText());
+  if (msg.stop_reason === 'refusal') throw new Error('Claude API が応答を拒否しました');
+  var txt = (msg.content || []).filter(function (b) { return b.type === 'text'; }).map(function (b) { return b.text; }).join('');
+  var m = /\[[\s\S]*\]/.exec(txt);
+  if (!m) throw new Error('AI 応答を解釈できません: ' + txt.slice(0, 200));
+  var arr = JSON.parse(m[0]);
+  if (!Array.isArray(arr) || !arr.length) throw new Error('AI 応答が空です');
+  return arr.map(function (p) {
+    if (p.food_id && !foods[p.food_id]) p.food_id = null;
+    ['kcal', 'p', 'f', 'c', 'amount'].forEach(function (k) { p[k] = Number(p[k]) || 0; });
+    if (!p.amount) throw new Error('量が読み取れません: ' + (p.name_ja || ''));
+    return p;
+  });
+}
+
 /** モデル出力から JSON を取り出す（コードフェンスや前置きがあっても拾う）。 */
 function parseAiJson_(text) {
   var s = String(text || '').trim();

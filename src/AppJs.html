@@ -2,381 +2,416 @@
 (function () {
   'use strict';
   var LB = 0.45359237;
-  var S = { date: BOOT.today, unit: BOOT.unit, tab: 'today', today: null, workout: null, meals: null, media: null, summary: null, mealSel: 1 };
+  var S = { date: BOOT.today, unit: BOOT.unit, tab: 'today', today: null, workout: null, meals: null, summary: null, mealSel: null, wk: null };
   var $ = function (s, el) { return (el || document).querySelector(s); };
   var $$ = function (s, el) { return Array.prototype.slice.call((el || document).querySelectorAll(s)); };
   var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
   var r1 = function (n) { return Math.round(n * 10) / 10; };
   var view = $('#view');
+  var timers = [];
+  function clearTimers() { timers.forEach(clearInterval); timers = []; }
+  function every(fn, ms) { fn(); timers.push(setInterval(fn, ms)); }
 
-  // ---- server call wrapper: 1 操作 = 1 回 ----
+  // ---- server call: 1 操作 = 1 回 ----
   function call(fn) {
     var args = Array.prototype.slice.call(arguments, 1);
     return new Promise(function (resolve, reject) {
-      var runner = google.script.run.withSuccessHandler(resolve).withFailureHandler(function (e) { reject(e); });
+      var runner = google.script.run.withSuccessHandler(resolve).withFailureHandler(reject);
       runner[fn].apply(runner, args);
     });
   }
   var toastT;
   function toast(msg, err) {
     var t = $('#toast'); t.textContent = msg; t.className = 'toast show' + (err ? ' err' : '');
-    clearTimeout(toastT); toastT = setTimeout(function () { t.className = 'toast'; }, err ? 3500 : 1600);
+    clearTimeout(toastT); toastT = setTimeout(function () { t.className = 'toast'; }, err ? 3500 : 1500);
   }
   function fail(e) { toast((e && e.message) || String(e), true); }
+  function vibrate(p) { try { if (navigator.vibrate) navigator.vibrate(p || 200); } catch (e) { /* ignore */ } }
 
-  // ---- unit helpers (保存は kg、表示は unit) ----
+  // ---- units: 保存は kg / 表示は unit ----
   function disp(kg) { if (kg === '' || kg == null || isNaN(Number(kg))) return ''; return S.unit === 'lb' ? r1(Number(kg) / LB) : r1(Number(kg)); }
-  function unitLabel() { return S.unit; }
+  function u() { return S.unit; }
 
-  // ---- sheet (bottom modal) ----
+  // ---- sheet ----
   function openSheet(html) { var s = $('#sheet'); $('.sheet-body', s).innerHTML = html; s.classList.remove('hidden'); return s; }
   function closeSheet() { $('#sheet').classList.add('hidden'); }
   $('#sheet').addEventListener('click', function (e) { if (e.target === this) closeSheet(); });
 
-  // ---- header ----
-  function fmtDate(ymd) {
-    var d = new Date(ymd + 'T12:00:00Z');
-    var w = ['日', '月', '火', '水', '木', '金', '土'][d.getUTCDay()];
-    return (ymd === BOOT.today ? '今日 ' : '') + (d.getUTCMonth() + 1) + '/' + d.getUTCDate() + '(' + w + ')';
+  // ---- date ----
+  var WD = ['日', '月', '火', '水', '木', '金', '土'];
+  function dObj(ymd) { return new Date(ymd + 'T12:00:00Z'); }
+  function md(ymd) { var d = dObj(ymd); return (d.getUTCMonth() + 1) + '/' + d.getUTCDate(); }
+  function wd(ymd) { return WD[dObj(ymd).getUTCDay()]; }
+  function shiftDate(n) { var d = dObj(S.date); d.setUTCDate(d.getUTCDate() + n); S.date = d.toISOString().slice(0, 10); S.today = S.workout = S.meals = null; S.wk = null; S.mealSel = null; render(); }
+  function dateLine(extra) {
+    return '<p class="date"><button class="nav" data-shift="-1">‹</button><span>' + md(S.date) + ' <b>' + wd(S.date) + '</b>' + (S.date === BOOT.today ? '' : ' <span class="mute" style="font-size:16px">' + (S.date < BOOT.today ? '過去' : '未来') + '</span>') + '</span><button class="nav" data-shift="1">›</button>' + (extra || '') + '</p>';
   }
-  function shiftDate(n) {
-    var d = new Date(S.date + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n);
-    S.date = d.toISOString().slice(0, 10);
-    S.today = S.workout = S.meals = null;
-    render();
-  }
-  $('#datePrev').onclick = function () { shiftDate(-1); };
-  $('#dateNext').onclick = function () { shiftDate(1); };
-  $('#unitBtn').onclick = function () {
-    var u = S.unit === 'kg' ? 'lb' : 'kg';
-    S.unit = u; renderHeader(); render();
-    call('saveUnit', u).catch(fail);
-  };
-  function renderHeader() { $('#dateLabel').textContent = fmtDate(S.date); $('#unitBtn').textContent = S.unit; }
+  function bindDate() { $$('[data-shift]').forEach(function (b) { b.onclick = function () { shiftDate(Number(b.dataset.shift)); }; }); }
+  function nowMin() { var d = new Date(); return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60; }
+  function hmMin(hm) { var m = /^(\d{1,2}):(\d{2})$/.exec(hm || ''); return m ? +m[1] * 60 + +m[2] : null; }
+  function mmss(sec) { sec = Math.max(0, Math.round(sec)); return Math.floor(sec / 60) + ':' + ('0' + (sec % 60)).slice(-2); }
 
+  // ---- tabs ----
   $$('.tabs button').forEach(function (b) { b.onclick = function () { go(b.dataset.tab); }; });
-  function go(tab, opts) { S.tab = tab; S.nav = opts || {}; render(); window.scrollTo(0, 0); }
-
+  function go(tab) { S.tab = tab; render(); window.scrollTo(0, 0); }
   function render() {
-    renderHeader();
+    clearTimers();
     $$('.tabs button').forEach(function (b) { b.classList.toggle('on', b.dataset.tab === S.tab); });
-    ({ today: renderToday, workout: renderWorkout, meals: renderMeals, media: renderMedia, summary: renderSummary })[S.tab]();
+    ({ today: renderToday, workout: renderWorkout, meals: renderMeals, summary: renderSummary })[S.tab]();
   }
+  function updateTabs() {
+    if (S.today) {
+      $('#tabWorkout').textContent = 'Day ' + S.today.day_no;
+      $('#tabMeals').textContent = S.today.next_meal_no + '食目';
+    }
+  }
+  function loadToday() { return call('getToday', S.date).then(function (d) { S.today = d; updateTabs(); return d; }); }
 
   // ======================= 今日 =======================
   function renderToday() {
-    if (!S.today) { view.innerHTML = '<div class="loading">読み込み中…</div>'; return call('getToday', S.date).then(function (d) { S.today = d; renderToday(); }).catch(fail); }
+    if (!S.today) { view.innerHTML = '<div class="loading">読み込み中…</div>'; return loadToday().then(renderToday).catch(fail); }
     var d = S.today, h = '';
-    h += '<div class="dayhead" id="dayHead"><div><div class="muted">Week ' + d.week_no + (d.day_override ? ' · 手動' : '') + '</div><div class="d">Day ' + d.day_no + ' · ' + esc(d.day_name) + (d.is_rest ? ' <span class="rest">休み</span>' : '') + '</div>' + (d.day_notes ? '<div class="muted small">' + esc(d.day_notes) + '</div>' : '') + '</div><div class="muted">変更 ›</div></div>';
-
-    // 未入力インジケータ
-    var supDone = d.supplements.filter(function (s) { return s.done; }).length;
-    var mealDone = d.meals.filter(function (m) { return m.status; }).length;
-    var ind = [
-      ['体重', !!d.weight], ['食事 ' + mealDone + '/' + d.meals.length, mealDone === d.meals.length],
-      ['サプリ ' + supDone + '/' + d.supplements.length, d.supplements.length > 0 && supDone === d.supplements.length],
-      ['筋トレ', d.is_rest ? null : d.workout_sets > 0], ['有酸素', d.cardio.length > 0]
-    ];
-    h += '<div class="ind">' + ind.map(function (x) { return x[1] === null ? '' : '<span class="badge ' + (x[1] ? 'ok' : 'bad') + '">' + (x[1] ? '✔ ' : '未 ') + esc(x[0]) + '</span>'; }).join('') + '</div>';
-
-    // 体重
-    var diff = d.weight && d.prev_weight ? r1(d.weight.weight_kg - d.prev_weight.weight_kg) : null;
-    var diffTxt = diff === null ? '' : (diff > 0 ? '+' : '') + disp(diff) + unitLabel() + ' <span class="muted">(前回 ' + esc(d.prev_weight.date.slice(5)) + ')</span>';
-    h += '<div class="card"><h2>体重</h2><div class="row"><input type="number" step="0.1" inputmode="decimal" id="wIn" placeholder="' + unitLabel() + '" value="' + (d.weight ? disp(d.weight.weight_kg) : '') + '"><input type="number" step="0.1" inputmode="decimal" id="bfIn" placeholder="体脂肪%" value="' + (d.weight ? d.weight.body_fat_pct : '') + '"><button class="btn primary" id="wSave">保存</button></div>' +
-      '<div class="muted small" style="margin-top:6px" id="wDiff">' + (d.weight ? '記録済 ' + esc(d.weight.time) + '　前日比 ' + (diffTxt || '-') : (d.prev_weight ? '前回 ' + disp(d.prev_weight.weight_kg) + unitLabel() + ' (' + esc(d.prev_weight.date.slice(5)) + ')' : '')) + '</div></div>';
-
-    // ボタン
-    h += '<div class="grid3" style="margin-bottom:12px"><button class="btn primary" id="goWorkout">' + (d.is_rest ? '有酸素' : '筋トレ開始') + '</button><button class="btn" id="goCardio">有酸素を記録</button><button class="btn" id="goMedia">写真・動画</button></div>';
-
-    // 水
-    var pctW = Math.min(100, Math.round(d.water_ml / d.water_goal_ml * 100));
-    h += '<div class="card"><h2>水 <span id="waterTxt">' + d.water_ml + ' / ' + d.water_goal_ml + ' ml</span></h2><div class="bar"><div id="waterBar" style="width:' + pctW + '%"></div></div><div class="grid3"><button class="btn" data-water="250">+250ml</button><button class="btn" data-water="500">+500ml</button><button class="btn" data-water="-250">−250</button></div></div>';
-
-    // ルーティン・サプリ（timing ごと）
-    var groups = {};
-    d.routine.filter(function (r) { return !r.is_water; }).forEach(function (r) { (groups[r.timing] = groups[r.timing] || []).push({ kind: 'routine', it: r }); });
-    d.supplements.forEach(function (s) { (groups[s.timing] = groups[s.timing] || []).push({ kind: 'sup', it: s }); });
-    var order = ['morning', 'pre', 'intra', 'post', 'after_meal', 'night', 'anytime'];
-    h += '<div class="card"><h2>ルーティン・サプリ</h2>';
-    order.concat(Object.keys(groups).filter(function (k) { return order.indexOf(k) < 0; })).forEach(function (t) {
-      if (!groups[t]) return;
-      h += '<div class="timing">' + esc(d.timing_labels[t] || t) + '</div>';
-      groups[t].forEach(function (g) {
-        var it = g.it;
-        h += '<div class="check' + (it.done ? ' on' : '') + '" data-kind="' + g.kind + '" data-id="' + it.id + '"><div class="box">' + (it.done ? '✔' : '') + '</div><div class="name">' + esc(it.name) + (it.dose ? ' <span class="muted small">' + esc(it.dose) + '</span>' : '') + '</div><div class="muted small time">' + esc(it.time || '') + '</div></div>';
-      });
+    h += '<h1 class="tap" id="dayHead">Day ' + d.day_no + ' ・ ' + esc(d.day_name) + (d.day_notes ? '（' + esc(d.day_notes) + '）' : '') + (d.is_rest ? ' ・ 休み' : '') + (d.day_override ? ' ・ 手動' : '') + ' ›</h1>';
+    h += dateLine();
+    h += '<div class="now' + (d.now.kind === 'done' ? ' done' : '') + '" id="now"></div>';
+    h += '<div class="tl">';
+    d.timeline.forEach(function (st) {
+      h += '<div class="step ' + st.state + '" data-step="' + esc(st.id) + '"><div class="row"><span class="tm">' + esc(st.time || '') + '</span><span class="nm" data-open="' + esc(st.id) + '">' + esc(st.name) + '</span><span class="v">' + esc(st.value || '') + '</span><button class="chk' + (st.done ? ' on' : '') + '" data-chk="' + esc(st.id) + '">' + (st.done ? '✓' : '') + '</button></div></div>';
     });
     h += '</div>';
-
-    // 食事
-    h += '<div class="card"><h2>食事</h2>';
-    d.meals.forEach(function (m) {
-      var st = m.status === 'plan' ? '<span class="badge ok">プラン通り</span>' : m.status === 'sub' ? '<span class="badge warn">差替え</span>' : m.status === 'skip' ? '<span class="badge bad">スキップ</span>' : '<span class="badge">未</span>';
-      h += '<div class="meal" data-meal="' + m.meal_no + '"><div class="grow"><div>' + esc(m.label) + '</div><div class="small">' + st + (m.kcal ? ' <span class="muted">' + m.kcal + ' kcal</span>' : '') + '</div></div>' +
-        '<button class="btn sm ok" data-plan="' + m.meal_no + '">プラン通り ✔</button><button class="btn sm" data-sub="' + m.meal_no + '">差替</button><button class="btn sm danger" data-skip="' + m.meal_no + '">×</button></div>';
-    });
-    h += '</div>';
-
-    // 有酸素
-    h += '<div class="card"><h2>有酸素</h2>' + (d.cardio.length ? d.cardio.map(function (c) { return '<div class="small">' + esc(c.type) + ' ' + c.minutes + '分 ' + esc(c.note || '') + '</div>'; }).join('') : '<div class="muted small">未記録</div>') + '</div>';
-
-    // コメント
-    h += '<div class="card"><h2>今日のメモ</h2><textarea id="dayComment" placeholder="体調、違和感など（週次レポートに載ります）">' + esc(d.comment || '') + '</textarea></div>';
+    h += '<div class="card" style="margin-top:16px"><div class="ttl small mute">今日のメモ（週次レポートに載ります）</div><textarea class="txt" id="dayComment" placeholder="体調、違和感など">' + esc(d.comment || '') + '</textarea></div>';
     view.innerHTML = h;
-
-    // handlers
+    bindDate();
     $('#dayHead').onclick = openDayPicker;
-    $('#wSave').onclick = function () {
-      var v = $('#wIn').value, bf = $('#bfIn').value;
-      if (!v) return toast('体重を入力', true);
-      call('saveWeight', d.date, v, S.unit, bf, '').then(function (res) { toast('体重を保存'); S.today = null; renderToday(); }).catch(fail);
-    };
-    $('#goWorkout').onclick = function () { go('workout'); };
-    $('#goCardio').onclick = function () { openCardioSheet(); };
-    $('#goMedia').onclick = function () { go('media'); };
-    $$('[data-water]').forEach(function (b) {
-      b.onclick = function () {
-        var delta = Number(b.dataset.water);
-        var next = Math.max(0, d.water_ml + delta); d.water_ml = next;
-        $('#waterTxt').textContent = next + ' / ' + d.water_goal_ml + ' ml';
-        $('#waterBar').style.width = Math.min(100, Math.round(next / d.water_goal_ml * 100)) + '%';
-        call('addWater', d.date, delta).then(function (res) { d.water_ml = res.water_ml; }).catch(function (e) { d.water_ml = next - delta; fail(e); renderToday(); });
-      };
-    });
-    $$('.check').forEach(function (el) {
-      el.onclick = function () {
-        var kind = el.dataset.kind, id = Number(el.dataset.id);
-        var list = kind === 'sup' ? d.supplements : d.routine;
-        var it = list.filter(function (x) { return x.id === id; })[0];
-        var next = !it.done; it.done = next;
-        el.classList.toggle('on', next); $('.box', el).textContent = next ? '✔' : '';
-        var hm = new Date(); var tm = ('0' + hm.getHours()).slice(-2) + ':' + ('0' + hm.getMinutes()).slice(-2);
-        if (kind === 'sup') $('.time', el).textContent = next ? tm : '';
-        call(kind === 'sup' ? 'toggleSupplement' : 'toggleRoutine', d.date, id, next).then(function (res) { if (res.time !== undefined) { it.time = res.time; $('.time', el).textContent = res.time; } })
-          .catch(function (e) { it.done = !next; el.classList.toggle('on', !next); $('.box', el).textContent = !next ? '✔' : ''; fail(e); });
-      };
-    });
-    $$('[data-plan]').forEach(function (b) { b.onclick = function () { b.disabled = true; call('mealPlanDone', d.date, Number(b.dataset.plan)).then(function () { toast('食事' + b.dataset.plan + ' プラン通り'); S.today = null; S.meals = null; renderToday(); }).catch(function (e) { b.disabled = false; fail(e); }); }; });
-    $$('[data-sub]').forEach(function (b) { b.onclick = function () { S.mealSel = Number(b.dataset.sub); go('meals'); }; });
-    $$('[data-skip]').forEach(function (b) { b.onclick = function () { if (!confirm('食事' + b.dataset.skip + ' をスキップにしますか？')) return; call('mealSkip', d.date, Number(b.dataset.skip)).then(function () { S.today = null; S.meals = null; renderToday(); }).catch(fail); }; });
+    renderNow();
+    $$('[data-chk]').forEach(function (b) { b.onclick = function () { stepAction(b.dataset.chk, true); }; });
+    $$('[data-open]').forEach(function (el) { el.onclick = function () { stepAction(el.dataset.open, false); }; });
     var ta = $('#dayComment'); ta.onblur = function () { if (ta.value === (d.comment || '')) return; d.comment = ta.value; call('saveDailyComment', d.date, ta.value).then(function () { toast('メモを保存'); }).catch(fail); };
   }
 
+  function stepById(id) { return S.today.timeline.filter(function (s) { return s.id === id; })[0]; }
+  function refreshToday() { S.today = null; S.meals = null; return loadToday().then(function () { if (S.tab === 'today') renderToday(); }).catch(fail); }
+
+  /** タイムラインの ✔ / 名前タップ。chk=true は「その場で完了」。 */
+  function stepAction(id, chk) {
+    var st = stepById(id), d = S.today;
+    if (!st) return;
+    switch (st.kind) {
+      case 'weight': openWeightSheet(); break;
+      case 'routine': optimisticStep(st, function (next) { return call('toggleRoutine', d.date, st.item_id, next); }); break;
+      case 'supp_group':
+        if (chk) optimisticStep(st, function (next) { return call('toggleSupplementGroup', d.date, st.id.split(':')[1], next); });
+        else openSuppSheet(st); break;
+      case 'meal':
+        if (chk && !st.done) { call('mealPlanDone', d.date, st.meal_no).then(function () { toast(st.meal_no + '食目 プラン通り'); refreshToday(); }).catch(fail); }
+        else { S.mealSel = st.meal_no; go('meals'); } break;
+      case 'workout': go('workout'); break;
+      case 'cardio': openCardioSheet(); break;
+      case 'water': openWaterSheet(); break;
+    }
+  }
+  function optimisticStep(st, fn) {
+    var next = !st.done;
+    var el = $('[data-step="' + st.id + '"]'), chk = $('.chk', el);
+    el.className = 'step ' + (next ? 'done' : 'future'); chk.classList.toggle('on', next); chk.textContent = next ? '✓' : '';
+    fn(next).then(function () { refreshToday(); }).catch(function (e) { fail(e); refreshToday(); });
+  }
+
+  function renderNow() {
+    var d = S.today, n = d.now, el = $('#now');
+    if (!el) return;
+    var timerLeft = null;
+    if (n.timer_until) { var t = hmMin(n.timer_until); if (t != null) timerLeft = (t - nowMin()) * 60; if (timerLeft <= 0) timerLeft = null; }
+    var h = '<div class="k">' + (n.kind === 'done' ? '完了' : 'いま') + (n.time ? '<span style="float:right" class="num">' + esc(n.time) + '</span>' : '') + '</div>';
+    var title = n.title, sub = n.sub, btn = n.button, btn2 = n.button2;
+    if (n.kind === 'meal' && n.timer_until && timerLeft == null) { title = n.meal_no + '食目を食べる'; btn = 'プラン通り食べた'; btn2 = '変更'; var ms = stepById(n.step_id); sub = ms ? ms.name.replace(/^\S+\s*/, '') : ''; }
+    if (n.kind !== 'meal' && n.timer_until && timerLeft == null) { title = n.title.replace(/まで$/, ''); sub = ''; }
+    h += '<div class="t">' + esc(title) + '</div>';
+    if (timerLeft != null) h += '<div class="timer" id="nowTimer">' + mmss(timerLeft) + '</div>';
+    if (sub) h += '<div class="s">' + esc(sub) + '</div>';
+    if (n.kind === 'weight') {
+      h += '<div class="w-in"><input type="number" step="0.1" inputmode="decimal" id="nowW" placeholder="' + (d.prev_weight ? disp(d.prev_weight.weight_kg) : '0.0') + '"><span class="u">' + u() + '</span><input type="number" step="0.1" inputmode="decimal" id="nowBf" class="bf" placeholder="体脂肪"><span class="u">%</span></div>';
+    }
+    if (n.kind !== 'done') h += '<div class="btns"><button id="nowBtn">' + esc(btn) + '</button>' + (btn2 ? '<button class="alt" id="nowBtn2">' + esc(btn2) + '</button>' : '') + '</div>';
+    el.innerHTML = h;
+    if (timerLeft != null) {
+      every(function () { var t = hmMin(n.timer_until); var left = (t - nowMin()) * 60; var te = $('#nowTimer'); if (!te) return; if (left <= 0) { vibrate([200, 100, 200]); renderNow(); } else te.textContent = mmss(left); }, 1000);
+    }
+    var b = $('#nowBtn'), b2 = $('#nowBtn2');
+    if (!b) return;
+    b.onclick = function () {
+      switch (n.kind) {
+        case 'weight': { var v = $('#nowW').value; if (!v) return toast('体重を入力', true); b.disabled = true; call('saveWeight', d.date, v, S.unit, $('#nowBf').value, '').then(function () { toast('体重を保存'); refreshToday(); }).catch(function (e) { b.disabled = false; fail(e); }); break; }
+        case 'routine': stepAction(n.step_id, true); break;
+        case 'supp_group': stepAction(n.step_id, true); break;
+        case 'meal': if (timerLeft != null) { S.mealSel = n.meal_no; go('meals'); } else stepAction(n.step_id, true); break;
+        case 'workout': go('workout'); break;
+        case 'cardio': openCardioSheet(); break;
+        case 'water': addWater(500); break;
+      }
+    };
+    if (b2) b2.onclick = function () { if (n.kind === 'meal') { S.mealSel = n.meal_no; go('meals'); } else if (n.kind === 'water') addWater(250); };
+  }
+
+  function addWater(delta) {
+    var d = S.today; d.water_ml = Math.max(0, d.water_ml + delta);
+    var wt = $('#waterTxt'); if (wt) wt.textContent = (d.water_ml / 1000).toFixed(2) + ' / ' + (d.water_goal_ml / 1000) + ' L';
+    call('addWater', d.date, delta).then(function (res) { d.water_ml = res.water_ml; if (!$('#waterTxt')) refreshToday(); else { wt.textContent = (res.water_ml / 1000).toFixed(2) + ' / ' + (d.water_goal_ml / 1000) + ' L'; } }).catch(function (e) { fail(e); refreshToday(); });
+  }
+  function openWaterSheet() {
+    var d = S.today;
+    var s = openSheet('<h3>水</h3><div class="date" style="margin:0 0 10px"><span id="waterTxt">' + (d.water_ml / 1000).toFixed(2) + ' / ' + (d.water_goal_ml / 1000) + ' L</span></div><div class="btns"><button class="b-yel" data-w="250">+250ml</button><button class="b-yel" data-w="500">+500ml</button><button class="b-ghost" data-w="1000">+1L</button><button class="b-ghost" data-w="-250">−250</button></div><button class="b b-sub" style="width:100%;margin-top:10px" id="wClose">閉じる</button>');
+    $$('[data-w]', s).forEach(function (b) { b.onclick = function () { addWater(Number(b.dataset.w)); }; });
+    $('#wClose', s).onclick = function () { closeSheet(); refreshToday(); };
+  }
+  function openWeightSheet() {
+    var d = S.today;
+    var s = openSheet('<h3>体重</h3><div class="w-in"><input type="number" step="0.1" inputmode="decimal" id="shW" value="' + (d.weight ? disp(d.weight.weight_kg) : '') + '" placeholder="' + (d.prev_weight ? disp(d.prev_weight.weight_kg) : '0.0') + '"><span class="u">' + u() + '</span><input type="number" step="0.1" inputmode="decimal" id="shBf" class="bf" value="' + (d.weight ? d.weight.body_fat_pct : '') + '" placeholder="体脂肪"><span class="u">%</span></div>' + (d.prev_weight ? '<div class="mute small" style="margin-top:6px">前回 ' + disp(d.prev_weight.weight_kg) + u() + '（' + esc(d.prev_weight.date.slice(5)) + '）</div>' : '') + '<button class="b b-yel" style="width:100%;margin-top:12px" id="shSave">保存</button>');
+    $('#shW', s).focus();
+    $('#shSave', s).onclick = function () { var v = $('#shW', s).value; if (!v) return toast('体重を入力', true); call('saveWeight', d.date, v, S.unit, $('#shBf', s).value, '').then(function () { closeSheet(); toast('体重を保存'); refreshToday(); }).catch(fail); };
+  }
+  function openSuppSheet(st) {
+    var d = S.today;
+    var s = openSheet('<h3>' + esc(st.name) + '</h3><div class="list">' + st.items.map(function (it) { return '<div class="it"><span>' + esc(it.name) + (it.dose ? ' <span class="mute small">' + esc(it.dose) + '</span>' : '') + '</span><button class="chk' + (it.done ? ' on' : '') + '" data-sid="' + it.id + '">' + (it.done ? '✓' : '') + '</button></div>'; }).join('') + '</div><div class="btns" style="margin-top:12px"><button class="b-main" id="suppAll">全部飲んだ</button><button class="b-sub" id="suppClose">閉じる</button></div>');
+    $$('[data-sid]', s).forEach(function (b) {
+      b.onclick = function () { var it = st.items.filter(function (x) { return x.id === Number(b.dataset.sid); })[0]; it.done = !it.done; b.classList.toggle('on', it.done); b.textContent = it.done ? '✓' : ''; call('toggleSupplement', d.date, it.id, it.done).catch(fail); };
+    });
+    $('#suppAll', s).onclick = function () { call('toggleSupplementGroup', d.date, st.id.split(':')[1], true).then(function () { closeSheet(); refreshToday(); }).catch(fail); };
+    $('#suppClose', s).onclick = function () { closeSheet(); refreshToday(); };
+  }
   function openDayPicker() {
     var d = S.today;
-    var h = '<h2 style="margin:0 0 8px">Day を変更</h2><div class="muted small" style="margin-bottom:8px">予定変更で Day を入れ替えた日に使用。自動判定: Day ' + d.day_no + '</div><div class="grid2">';
-    d.days.forEach(function (x) { h += '<button class="btn' + (x.day_no === d.day_no ? ' primary' : '') + '" data-day="' + x.day_no + '">Day ' + x.day_no + ' ' + esc(x.name) + '</button>'; });
-    h += '</div><div style="margin-top:12px" class="row"><button class="btn grow" id="dayAuto">自動判定に戻す</button><button class="btn grow" id="restToggle">' + (d.is_rest ? '休みを解除' : '今日を休みにする') + '</button></div>';
+    var h = '<h3>Day を変更</h3><div class="mute small" style="margin-bottom:8px">予定変更で Day を入れ替えた日に。自動判定は Day ' + d.day_no + '</div><div class="chips">';
+    d.days.forEach(function (x) { h += '<button' + (x.day_no === d.day_no ? ' class="on"' : '') + ' data-day="' + x.day_no + '">Day ' + x.day_no + ' ' + esc(x.name) + '</button>'; });
+    h += '</div><div class="btns" style="margin-top:12px"><button class="b-sub" id="dayAuto">自動判定に戻す</button><button class="b-sub" id="restToggle">' + (d.is_rest ? '休みを解除' : '今日を休みにする') + '</button></div>';
     var s = openSheet(h);
-    $$('[data-day]', s).forEach(function (b) { b.onclick = function () { call('setDayOverride', d.date, Number(b.dataset.day), null).then(function () { closeSheet(); S.today = S.workout = null; render(); }).catch(fail); }; });
-    $('#dayAuto', s).onclick = function () { call('setDayOverride', d.date, null, null).then(function () { closeSheet(); S.today = S.workout = null; render(); }).catch(fail); };
-    $('#restToggle', s).onclick = function () { call('setDayOverride', d.date, d.day_override ? d.day_no : null, !d.is_rest).then(function () { closeSheet(); S.today = S.workout = null; render(); }).catch(fail); };
+    var done = function () { closeSheet(); S.today = S.workout = null; render(); };
+    $$('[data-day]', s).forEach(function (b) { b.onclick = function () { call('setDayOverride', d.date, Number(b.dataset.day), null).then(done).catch(fail); }; });
+    $('#dayAuto', s).onclick = function () { call('setDayOverride', d.date, null, null).then(done).catch(fail); };
+    $('#restToggle', s).onclick = function () { call('setDayOverride', d.date, d.day_override ? d.day_no : null, !d.is_rest).then(done).catch(fail); };
   }
-
   function openCardioSheet(after) {
-    var h = '<h2 style="margin:0 0 8px">有酸素を記録</h2><label class="lbl">種類</label><select id="cType"><option value="walk">ウォーク</option><option value="jog">ジョグ</option><option value="stairs">階段</option><option value="other">その他</option></select><label class="lbl">分数</label><input type="number" inputmode="numeric" id="cMin" placeholder="分"><label class="lbl">メモ</label><input type="text" id="cNote"><div style="margin-top:12px" class="row"><button class="btn grow" id="cSkip">' + (after ? 'スキップ' : 'キャンセル') + '</button><button class="btn primary grow" id="cSave">保存</button></div>';
-    var s = openSheet(h);
+    var s = openSheet('<h3>有酸素を記録</h3><div class="chips" id="cType"><button class="on" data-t="walk">歩き</button><button data-t="jog">ジョグ</button><button data-t="stairs">階段</button><button data-t="other">その他</button></div><label class="lbl">分数</label><div class="w-in"><input type="number" inputmode="numeric" id="cMin" placeholder="40"><span class="u">分</span></div><label class="lbl">メモ</label><input type="text" class="txt" id="cNote"><div class="btns" style="margin-top:12px"><button class="b-sub" id="cSkip">' + (after ? 'あとで' : 'キャンセル') + '</button><button class="b-yel" id="cSave">保存</button></div>');
+    var type = 'walk';
+    $$('#cType button', s).forEach(function (b) { b.onclick = function () { type = b.dataset.t; $$('#cType button', s).forEach(function (x) { x.classList.toggle('on', x === b); }); }; });
     $('#cMin', s).focus();
     $('#cSkip', s).onclick = function () { closeSheet(); if (after) after(); };
-    $('#cSave', s).onclick = function () {
-      call('saveCardio', S.date, $('#cType', s).value, $('#cMin', s).value, $('#cNote', s).value).then(function () { toast('有酸素を保存'); closeSheet(); S.today = S.workout = null; if (after) after(); else render(); }).catch(fail);
+    $('#cSave', s).onclick = function () { call('saveCardio', S.date, type, $('#cMin', s).value, $('#cNote', s).value).then(function () { toast('有酸素を保存'); closeSheet(); S.today = S.workout = null; if (after) after(); else render(); }).catch(fail); };
+  }
+  function openMediaSheet(category, exerciseId, onDone) {
+    var cat = category || 'body';
+    var s = openSheet('<h3>写真・動画</h3><div class="chips" id="mCat"><button data-c="body"' + (cat === 'body' ? ' class="on"' : '') + '>body 体の変化</button><button data-c="form"' + (cat === 'form' ? ' class="on"' : '') + '>form フォーム</button><button data-c="meal"' + (cat === 'meal' ? ' class="on"' : '') + '>meal</button></div><label class="lbl">ファイル（50MB 目安）</label><input type="file" id="mFile" accept="image/*,video/*" class="txt"><label class="lbl">メモ</label><input type="text" class="txt" id="mNote"><div class="mute small" id="mProg" style="margin-top:6px"></div><button class="b b-yel" style="width:100%;margin-top:10px" id="mUp">アップロード → Drive/TrainingLog/' + S.date.slice(0, 7) + '</button><label class="lbl">大きい動画は Drive アプリで直接アップして URL を貼る</label><div class="row2"><input type="url" class="txt" id="mUrl" placeholder="https://drive.google.com/…"><button class="b b-sub" style="flex:0 0 90px" id="mUrlAdd">登録</button></div>');
+    $$('#mCat button', s).forEach(function (b) { b.onclick = function () { cat = b.dataset.c; $$('#mCat button', s).forEach(function (x) { x.classList.toggle('on', x === b); }); }; });
+    $('#mUp', s).onclick = function () {
+      var f = $('#mFile', s).files[0]; if (!f) return toast('ファイルを選択', true);
+      if (f.size > 50 * 1024 * 1024) return toast('50MB 超。Drive アプリで直接アップして URL を登録してください', true);
+      $('#mUp', s).disabled = true; $('#mProg', s).textContent = '読み込み中… ' + (f.size / 1048576).toFixed(1) + 'MB';
+      var reader = new FileReader();
+      reader.onload = function () {
+        $('#mProg', s).textContent = 'アップロード中…';
+        call('uploadMedia', String(reader.result).split(',')[1], f.type || 'application/octet-stream', f.name, { date: S.date, category: cat, exercise_id: exerciseId || '', note: $('#mNote', s).value })
+          .then(function () { toast('アップロード完了'); closeSheet(); if (onDone) onDone(); }).catch(function (e) { $('#mUp', s).disabled = false; $('#mProg', s).textContent = ''; fail(e); });
+      };
+      reader.readAsDataURL(f);
     };
+    $('#mUrlAdd', s).onclick = function () { call('addMediaUrl', { date: S.date, drive_url: $('#mUrl', s).value, category: cat, exercise_id: exerciseId || '', note: $('#mNote', s).value, type: 'video' }).then(function () { toast('登録しました'); closeSheet(); if (onDone) onDone(); }).catch(fail); };
   }
 
-  // ======================= ワークアウト =======================
+  // ======================= 筋トレ（1画面1セット） =======================
+  function firstUndone(d) {
+    for (var i = 0; i < d.exercises.length; i++) for (var j = 0; j < d.exercises[i].sets.length; j++) if (!d.exercises[i].sets[j].done) return { ex: i, set: j };
+    return null;
+  }
   function renderWorkout() {
-    if (!S.workout) { view.innerHTML = '<div class="loading">読み込み中…</div>'; return call('getWorkout', S.date).then(function (d) { S.workout = d; renderWorkout(); }).catch(fail); }
+    if (!S.workout) { view.innerHTML = '<div class="loading">読み込み中…</div>'; return Promise.all([call('getWorkout', S.date), S.today ? Promise.resolve(S.today) : loadToday()]).then(function (r) { S.workout = r[0]; var p = firstUndone(r[0]); S.wk = p ? { ex: p.ex, set: p.set } : { ex: 0, set: 0 }; renderWorkout(); }).catch(fail); }
     var d = S.workout, h = '';
-    h += '<div class="dayhead"><div><div class="d">Day ' + d.day_no + ' · ' + esc(d.day_name) + '</div><div class="muted small">' + esc(d.date) + ' · 単位 ' + unitLabel() + '</div></div>' + (d.is_rest ? '<span class="badge warn">休み</span>' : '<span class="badge">' + d.exercises.length + ' 種目</span>') + '</div>';
     if (d.is_rest || !d.exercises.length) {
-      h += '<div class="card"><h2>有酸素</h2>' + (d.cardio.length ? d.cardio.map(function (c) { return '<div class="row small" style="padding:4px 0"><span class="grow">' + esc(c.type) + ' ' + c.minutes + '分 ' + esc(c.note || '') + '</span><button class="btn sm danger" data-delc="' + c._row + '">削除</button></div>'; }).join('') : '<div class="muted small">未記録</div>') + '<button class="btn primary block" id="addCardio" style="margin-top:8px">有酸素を記録</button></div>';
-      view.innerHTML = h;
-      $('#addCardio').onclick = function () { openCardioSheet(); };
-      $$('[data-delc]').forEach(function (b) { b.onclick = function () { call('deleteCardio', Number(b.dataset.delc)).then(function () { S.workout = S.today = null; render(); }).catch(fail); }; });
+      h += '<h1>Day ' + d.day_no + ' ・ ' + esc(d.day_name) + '</h1>' + dateLine();
+      h += '<div class="now"><div class="k">今日</div><div class="t">休み ・ 有酸素のみ</div><div class="s">' + (d.cardio.length ? d.cardio.map(function (c) { return c.type + ' ' + c.minutes + '分'; }).join('・') + ' 記録済み' : '歩き・ジョグ・階段を 35〜40 分') + '</div><div class="btns"><button id="rcardio">有酸素を記録</button></div></div>';
+      view.innerHTML = h; bindDate();
+      $('#rcardio').onclick = function () { openCardioSheet(); };
       return;
     }
-    d.exercises.forEach(function (ex, i) {
-      h += '<div class="card ex' + (ex.is_preexhaust ? ' pre' : '') + (ex.superset_group ? ' ss-' + esc(ex.superset_group) : '') + '" data-ex="' + ex.id + '">';
-      h += '<div class="row"><div class="grow"><div class="title" data-toggle="' + i + '">' + (i + 1) + '. ' + esc(ex.sub_name || ex.name_ja) + (ex.sub_name ? ' <span class="badge warn">代替</span>' : '') + '</div><div class="muted small">' + esc(ex.name_en) + (ex.is_preexhaust ? ' · <span style="color:var(--pre)">事前疲労</span>' : '') + (ex.superset_group ? ' · SS ' + esc(ex.superset_group) : '') + (ex.prev_date ? ' · 前回 ' + esc(ex.prev_date.slice(5)) : '') + '</div></div><button class="btn sm" data-toggle="' + i + '">ⓘ</button></div>';
-      h += '<div class="howto hidden" id="howto' + i + '">' + (ex.how_to ? esc(ex.how_to) + '<br>' : '') + '<a href="' + esc(ex.video_url) + '" target="_blank" rel="noopener" style="color:var(--accent)">▶ 動画で見る</a></div>';
-      ex.sets.forEach(function (st) {
-        var prev = st.prev_weight_kg !== '' ? disp(st.prev_weight_kg) + '×' + st.prev_reps : '';
-        h += '<div class="set' + (st.done ? ' done' : '') + '" data-set="' + st.set_no + '"><div class="type ' + esc(st.set_type) + '">' + esc(st.set_type) + '</div><div class="target">' + esc(st.target) + '</div><div class="prev' + (prev ? ' has' : '') + '" data-pw="' + disp(st.prev_weight_kg) + '" data-pr="' + esc(st.prev_reps) + '">' + (prev || '—') + '</div>' +
-          '<input type="number" step="0.5" inputmode="decimal" class="w" placeholder="' + unitLabel() + '" value="' + disp(st.weight_kg) + '"><input type="number" inputmode="numeric" class="r" placeholder="回" value="' + esc(st.reps) + '"><button class="ok">' + (st.done ? '✔' : '○') + '</button></div>';
-      });
-      h += '<div class="row" style="margin-top:8px"><input type="text" class="exnote" placeholder="メモ（違和感など）" value="' + esc(ex.note) + '"><select class="rpe" style="width:90px"><option value="">RPE</option>' + [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(function (n) { return '<option' + (ex.rpe === n ? ' selected' : '') + '>' + n + '</option>'; }).join('') + '</select><button class="btn sm subbtn">代替</button></div>';
-      h += '</div>';
-    });
-    h += '<div class="card"><h2>有酸素</h2>' + (d.cardio.length ? d.cardio.map(function (c) { return '<div class="small">' + esc(c.type) + ' ' + c.minutes + '分</div>'; }).join('') : '<div class="muted small">完了ボタンで入力</div>') + '</div>';
-    h += '<button class="btn primary block" id="finish" style="padding:14px;font-size:17px">完了 → 有酸素入力</button>';
+    var ex = d.exercises[S.wk.ex], st = ex.sets[S.wk.set];
+    var allDone = d.exercises.every(function (e) { return e.sets.every(function (x) { return x.done; }); });
+    h += '<div class="ex-head"><h1>Day ' + d.day_no + ' ・ ' + esc(d.day_name) + (S.date === BOOT.today ? '' : ' ・ ' + md(S.date)) + '</h1><span class="p"><button data-ex="-1">‹</button>種目 ' + (S.wk.ex + 1) + ' / ' + d.exercises.length + '<button data-ex="1">›</button></span></div>';
+    if (ex.is_preexhaust) h += '<span class="tag">事前疲労</span>';
+    else if (S.wk.ex > 0 && d.exercises[S.wk.ex - 1].is_preexhaust) h += '<span class="tag">事前疲労のあと</span>';
+    if (ex.superset_group) h += '<span class="tag ss">スーパーセット ' + esc(ex.superset_group) + '</span>';
+    if (ex.sub_name) h += '<span class="tag sub">代替: ' + esc(ex.sub_name) + '</span>';
+    h += '<p class="ex-name">' + esc(ex.sub_name || ex.name_ja) + '</p>';
+    h += '<p class="ex-en">' + esc(ex.name_en) + ' ・ <a href="' + esc(ex.video_url) + '" target="_blank" rel="noopener"><u>動画を見る</u></a>' + (ex.how_to ? ' ・ <u id="howtoBtn">やり方</u>' : '') + '</p>';
+    if (ex.how_to) h += '<div class="howto hidden" id="howto">' + esc(ex.how_to) + '</div>';
+    h += '<div class="setlist">' + ex.sets.map(function (x, i) { return '<div class="' + (i === S.wk.set ? 'on' : x.done ? 'ok' : '') + '" data-set="' + i + '">' + esc(x.set_type === 'WU' ? 'W' : x.set_type) + ' ' + esc(x.target) + (x.done ? ' ✓' : '') + '</div>'; }).join('') + '</div>';
+    var w0 = st.done ? disp(st.weight_kg) : (st.suggest_weight_kg !== '' ? disp(st.suggest_weight_kg) : (st.prev_weight_kg !== '' ? disp(st.prev_weight_kg) : ''));
+    var r0 = st.done ? st.reps : (st.suggest_reps !== '' ? st.suggest_reps : (st.prev_reps !== '' ? st.prev_reps : st.target_min));
+    h += '<div class="big"><div class="cell"><div class="lbl"><span>重量</span><i>' + u() + '</i></div><div class="val' + (w0 === '' ? ' empty' : '') + '" id="wv" data-v="' + esc(w0) + '">' + (w0 === '' ? '—' : esc(w0)) + '</div><div class="pm"><button data-pm="w:-1">−</button><button data-pm="w:1">＋</button></div></div>' +
+      '<div class="cell"><div class="lbl"><span>回数</span><i>目標 ' + esc(st.target) + '</i></div><div class="val" id="rv" data-v="' + esc(r0) + '">' + esc(r0) + '</div><div class="pm"><button data-pm="r:-1">−</button><button data-pm="r:1">＋</button></div></div></div>';
+    var ghost = '';
+    if (st.done) ghost = '記録済み <b>' + disp(st.weight_kg) + ' ' + u() + ' × ' + esc(st.reps) + '</b>（変えて完了で上書き）';
+    else if (st.prev_weight_kg !== '') ghost = '前回 ' + esc((ex.prev_date || '').slice(5)) + '　<b>' + disp(st.prev_weight_kg) + ' ' + u() + ' × ' + esc(st.prev_reps) + '</b>' + (st.suggest_reason ? '　→ ' + esc(st.suggest_reason.replace(/^前回 [\d.]+×\d+\s*/, '')) : '');
+    else if (st.suggest_reason) ghost = '提案: ' + esc(st.suggest_reason);
+    else ghost = '初回。重量を入れて完了';
+    h += '<div class="ghost">' + ghost + '</div>';
+    h += '<button class="done-btn' + (allDone ? ' green' : '') + '" id="setDone">' + (allDone ? '筋トレ完了 → 有酸素へ' : 'このセット完了') + '</button>';
+    h += '<div class="rest hidden" id="rest"><div class="l">休憩</div><div class="n" id="rn">0:00</div><div class="l" id="rnext"></div><button id="skipRest">休憩を飛ばす</button></div>';
+    h += '<div class="mini"><button id="subBtn">代替種目で実施</button><button id="noteBtn">違和感メモ' + (ex.note ? ' ●' : '') + '</button><button id="formBtn">フォーム動画</button></div>';
+    if (allDone && !d.finished) h += '<div class="note">全セット記録済み。上のボタンで筋トレを完了にして有酸素を入力します。</div>';
     view.innerHTML = h;
 
-    $$('[data-toggle]').forEach(function (el) { el.onclick = function () { $('#howto' + el.dataset.toggle).classList.toggle('hidden'); }; });
-    $$('.ex').forEach(function (card) {
-      var exId = Number(card.dataset.ex);
-      var ex = d.exercises.filter(function (x) { return x.id === exId; })[0];
-      $$('.set', card).forEach(function (row) {
-        var setNo = Number(row.dataset.set);
-        var st = ex.sets.filter(function (x) { return x.set_no === setNo; })[0];
-        var wIn = $('.w', row), rIn = $('.r', row), ok = $('.ok', row);
-        $('.prev', row).onclick = function () { if (this.dataset.pw === '') return; wIn.value = this.dataset.pw; rIn.value = this.dataset.pr; };
-        var save = function () {
-          if (wIn.value === '' && rIn.value === '') return toast('重量か回数を入力', true);
-          row.classList.add('done'); ok.textContent = '✔';
-          call('saveSet', d.date, exId, setNo, st.set_type, wIn.value, S.unit, rIn.value, ex.sub_name || '').then(function (res) { st.done = true; st.weight_kg = res.weight_kg; st.reps = res.reps; S.today = null; })
-            .catch(function (e) { row.classList.remove('done'); ok.textContent = '○'; fail(e); });
-        };
-        ok.onclick = function () {
-          if (row.classList.contains('done')) {
-            if (!confirm('セット ' + setNo + ' の記録を削除しますか？')) return;
-            row.classList.remove('done'); ok.textContent = '○';
-            call('deleteSet', d.date, exId, setNo).then(function () { st.done = false; }).catch(function (e) { row.classList.add('done'); ok.textContent = '✔'; fail(e); });
-          } else save();
-        };
-        rIn.onkeydown = function (e) { if (e.key === 'Enter') { rIn.blur(); save(); } };
-      });
-      var saveMeta = function () { call('saveExerciseMeta', d.date, exId, $('.exnote', card).value, $('.rpe', card).value, ex.sub_name || '').then(function () { ex.note = $('.exnote', card).value; ex.rpe = $('.rpe', card).value; }).catch(fail); };
-      $('.exnote', card).onblur = function () { if (this.value !== ex.note) saveMeta(); };
-      $('.rpe', card).onchange = saveMeta;
-      $('.subbtn', card).onclick = function () {
-        var name = prompt('代替種目名（空欄で解除）。マスタは変更しません。', ex.sub_name || '');
-        if (name === null) return;
-        ex.sub_name = name.trim();
-        call('saveExerciseMeta', d.date, exId, $('.exnote', card).value, $('.rpe', card).value, ex.sub_name).then(function () { S.workout = null; renderWorkout(); }).catch(fail);
+    $$('[data-ex]').forEach(function (b) { b.onclick = function () { var n = S.wk.ex + Number(b.dataset.ex); if (n < 0 || n >= d.exercises.length) return; S.wk = { ex: n, set: firstUndoneIn(d.exercises[n]) }; renderWorkout(); }; });
+    $$('[data-set]').forEach(function (el) { el.onclick = function () { S.wk.set = Number(el.dataset.set); renderWorkout(); }; });
+    var hb = $('#howtoBtn'); if (hb) hb.onclick = function () { $('#howto').classList.toggle('hidden'); };
+    var stepW = S.unit === 'kg' ? 1 : 2.5;
+    $$('[data-pm]').forEach(function (b) {
+      b.onclick = function () {
+        var p = b.dataset.pm.split(':'), id = p[0] === 'w' ? '#wv' : '#rv', el = $(id);
+        var cur = el.dataset.v === '' ? 0 : Number(el.dataset.v);
+        var next = Math.max(0, r1(cur + Number(p[1]) * (p[0] === 'w' ? stepW : 1)));
+        el.dataset.v = next; el.textContent = next; el.classList.remove('empty');
       };
     });
-    $('#finish').onclick = function () { openCardioSheet(function () { S.today = null; go('today'); }); };
+    $('#wv').onclick = function () { var v = prompt('重量 (' + u() + ')', this.dataset.v); if (v === null || v === '' || isNaN(Number(v))) return; this.dataset.v = r1(Number(v)); this.textContent = this.dataset.v; this.classList.remove('empty'); };
+    $('#rv').onclick = function () { var v = prompt('回数', this.dataset.v); if (v === null || v === '' || isNaN(Number(v))) return; this.dataset.v = Math.round(Number(v)); this.textContent = this.dataset.v; };
+
+    $('#setDone').onclick = function () {
+      if (allDone) return finishAll();
+      var wv = $('#wv').dataset.v, rv = $('#rv').dataset.v;
+      if (wv === '' && rv === '') return toast('重量を入力', true);
+      var btn = this; btn.disabled = true;
+      st.done = true; st.weight_kg = S.unit === 'lb' ? r1(Number(wv) * LB) : Number(wv); st.reps = Number(rv);
+      call('saveSet', d.date, ex.id, st.set_no, st.set_type, wv, S.unit, rv, ex.sub_name || '').then(function (res) { st.weight_kg = res.weight_kg; S.today = null; }).catch(function (e) { st.done = false; fail(e); });
+      vibrate(80);
+      var nxt = nextSet(d);
+      if (!nxt) { S.workout = null; return renderWorkout(); }
+      startRest(st.set_type === 'TOP' ? d.rest_top_sec : d.rest_other_sec, nxt);
+    };
+    $('#subBtn').onclick = function () {
+      var name = prompt('代替種目名（空欄で解除）。マスタは変更しません。', ex.sub_name || ''); if (name === null) return;
+      ex.sub_name = name.trim();
+      call('saveExerciseMeta', d.date, ex.id, ex.note || '', ex.rpe || '', ex.sub_name).then(function () { renderWorkout(); }).catch(fail);
+    };
+    $('#noteBtn').onclick = function () {
+      var s = openSheet('<h3>' + esc(ex.name_ja) + '</h3><label class="lbl">違和感メモ（週次レポートに載ります）</label><textarea class="txt" id="exNote">' + esc(ex.note || '') + '</textarea><label class="lbl">RPE（任意）</label><div class="chips" id="rpe">' + [6, 7, 8, 9, 10].map(function (n) { return '<button data-r="' + n + '"' + (ex.rpe === n ? ' class="on"' : '') + '>' + n + '</button>'; }).join('') + '</div><button class="b b-yel" style="width:100%;margin-top:12px" id="exSave">保存</button>');
+      var rpe = ex.rpe || '';
+      $$('#rpe button', s).forEach(function (b) { b.onclick = function () { rpe = rpe === Number(b.dataset.r) ? '' : Number(b.dataset.r); $$('#rpe button', s).forEach(function (x) { x.classList.toggle('on', Number(x.dataset.r) === rpe); }); }; });
+      $('#exSave', s).onclick = function () { ex.note = $('#exNote', s).value; ex.rpe = rpe; call('saveExerciseMeta', d.date, ex.id, ex.note, rpe, ex.sub_name || '').then(function () { closeSheet(); toast('保存しました'); renderWorkout(); }).catch(fail); };
+    };
+    $('#formBtn').onclick = function () { openMediaSheet('form', ex.id); };
+
+    function finishAll() {
+      call('finishWorkout', d.date).then(function () { d.finished = true; S.today = null; openCardioSheet(function () { go('today'); }); }).catch(fail);
+    }
+  }
+  function firstUndoneIn(ex) { for (var j = 0; j < ex.sets.length; j++) if (!ex.sets[j].done) return j; return 0; }
+  /** 次の未完了セット（同種目 → 次種目）。無ければ null。 */
+  function nextSet(d) {
+    for (var i = S.wk.ex; i < d.exercises.length; i++) {
+      var from = i === S.wk.ex ? S.wk.set + 1 : 0;
+      for (var j = from; j < d.exercises[i].sets.length; j++) if (!d.exercises[i].sets[j].done) return { ex: i, set: j };
+    }
+    var p = firstUndone(d);
+    return p;
+  }
+  function startRest(sec, nxt) {
+    var d = S.workout, nex = d.exercises[nxt.ex], nst = nex.sets[nxt.set];
+    var rest = $('#rest'); rest.classList.remove('hidden');
+    var sw = nst.suggest_weight_kg !== '' ? disp(nst.suggest_weight_kg) : (nst.prev_weight_kg !== '' ? disp(nst.prev_weight_kg) : '');
+    $('#rnext').textContent = '次：' + (nxt.ex !== S.wk.ex ? nex.name_ja + ' ' : '') + ({ WU: 'ウォームアップ', TOP: 'トップ', BO: 'バックオフ', DROP: 'ドロップ', MAIN: 'メイン' }[nst.set_type] || nst.set_type) + ' ' + nst.target + '回' + (sw ? ' ・ 提案 ' + sw + ' ' + u() : '');
+    $('#setDone').classList.add('hidden');
+    var end = Date.now() + sec * 1000;
+    var advance = function () { clearTimers(); S.wk = { ex: nxt.ex, set: nxt.set }; S.workout = null; renderWorkout(); };
+    every(function () { var left = (end - Date.now()) / 1000; if (left <= 0) { vibrate([300, 100, 300]); advance(); } else $('#rn').textContent = mmss(left); }, 250);
+    $('#skipRest').onclick = advance;
+    window.scrollTo(0, document.body.scrollHeight);
   }
 
   // ======================= 食事 =======================
   function renderMeals() {
-    if (!S.meals) { view.innerHTML = '<div class="loading">読み込み中…</div>'; return call('getMeals', S.date).then(function (d) { S.meals = d; renderMeals(); }).catch(fail); }
-    var d = S.meals, h = '';
-    var diffTag = function (k) { var x = r1(d.total[k] - d.plan_total[k]); return '<div class="d ' + (x > 0 ? 'plus' : x < 0 ? 'minus' : '') + '">' + (x > 0 ? '+' : '') + x + '</div>'; };
-    h += '<div class="card"><h2>1日合計 <span class="muted">（差 = プラン基準比）</span></h2><div class="tot">' + ['kcal', 'p', 'f', 'c'].map(function (k) { return '<div><div class="k">' + k.toUpperCase() + '</div><div class="v">' + d.total[k] + '</div>' + diffTag(k) + '</div>'; }).join('') + '</div><div class="muted small" style="margin-top:6px;text-align:center">プラン: ' + d.plan_total.kcal + ' kcal / P' + d.plan_total.p + ' F' + d.plan_total.f + ' C' + d.plan_total.c + '</div></div>';
-    h += '<div class="row wrap" style="margin-bottom:12px">' + d.meals.map(function (m) { return '<button class="chip' + (m.meal_no === S.mealSel ? ' on' : '') + '" data-msel="' + m.meal_no + '">' + m.meal_no + (m.status ? (m.status === 'plan' ? ' ✔' : m.status === 'sub' ? ' ↔' : ' ×') : '') + '</button>'; }).join('') + '</div>';
+    if (!S.meals || !S.today) { view.innerHTML = '<div class="loading">読み込み中…</div>'; return Promise.all([call('getMeals', S.date), S.today ? Promise.resolve(S.today) : loadToday()]).then(function (r) { S.meals = r[0]; if (!S.mealSel) S.mealSel = S.today.next_meal_no; renderMeals(); }).catch(fail); }
+    var d = S.meals, t = S.today, h = '';
     var m = d.meals.filter(function (x) { return x.meal_no === S.mealSel; })[0] || d.meals[0];
-    h += '<div class="card"><h2>' + esc(m.label) + ' <span class="badge ' + (m.status === 'plan' ? 'ok' : m.status === 'sub' ? 'warn' : m.status === 'skip' ? 'bad' : '') + '">' + (m.status || '未') + '</span></h2>';
-    if (m.items.length) m.items.forEach(function (it) { h += '<div class="item"><span>' + esc(it.name) + ' <span class="muted">' + it.grams + (it.per === '100g' ? 'g' : '') + '</span> <span class="badge ' + (it.status === 'sub' ? 'warn' : 'ok') + '">' + it.status + '</span></span><span class="row"><span class="muted">' + it.kcal + ' kcal · P' + it.p + ' F' + it.f + ' C' + it.c + '</span><button class="btn sm danger" data-del="' + it._row + '">×</button></span></div>'; });
-    else h += '<div class="muted small">記録なし。プラン: ' + m.plan_items.map(function (p) { return esc(p.name) + ' ' + p.grams + (p.per === '100g' ? 'g' : ''); }).join(' / ') + '</div>';
-    h += '<div class="row" style="margin-top:8px"><button class="btn sm ok" id="mPlan">プラン通り ✔</button><button class="btn sm" id="mAddPlanItem">プラン品目を1つ追加</button></div>';
-    h += '</div>';
-    // 追加
-    h += '<div class="card"><h2>食品を追加（差替え・追加）</h2><input type="text" id="fq" placeholder="食品名で検索（例: 鶏、salmon）" autocomplete="off"><div class="foodlist" id="flist" style="margin-top:8px"></div>' +
-      '<div class="row" style="margin-top:8px"><input type="number" inputmode="decimal" id="famt" placeholder="量" class="grow"><span class="muted small" id="funit">g</span><select id="fstatus" style="width:110px"><option value="sub">差替え</option><option value="plan">プラン</option></select><button class="btn primary" id="fadd" disabled>追加</button></div>' +
-      '<div class="row" style="margin-top:8px"><button class="btn sm grow" id="aiBtn">🤖 AIで推定して foods に追加</button><button class="btn sm" id="manualBtn">手入力</button></div><div class="muted small" style="margin-top:4px">検索に無い食品は AI 推定（100g あたり、source=ai）。あとでシートで修正可。</div></div>';
-    view.innerHTML = h;
-
-    $$('[data-msel]').forEach(function (b) { b.onclick = function () { S.mealSel = Number(b.dataset.msel); renderMeals(); }; });
-    $$('[data-del]').forEach(function (b) { b.onclick = function () { call('deleteMealItem', d.date, Number(b.dataset.del)).then(function (res) { S.meals = res; S.today = null; renderMeals(); }).catch(fail); }; });
-    $('#mPlan').onclick = function () { call('mealPlanDone', d.date, m.meal_no).then(function () { S.meals = null; S.today = null; renderMeals(); }).catch(fail); };
-    $('#mAddPlanItem').onclick = function () {
-      var s = openSheet('<h2 style="margin:0 0 8px">プラン品目を追加</h2>' + m.plan_items.map(function (p, i) { return '<button class="btn block" style="margin-bottom:6px" data-pi="' + i + '">' + esc(p.name) + ' ' + p.grams + (p.per === '100g' ? 'g' : '') + '</button>'; }).join(''));
-      $$('[data-pi]', s).forEach(function (b) { b.onclick = function () { var p = m.plan_items[Number(b.dataset.pi)]; closeSheet(); call('addMealItem', d.date, m.meal_no, p.food_id, p.grams, 'plan', '').then(function (res) { S.meals = res; S.today = null; renderMeals(); }).catch(fail); }; });
-    };
-    var sel = null, q = $('#fq'), list = $('#flist'), amt = $('#famt'), addBtn = $('#fadd');
-    function drawList() {
-      var t = q.value.trim().toLowerCase();
-      var fs = d.foods.filter(function (f) { return !t || (f.name_ja + ' ' + f.name_en + ' ' + f.food_id).toLowerCase().indexOf(t) >= 0; }).slice(0, 40);
-      list.innerHTML = fs.length ? fs.map(function (f) { return '<div class="food' + (sel && sel.food_id === f.food_id ? ' sel' : '') + '" data-fid="' + esc(f.food_id) + '"><span>' + esc(f.name_ja) + (f.source === 'ai' ? ' <span class="badge">ai</span>' : '') + '</span><span class="m">' + f.kcal + 'kcal P' + f.p + ' F' + f.f + ' C' + f.c + ' /' + esc(f.per) + '</span></div>'; }).join('') : '<div class="food muted">該当なし → AI で推定</div>';
-      $$('.food[data-fid]', list).forEach(function (el) { el.onclick = function () { sel = d.foods.filter(function (f) { return f.food_id === el.dataset.fid; })[0]; $('#funit').textContent = sel.per === '100g' ? 'g' : sel.per.replace('1', ''); addBtn.disabled = false; drawList(); amt.focus(); }; });
+    var step = t.timeline.filter(function (x) { return x.id === 'meal:' + m.meal_no; })[0] || {};
+    var pk = m.plan_items.reduce(function (a, p) { return a + (p.kcal || 0); }, 0);
+    h += '<h1>' + esc(m.label) + '</h1>' + dateLine('<span class="mute" style="font-size:18px;margin-left:auto">' + esc(step.time || '') + '</span>');
+    h += '<div class="chips" style="margin-bottom:14px">' + d.meals.map(function (x) { return '<button' + (x.meal_no === m.meal_no ? ' class="on"' : x.status === 'plan' ? ' class="ok"' : x.status === 'skip' ? ' class="skip"' : '') + ' data-msel="' + x.meal_no + '">' + x.meal_no + (x.status === 'plan' ? ' ✓' : x.status === 'sub' ? ' ↔' : x.status === 'skip' ? ' ×' : '') + '</button>'; }).join('') + '</div>';
+    h += '<div class="card"><div class="ttl">プランの内容</div><div class="items">' + (m.plan_items.length ? m.plan_items.map(function (p) { return esc(p.name) + ' ' + p.grams + (p.per === '100g' ? 'g' : ''); }).join(' ・ ') : '（plan_meals 未設定）') + '<br><span class="num" style="font-size:14px">約 ' + Math.round(pk) + ' kcal</span></div>';
+    if (m.status) {
+      h += '<div class="badge ' + (m.status === 'plan' ? 'ok' : m.status === 'sub' ? 'warn' : 'bad') + '">' + (m.status === 'plan' ? 'プラン通り 記録済み' : m.status === 'sub' ? '変更して記録済み' : 'スキップ') + '</div>';
+      if (m.items.length) h += '<div class="list" style="margin-top:6px">' + m.items.map(function (it) { return '<div class="it"><span>' + esc(it.name) + ' <span class="mute">' + it.grams + (it.per === '100g' ? 'g' : '') + '</span></span><span class="m">' + it.kcal + ' kcal ・ P' + it.p + ' F' + it.f + ' C' + it.c + '</span><button class="x" data-del="' + it._row + '">×</button></div>'; }).join('') + '</div>';
+      h += '<div class="btns" style="margin-top:10px"><button class="b-sub" id="mChange">変更・追加</button></div>';
+    } else {
+      h += '<div class="btns"><button class="b-main" id="mPlan">プラン通り食べた</button><button class="b-sub" id="mChange">変更して記録</button></div>';
     }
-    q.oninput = drawList; drawList();
-    addBtn.onclick = function () { if (!sel) return; call('addMealItem', d.date, m.meal_no, sel.food_id, amt.value, $('#fstatus').value, '').then(function (res) { S.meals = res; S.today = null; toast('追加しました'); renderMeals(); }).catch(fail); };
-    $('#aiBtn').onclick = function () {
-      var name = q.value.trim() || prompt('食品名'); if (!name) return;
-      $('#aiBtn').disabled = true; toast('AI 推定中…');
-      call('estimateFoodWithAi', name).then(function (f) { toast(f.name_ja + ' を追加: ' + f.kcal + 'kcal/100g'); S.meals = null; S.aiPick = f.food_id; renderMeals(); }).catch(function (e) { $('#aiBtn').disabled = false; fail(e); });
+    h += '<div id="sub" class="hidden" style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px"><div class="mute small" style="margin-bottom:6px">よく使う差替え</div><div class="chips">' +
+      d.quick_subs.map(function (q, i) { return '<button data-q="' + i + '">' + esc(q.label) + '</button>'; }).join('') + '<button data-half="1">半分だけ</button><button class="skip" data-skip="1">スキップ</button></div>' +
+      '<div class="row2" style="margin-top:10px"><input class="txt" id="freeTxt" placeholder="食べたものを書く（例：サーモン150 米150）"><button class="b b-yel" style="flex:0 0 96px" id="freeBtn">AI 計算</button></div><div class="mute small" style="margin-top:4px">foods に無い食品は AI が 100g あたりの栄養を推定して追加します</div></div>';
+    h += '</div>';
+    var dv = function (k) { var x = Math.round(d.total[k] - d.plan_total[k]); return '<span style="color:' + (x > 0 ? 'var(--yellow)' : x < 0 ? 'var(--mute)' : 'var(--done)') + '">' + (x > 0 ? '+' : '') + x + '</span>'; };
+    h += '<div class="card"><div class="ttl small mute">1日合計 ・ プラン比</div><div class="stat" style="margin:8px 0 0"><div><div class="n">' + Math.round(d.total.kcal) + '<span> kcal</span></div><div class="l num">プラン ' + Math.round(d.plan_total.kcal) + ' ・ ' + dv('kcal') + '</div></div><div><div class="n">P ' + Math.round(d.total.p) + '<span> g</span></div><div class="l num">プラン ' + Math.round(d.plan_total.p) + ' ・ ' + dv('p') + '</div></div><div><div class="n">F ' + Math.round(d.total.f) + '<span> g</span></div><div class="l num">プラン ' + Math.round(d.plan_total.f) + ' ・ ' + dv('f') + '</div></div><div><div class="n">C ' + Math.round(d.total.c) + '<span> g</span></div><div class="l num">プラン ' + Math.round(d.plan_total.c) + ' ・ ' + dv('c') + '</div></div></div></div>';
+    view.innerHTML = h; bindDate();
+    var reload = function (res) { if (res && res.meals) S.meals = res; else S.meals = null; S.today = null; loadToday().then(renderMeals).catch(fail); };
+    $$('[data-msel]').forEach(function (b) { b.onclick = function () { S.mealSel = Number(b.dataset.msel); renderMeals(); }; });
+    var mp = $('#mPlan'); if (mp) mp.onclick = function () { mp.disabled = true; call('mealPlanDone', d.date, m.meal_no).then(function () { toast(m.meal_no + '食目 プラン通り'); S.mealSel = null; reload(); }).catch(function (e) { mp.disabled = false; fail(e); }); };
+    $('#mChange').onclick = function () { $('#sub').classList.toggle('hidden'); };
+    $$('[data-del]').forEach(function (b) { b.onclick = function () { call('deleteMealItem', d.date, Number(b.dataset.del)).then(reload).catch(fail); }; });
+    $$('[data-q]').forEach(function (b) { b.onclick = function () { var q = d.quick_subs[Number(b.dataset.q)]; call('addMealItem', d.date, m.meal_no, q.food_id, q.grams, 'sub', '').then(function (res) { toast(q.label + ' を記録'); reload(res); }).catch(fail); }; });
+    $('[data-half]').onclick = function () { call('mealHalf', d.date, m.meal_no).then(function (res) { toast('半分で記録'); reload(res); }).catch(fail); };
+    $('[data-skip]').onclick = function () { call('mealSkip', d.date, m.meal_no).then(function () { toast('スキップ'); reload(); }).catch(fail); };
+    $('#freeBtn').onclick = function () {
+      var txt = $('#freeTxt').value.trim(); if (!txt) return toast('食べたものを入力', true);
+      var b = this; b.disabled = true; toast('計算中…');
+      call('logMealText', d.date, m.meal_no, txt, !m.items.length || m.status === 'plan').then(function (res) { toast('記録しました'); reload(res); }).catch(function (e) { b.disabled = false; fail(e); });
     };
-    $('#manualBtn').onclick = function () {
-      var s = openSheet('<h2 style="margin:0 0 8px">食品を手入力（100g あたり）</h2><label class="lbl">名前</label><input type="text" id="mfName" value="' + esc(q.value) + '"><div class="grid2"><div><label class="lbl">kcal</label><input type="number" id="mfK"></div><div><label class="lbl">P</label><input type="number" id="mfP"></div><div><label class="lbl">F</label><input type="number" id="mfF"></div><div><label class="lbl">C</label><input type="number" id="mfC"></div></div><button class="btn primary block" id="mfSave" style="margin-top:12px">保存</button>');
-      $('#mfSave', s).onclick = function () { call('addFood', { name_ja: $('#mfName', s).value, kcal: $('#mfK', s).value, p: $('#mfP', s).value, f: $('#mfF', s).value, c: $('#mfC', s).value, source: 'user' }).then(function (f) { closeSheet(); S.meals = null; S.aiPick = f.food_id; renderMeals(); }).catch(fail); };
-    };
-    if (S.aiPick) { sel = d.foods.filter(function (f) { return f.food_id === S.aiPick; })[0] || null; S.aiPick = null; if (sel) { q.value = sel.name_ja; addBtn.disabled = false; drawList(); } }
+    $('#freeTxt').onkeydown = function (e) { if (e.key === 'Enter') $('#freeBtn').click(); };
   }
 
-  // ======================= メディア =======================
-  function renderMedia() {
-    if (!S.media) { view.innerHTML = '<div class="loading">読み込み中…</div>'; return Promise.all([call('listMedia', 60), call('listExercisesForSelect')]).then(function (r) { S.media = { list: r[0], exercises: r[1] }; renderMedia(); }).catch(fail); }
-    var d = S.media, h = '';
-    var exOpts = '<option value="">（種目なし）</option>' + d.exercises.map(function (e) { return '<option value="' + e.id + '">' + esc(e.label) + '</option>'; }).join('');
-    h += '<div class="card"><h2>アップロード → Drive/TrainingLog/' + esc(S.date.slice(0, 7)) + '/</h2><div class="row wrap" id="catRow"><button class="chip on" data-cat="body">body 体の変化</button><button class="chip" data-cat="form">form フォーム確認</button><button class="chip" data-cat="meal">meal</button></div>' +
-      '<label class="lbl">種目（form のとき）</label><select id="mEx">' + exOpts + '</select><label class="lbl">メモ</label><input type="text" id="mNote">' +
-      '<label class="lbl">ファイル（写真・動画、50MB 目安）</label><input type="file" id="mFile" accept="image/*,video/*"><div class="muted small" id="mProg"></div><button class="btn primary block" id="mUp" style="margin-top:8px">アップロード</button></div>';
-    h += '<div class="card"><h2>Drive アプリで直接アップした場合（URL 登録）</h2><input type="url" id="mUrl" placeholder="https://drive.google.com/file/d/…"><button class="btn block" id="mUrlAdd" style="margin-top:8px">URL を登録</button></div>';
-    h += '<div class="card"><h2>一覧（新しい順）</h2><div class="gallery">' + d.list.map(function (m) { return '<a class="thumb" href="' + esc(m.drive_url) + '" target="_blank" rel="noopener">' + (m.thumb ? '<img src="' + esc(m.thumb) + '" loading="lazy" alt="">' : '') + '<div class="cap">' + esc(m.date.slice(5)) + ' ' + esc(m.category) + (m.type === 'video' ? ' ▶' : '') + (m.exercise ? '<br>' + esc(m.exercise) : '') + '</div><button class="del" data-delm="' + m._row + '">×</button></a>'; }).join('') + '</div>' + (d.list.length ? '' : '<div class="muted small">まだありません</div>') + '</div>';
-    view.innerHTML = h;
-    var cat = 'body';
-    $$('[data-cat]').forEach(function (b) { b.onclick = function () { cat = b.dataset.cat; $$('[data-cat]').forEach(function (x) { x.classList.toggle('on', x === b); }); }; });
-    $('#mUp').onclick = function () {
-      var f = $('#mFile').files[0]; if (!f) return toast('ファイルを選択', true);
-      if (f.size > 50 * 1024 * 1024) return toast('50MB を超えています。Drive アプリで直接アップして URL を登録してください', true);
-      $('#mUp').disabled = true; $('#mProg').textContent = '読み込み中… (' + Math.round(f.size / 1024 / 1024 * 10) / 10 + 'MB)';
-      var reader = new FileReader();
-      reader.onload = function () {
-        var b64 = String(reader.result).split(',')[1];
-        $('#mProg').textContent = 'アップロード中…';
-        call('uploadMedia', b64, f.type || 'application/octet-stream', f.name, { date: S.date, category: cat, exercise_id: $('#mEx').value, note: $('#mNote').value })
-          .then(function () { toast('アップロード完了'); S.media = null; renderMedia(); }).catch(function (e) { $('#mUp').disabled = false; $('#mProg').textContent = ''; fail(e); });
-      };
-      reader.readAsDataURL(f);
-    };
-    $('#mUrlAdd').onclick = function () { call('addMediaUrl', { date: S.date, drive_url: $('#mUrl').value, category: cat, exercise_id: $('#mEx').value, note: $('#mNote').value, type: 'video' }).then(function () { toast('登録しました'); S.media = null; renderMedia(); }).catch(fail); };
-    $$('[data-delm]').forEach(function (b) { b.onclick = function (e) { e.preventDefault(); e.stopPropagation(); if (!confirm('一覧から削除しますか？（Drive のファイルは残ります）')) return; call('deleteMedia', Number(b.dataset.delm)).then(function () { S.media = null; renderMedia(); }).catch(fail); }; });
-  }
-
-  // ======================= サマリー =======================
+  // ======================= 週 =======================
   function renderSummary() {
     if (!S.summary) { view.innerHTML = '<div class="loading">読み込み中…</div>'; return call('getSummary', S.summaryWeek || null).then(function (d) { S.summary = d; S.summaryWeek = d.week_no; renderSummary(); }).catch(fail); }
     var d = S.summary, a = d.adherence, h = '';
-    h += '<div class="dayhead"><button class="icon" id="wkPrev">‹</button><div style="text-align:center"><div class="d">Week ' + d.week_no + '</div><div class="muted small">' + esc(d.range.start) + ' 〜 ' + esc(d.range.end) + '</div></div><button class="icon" id="wkNext">›</button></div>';
-    var cell = function (k, v, den) { return '<div><div class="k">' + k + '</div><div class="v">' + v + (den != null ? '<span class="muted small">/' + den + '</span>' : '') + '</div></div>'; };
-    h += '<div class="card"><h2>週の遵守率（' + a.days_elapsed + ' 日経過）</h2><div class="tot">' + cell('筋トレ', a.workouts.done, a.workouts.planned) + cell('有酸素', a.cardio.done, a.cardio.planned) + cell('食事', a.meals.on_plan, a.meals.planned) + cell('サプリ', a.supplements.pct + '%') + '</div><div class="muted small" style="margin-top:6px;text-align:center">水 ' + a.water.ok + '/' + a.water.days + ' 日達成 · 差替え ' + a.meals.subs + ' · スキップ ' + a.meals.skips + '</div></div>';
-    h += '<div class="card"><h2>体重推移 <span class="muted">（点線 = 7日移動平均）</span></h2>' + lineChart(d.weights.map(function (w) { return { x: w.date, y: disp(w.value) }; }), d.weights_ma7.map(function (w) { return { x: w.date, y: disp(w.value) }; })) + '</div>';
-    var exNames = d.top_sets.map(function (t) { return t.name; });
-    var selName = S.topSel && exNames.indexOf(S.topSel) >= 0 ? S.topSel : exNames[0];
-    var ts = d.top_sets.filter(function (t) { return t.name === selName; })[0];
-    h += '<div class="card"><h2>種目別 TOP セット重量</h2>' + (exNames.length ? '<select id="topSel">' + exNames.map(function (n) { return '<option' + (n === selName ? ' selected' : '') + '>' + esc(n) + '</option>'; }).join('') + '</select>' + lineChart(ts.points.map(function (p) { return { x: p.date, y: disp(p.value), lbl: '×' + p.reps }; }), null) : '<div class="muted small">TOP セットの記録がまだありません</div>') + '</div>';
-    h += '<div class="card"><h2>週次レポート</h2><label class="row small"><input type="checkbox" id="optShare"> 写真・動画を「リンクを知っている全員」に共有する</label><label class="row small" style="margin-top:4px"><input type="checkbox" id="optMsgr"> フォーム動画は Messenger で送った（sent via Messenger）</label><button class="btn primary block" id="genRep" style="margin-top:10px">週次レポート生成</button><div id="repOut"></div></div>';
+    h += '<h1>' + (d.week_no === d.current_week ? '今週' : 'Week ' + d.week_no) + '</h1>';
+    h += '<p class="date"><button class="nav" id="wkPrev">‹</button><span>Week <b>' + d.week_no + '</b> ・ <span style="font-size:22px">' + md(d.range.start) + '–' + md(d.range.end) + '</span></span><button class="nav" id="wkNext">›</button></p>';
+    var wDelta = d.today_weight != null && d.start_weight != null ? r1(d.today_weight - d.start_weight) : null;
+    h += '<div class="stat">' +
+      '<div><div class="n">' + (d.today_weight != null ? disp(d.today_weight) : '—') + '<span> ' + u() + '</span></div><div class="l">今朝' + (wDelta != null ? ' ・ 開始から ' + (wDelta > 0 ? '+' : '') + disp(wDelta) : '') + '</div></div>' +
+      '<div><div class="n">' + a.workouts.done + '<span> / ' + a.workouts.planned + '</span></div><div class="l">筋トレ完了</div></div>' +
+      '<div><div class="n">' + a.meals.on_plan + '<span> / ' + a.meals.planned + '</span></div><div class="l">食事 プラン通り' + (a.meals.subs ? '（差替え ' + a.meals.subs + '）' : '') + '</div></div>' +
+      '<div><div class="n">' + (d.water_today_ml / 1000).toFixed(1) + '<span> / ' + (d.water_goal_ml / 1000) + ' L</span></div><div class="l">水 今日 ・ 週 ' + a.water.ok + '/' + a.water.days + ' 日達成</div></div>' +
+      '</div>';
+    h += '<div class="spark"><div class="h"><span>体重（30日）</span><span class="num">有酸素 ' + a.cardio.done + '/' + a.cardio.planned + ' ・ サプリ ' + a.supplements.pct + '%</span></div>' + spark(d.weights.slice(-30), d.weights_ma7.slice(-30)) + '</div>';
+    h += '<div class="spark"><div class="h"><span>トップセット重量（種目別）</span></div>' + (d.top_sets.length ? d.top_sets.map(function (t) {
+      var pts = t.points, last = pts[pts.length - 1], prev = pts.length > 1 ? pts[pts.length - 2] : null;
+      var up = prev && last.value > prev.value;
+      return '<div class="r' + (up ? ' up' : '') + '"><span>' + esc(t.name) + '</span><span>' + (prev ? disp(prev.value) + ' → ' : '') + disp(last.value) + ' ' + u() + ' × ' + last.reps + '</span></div>';
+    }).join('') : '<div class="r mute"><span>まだ記録なし</span><span>—</span></div>') + '</div>';
+    h += '<div class="card"><div class="ttl" style="margin-bottom:8px">コーチに送る</div><div class="report" id="repText">生成中…</div>' +
+      '<label class="opt"><input type="checkbox" id="optShare"> 写真・動画を「リンクを知っている全員」に共有してから URL を載せる</label><label class="opt"><input type="checkbox" id="optMsgr"> フォーム動画は Messenger で送った（sent via Messenger）</label>' +
+      '<div class="btns" style="margin-top:10px"><button class="b-yel" id="copyRep">レポートをコピー</button><button class="b-sub" id="addMedia">写真・動画を追加</button></div>' +
+      (d.media.length ? '<div class="gallery">' + d.media.map(function (m) { var id = /\/d\/([\w-]+)/.exec(m.drive_url); return '<a class="thumb" href="' + esc(m.drive_url) + '" target="_blank" rel="noopener">' + (id ? '<img src="https://drive.google.com/thumbnail?id=' + id[1] + '&sz=w300" loading="lazy" alt="">' : '') + '<div class="cap">' + esc(m.date.slice(5)) + ' ' + esc(m.category) + (m.type === 'video' ? ' ▶' : '') + '</div></a>'; }).join('') + '</div>' : '') + '</div>';
+    h += '<div class="card"><div class="ttl small mute">設定</div><div class="btns" style="margin-top:8px"><button class="b-sub" id="unitBtn">単位: ' + u() + ' → ' + (S.unit === 'kg' ? 'lb' : 'kg') + '</button></div><div class="mute small" style="margin-top:6px">保存は常に kg。時刻テンプレ・休憩秒数・提案の増分はシート settings で変更</div></div>';
     view.innerHTML = h;
     $('#wkPrev').onclick = function () { S.summaryWeek = d.week_no - 1; S.summary = null; renderSummary(); };
     $('#wkNext').onclick = function () { S.summaryWeek = d.week_no + 1; S.summary = null; renderSummary(); };
-    var ts_ = $('#topSel'); if (ts_) ts_.onchange = function () { S.topSel = ts_.value; renderSummary(); };
-    $('#genRep').onclick = function () {
-      $('#genRep').disabled = true;
-      call('generateWeeklyReport', d.week_no, { share_links: $('#optShare').checked, form_via_messenger: $('#optMsgr').checked }).then(function (r) {
-        $('#repOut').innerHTML = '<pre class="report" id="repText">' + esc(r.text) + '</pre><button class="btn ok block" id="copyRep">コピー（Messenger に貼る）</button>';
-        $('#copyRep').onclick = function () {
-          var txt = r.text;
-          (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function () { toast('コピーしました'); }).catch(function () {
-            var ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); toast('コピーしました');
-          });
-        };
-        $('#genRep').disabled = false;
-      }).catch(function (e) { $('#genRep').disabled = false; fail(e); });
+    $('#addMedia').onclick = function () { openMediaSheet('body', '', function () { S.summary = null; renderSummary(); }); };
+    $('#unitBtn').onclick = function () { S.unit = S.unit === 'kg' ? 'lb' : 'kg'; call('saveUnit', S.unit).catch(fail); S.today = S.workout = null; renderSummary(); };
+    var gen = function () { $('#repText').textContent = '生成中…'; call('generateWeeklyReport', d.week_no, { share_links: $('#optShare').checked, form_via_messenger: $('#optMsgr').checked }).then(function (r) { var el = $('#repText'); if (el) el.textContent = r.text; }).catch(fail); };
+    gen();
+    $('#optShare').onchange = gen; $('#optMsgr').onchange = gen;
+    $('#copyRep').onclick = function () {
+      var txt = $('#repText').textContent;
+      (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function () { toast('コピーしました'); }).catch(function () { var ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); toast('コピーしました'); });
     };
   }
-
-  /** 依存なしの簡易折れ線 SVG。s1: [{x:date,y}], s2: 任意（移動平均）。 */
-  function lineChart(s1, s2) {
-    if (!s1.length) return '<div class="muted small">データなし</div>';
-    var W = 600, H = 180, L = 36, R = 8, T = 10, B = 22;
-    var ys = s1.map(function (p) { return p.y; }).concat(s2 ? s2.map(function (p) { return p.y; }) : []);
-    var mn = Math.min.apply(null, ys), mx = Math.max.apply(null, ys);
-    if (mx === mn) { mx += 1; mn -= 1; }
-    var pad = (mx - mn) * 0.1; mn -= pad; mx += pad;
-    var n = s1.length;
-    var X = function (i) { return L + (n === 1 ? (W - L - R) / 2 : (W - L - R) * i / (n - 1)); };
-    var Y = function (v) { return T + (H - T - B) * (1 - (v - mn) / (mx - mn)); };
-    var path = function (s) { return s.map(function (p, i) { return (i ? 'L' : 'M') + X(i).toFixed(1) + ',' + Y(p.y).toFixed(1); }).join(' '); };
-    var h = '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">';
-    [0, 0.5, 1].forEach(function (f) { var v = mn + (mx - mn) * f; h += '<line class="axis" x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(v) + '" y2="' + Y(v) + '"/><text class="lbl" x="2" y="' + (Y(v) + 3) + '">' + r1(v) + '</text>'; });
-    if (s2) h += '<path class="l2" d="' + path(s2) + '"/>';
-    h += '<path class="l1" d="' + path(s1) + '"/>';
-    s1.forEach(function (p, i) { h += '<circle class="pt" r="3" cx="' + X(i) + '" cy="' + Y(p.y) + '"><title>' + esc(p.x) + ' ' + p.y + (p.lbl || '') + '</title></circle>'; });
-    var step = Math.max(1, Math.ceil(n / 6));
-    s1.forEach(function (p, i) { if (i % step === 0 || i === n - 1) h += '<text class="lbl" x="' + X(i) + '" y="' + (H - 6) + '" text-anchor="middle">' + esc(p.x.slice(5)) + '</text>'; });
-    return h + '</svg>';
+  /** 依存なしスパークライン。 */
+  function spark(s1, s2) {
+    if (!s1.length) return '<div class="mute small">データなし</div>';
+    var W = 300, H = 80, ys = s1.concat(s2 || []).map(function (p) { return p.value; });
+    var mn = Math.min.apply(null, ys), mx = Math.max.apply(null, ys); if (mx === mn) { mx += 0.5; mn -= 0.5; }
+    var n = s1.length, X = function (i) { return n === 1 ? W / 2 : W * i / (n - 1); }, Y = function (v) { return 6 + (H - 12) * (1 - (v - mn) / (mx - mn)); };
+    var pts = function (s) { return s.map(function (p, i) { return X(i).toFixed(1) + ',' + Y(p.value).toFixed(1); }).join(' '); };
+    return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' + (s2 && s2.length ? '<polyline fill="none" stroke="#6FCF8A" stroke-width="1.5" stroke-dasharray="3 3" points="' + pts(s2) + '"/>' : '') + '<polyline fill="none" stroke="#F2C300" stroke-width="2" points="' + pts(s1) + '"/></svg>' +
+      '<div class="r mute" style="font-size:12px"><span>' + esc(s1[0].date.slice(5)) + ' ' + disp(s1[0].value) + '</span><span>' + esc(s1[n - 1].date.slice(5)) + ' ' + disp(s1[n - 1].value) + ' ' + u() + '</span></div>';
   }
 
   render();

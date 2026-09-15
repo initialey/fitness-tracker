@@ -3,31 +3,25 @@
 <head>
   <meta charset="utf-8">
   <base target="_top">
-  <title>Training Log</title>
+  <title>トレログ</title>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
   <?!= include('Styles') ?>
 </head>
 <body>
-  <header class="top">
-    <button class="icon" id="datePrev" aria-label="前日">‹</button>
-    <div class="date" id="dateLabel"></div>
-    <button class="icon" id="dateNext" aria-label="翌日">›</button>
-    <button class="chip" id="unitBtn"></button>
-  </header>
-
+<div class="phone">
   <main id="view"><div class="loading">読み込み中…</div></main>
 
   <nav class="tabs">
-    <button data-tab="today">今日</button>
-    <button data-tab="workout">トレ</button>
-    <button data-tab="meals">食事</button>
-    <button data-tab="media">写真</button>
-    <button data-tab="summary">まとめ</button>
+    <button data-tab="today"><span class="ic">今日</span><span class="sub" id="tabToday">流れ</span></button>
+    <button data-tab="workout"><span class="ic">筋トレ</span><span class="sub" id="tabWorkout">Day</span></button>
+    <button data-tab="meals"><span class="ic">食事</span><span class="sub" id="tabMeals">食事</span></button>
+    <button data-tab="summary"><span class="ic">週</span><span class="sub">まとめ</span></button>
   </nav>
 
   <div id="toast" class="toast"></div>
   <div id="sheet" class="sheet hidden"><div class="sheet-body"></div></div>
-
-  <script>window.BOOT = <?!= bootstrap ?>;</script>
-  <?!= include('AppJs') ?>
+</div>
+<script>window.BOOT = <?!= bootstrap ?>;</script>
+<?!= include('AppJs') ?>
 </body>
 </html>

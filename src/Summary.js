@@ -27,9 +27,17 @@ function getSummary(weekNo) {
     return { name: k, points: pts };
   });
 
+  var todayW = wmap[today] === undefined ? null : wmap[today];
+  var startW = weights.length ? weights[0].value : null;
+  var waterRow = findRow_('log_routine', function (r) { return r.date === today && /^水/.test(String((findRow_('plan_routine', function (p) { return Number(p.id) === Number(r.item_id); }) || {}).name)); });
+  var media = findRows_('log_media', function (r) { return r.date >= range.start && r.date <= range.end; })
+    .map(function (r) { return { date: r.date, category: r.category, type: r.type, drive_url: r.drive_url, note: r.note }; });
   return {
     unit: s.unit, week_no: wk, current_week: curWeek, range: range,
     weights: weights, weights_ma7: ma, top_sets: topSeries,
+    today_weight: todayW, start_weight: startW,
+    water_today_ml: waterRow ? Number(waterRow.value) || 0 : 0, water_goal_ml: Number(s.water_goal_ml) || 5000,
+    media: media,
     adherence: weekAdherence_(range, s)
   };
 }
@@ -46,7 +54,7 @@ function weekAdherence_(range, s) {
   var rtLogs = findRows_('log_routine', inRange);
   var activeSup = readRows_('plan_supplements').filter(function (r) { return r.active !== false; }).length;
   var waterGoal = Number(s.water_goal_ml) || 5000;
-  var waterId = (findRow_('plan_routine', function (r) { return /水/.test(String(r.name)); }) || {}).id;
+  var waterId = (findRow_('plan_routine', function (r) { return /^水/.test(String(r.name)); }) || {}).id;
   var mealsPerDay = readRows_('plan_meals').length;
   var today = todayYmd_();
 

@@ -28,22 +28,34 @@ function getToday(dateYmd) {
     .sort(function (a, b) { return Number(a.order) - Number(b.order); })
     .map(function (p) {
       var l = rtRows.filter(function (r) { return Number(r.item_id) === Number(p.id); }).pop();
-      var isWater = /水/.test(String(p.name));
+      var isWater = /^水/.test(String(p.name));
       if (isWater && l) waterMl = Number(l.value) || 0;
-      return { id: Number(p.id), name: p.name, timing: p.timing, done: !!(l && l.done), value: l ? l.value : '', is_water: isWater };
+      return { id: Number(p.id), name: p.name, timing: p.timing, done: !!(l && l.done), value: l ? l.value : '', is_water: isWater, time: !isWater && l && l.done ? String(l.value) : '' };
     });
 
   var mealLogs = findRows_('log_meals', function (r) { return r.date === date; });
+  var foods = foodMap_();
   var meals = readRows_('plan_meals').sort(function (a, b) { return Number(a.meal_no) - Number(b.meal_no); }).map(function (m) {
     var logs = mealLogs.filter(function (r) { return Number(r.meal_no) === Number(m.meal_no); });
     var status = mealStatus_(logs);
-    return { meal_no: Number(m.meal_no), label: m.label, status: status, items: logs.length, kcal: round1_(logs.reduce(function (a, r) { return a + (Number(r.kcal) || 0); }, 0)) };
+    var planKcal = 0;
+    var planItems = parseItemsJson_(m.default_items).map(function (it) {
+      var f = foods[it.food_id];
+      var mac = f ? calcMacros_(f, it.grams) : { kcal: 0 };
+      planKcal += mac.kcal;
+      var nm = f ? String(f.name_ja).replace(/[（(].*$/, '') : it.food_id;
+      return { food_id: it.food_id, name: f ? f.name_ja : it.food_id, grams: it.grams, short: nm + it.grams + (f && f.per === '100g' ? '' : '') };
+    });
+    return { meal_no: Number(m.meal_no), label: m.label, status: status, items: logs.length, kcal: round1_(logs.reduce(function (a, r) { return a + (Number(r.kcal) || 0); }, 0)), plan_items: planItems, plan_kcal: round1_(planKcal) };
   });
 
-  var workoutSets = findRows_('log_workout', function (r) { return r.date === date; }).length;
+  var wLogs = findRows_('log_workout', function (r) { return r.date === date; });
+  var workoutSets = wLogs.filter(function (r) { return Number(r.set_no) > 0; }).length;
+  var doneMarker = wLogs.filter(function (r) { return r.set_type === 'DONE'; })[0];
+  var exCount = readRows_('plan_exercises').filter(function (e) { return Number(e.day_no) === dayNo && e.active !== false; }).length;
   var cardio = findRows_('log_cardio', function (r) { return r.date === date; });
 
-  return {
+  var base = {
     date: date,
     weekday: ['日', '月', '火', '水', '木', '金', '土'][parseYmd_(date).getUTCDay()],
     unit: s.unit,
@@ -63,9 +75,18 @@ function getToday(dateYmd) {
     meals: meals,
     workout_sets: workoutSets,
     cardio: cardio.map(function (c) { return { type: c.type, minutes: Number(c.minutes), note: c.note }; }),
+    workout_finished: !!doneMarker,
+    exercise_count: exCount,
+    timer_morning_min: Number(s.timer_morning_min) || 0,
     timing_labels: TIMING_LABELS,
     days: readRows_('plan_days').map(function (d) { return { day_no: Number(d.day_no), name: d.name, is_rest: !!d.is_rest }; })
   };
+  var tl = buildTimeline_(s, base, { finished: !!doneMarker, finished_time: doneMarker ? String(doneMarker.created_at).slice(11, 16) : '', exercise_count: exCount, sets_done: workoutSets });
+  base.timeline = tl.steps;
+  base.now = tl.now;
+  var nextMeal = base.meals.filter(function (m) { return !m.status; })[0];
+  base.next_meal_no = nextMeal ? nextMeal.meal_no : (base.meals.length ? base.meals[base.meals.length - 1].meal_no : 1);
+  return base;
 }
 
 function mealStatus_(logs) {
@@ -104,12 +125,20 @@ function toggleSupplement(dateYmd, itemId, done) {
   });
 }
 
+/** サプリを timing まとめてトグル（「全部飲んだ」）。 */
+function toggleSupplementGroup(dateYmd, timing, done) {
+  var ids = readRows_('plan_supplements').filter(function (r) { return r.active !== false && r.timing === timing; }).map(function (r) { return Number(r.id); });
+  ids.forEach(function (id) { toggleSupplement(dateYmd, id, done); });
+  return { done: !!done, count: ids.length, time: done ? nowHm_() : '' };
+}
+
 function toggleRoutine(dateYmd, itemId, done) {
   return withLock_(function () {
     var ex = findRow_('log_routine', function (r) { return r.date === dateYmd && Number(r.item_id) === Number(itemId); });
-    var obj = { date: dateYmd, item_id: Number(itemId), done: !!done, value: ex ? ex.value : '' };
+    // 水以外は value に完了時刻(HH:mm)を入れる（タイマー起点に使う）
+    var obj = { date: dateYmd, item_id: Number(itemId), done: !!done, value: done ? nowHm_() : '' };
     if (ex) updateRow_('log_routine', ex._row, obj); else appendRow_('log_routine', obj);
-    return { done: !!done };
+    return { done: !!done, time: obj.value };
   });
 }
 
@@ -117,7 +146,7 @@ function toggleRoutine(dateYmd, itemId, done) {
 function addWater(dateYmd, deltaMl) {
   var s = getSettings();
   var goal = Number(s.water_goal_ml) || 5000;
-  var water = findRow_('plan_routine', function (r) { return /水/.test(String(r.name)); });
+  var water = findRow_('plan_routine', function (r) { return /^水/.test(String(r.name)); });
   if (!water) throw new Error('plan_routine に「水」の行がありません');
   return withLock_(function () {
     var ex = findRow_('log_routine', function (r) { return r.date === dateYmd && Number(r.item_id) === Number(water.id); });
