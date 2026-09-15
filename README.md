@@ -1,4 +1,11 @@
-# Training Log（GAS + Google Sheets）
+# Training Log
+
+2 つの実装がある。
+
+- **`artifact/`** — Claude Artifact 版（スマホだけで使える単一 HTML。db / assets / sample / downloads）。詳細は [artifact/README.md](artifact/README.md)
+- **`src/`** — GAS + Google Sheets 版（以下）
+
+# GAS + Google Sheets 版
 
 コーチの週間プランを実行した記録をスマホで素早く残し、週次でコーチに共有するための個人用ウェブアプリ。
 Google スプレッドシート 1 ファイルを DB、Apps Script（HTML Service）を UI として使う。
