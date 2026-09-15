@@ -1,0 +1,11 @@
+{
+  "name": "fitness-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Training log (GAS + Google Sheets)",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "push": "clasp push",
+    "open": "clasp open"
+  }
+}

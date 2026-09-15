@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <base target="_top">
+  <title>Training Log</title>
+  <?!= include('Styles') ?>
+</head>
+<body>
+  <header class="top">
+    <button class="icon" id="datePrev" aria-label="前日">‹</button>
+    <div class="date" id="dateLabel"></div>
+    <button class="icon" id="dateNext" aria-label="翌日">›</button>
+    <button class="chip" id="unitBtn"></button>
+  </header>
+
+  <main id="view"><div class="loading">読み込み中…</div></main>
+
+  <nav class="tabs">
+    <button data-tab="today">今日</button>
+    <button data-tab="workout">トレ</button>
+    <button data-tab="meals">食事</button>
+    <button data-tab="media">写真</button>
+    <button data-tab="summary">まとめ</button>
+  </nav>
+
+  <div id="toast" class="toast"></div>
+  <div id="sheet" class="sheet hidden"><div class="sheet-body"></div></div>
+
+  <script>window.BOOT = <?!= bootstrap ?>;</script>
+  <?!= include('AppJs') ?>
+</body>
+</html>
