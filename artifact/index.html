@@ -57,13 +57,15 @@ h1.tap{cursor:pointer}
 .step.done:before{background:var(--done);border-color:var(--done)}
 .step.cur:before{background:var(--yellow);border-color:var(--yellow);box-shadow:0 0 0 4px rgba(242,195,0,.25)}
 .step .row{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;background:var(--card);cursor:pointer}
-.step.done .row{background:transparent;color:var(--mute)}
+.step.done .row{background:var(--card);color:var(--mute)}
+.step.done .nm{color:var(--mute)}
 .step .body{flex:1;min-width:0}
 .step .t1{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
 .step .nm{font-weight:700}
-.step .tm{font:500 14px var(--num);color:var(--mute);white-space:nowrap}
-.step .l2{font-size:13px;color:var(--mute);margin-top:2px;overflow-wrap:anywhere}
-.step .l3{font:500 13px var(--num);color:var(--mute);margin-top:2px}
+.step .tm{font:500 14px var(--num);color:var(--mute);white-space:nowrap;display:flex;flex-direction:column;align-items:flex-end;gap:3px;margin-left:10px;flex:0 0 auto;min-width:56px}
+.step .l2{font-size:13px;color:var(--mute);margin-top:2px;overflow-wrap:anywhere;white-space:normal;word-break:break-word}
+.step .l3{font:500 13px var(--num);color:var(--mute);margin-top:2px;overflow-wrap:anywhere;white-space:normal}
+.step .nm{overflow-wrap:anywhere;white-space:normal}
 .step.done .l3{color:var(--done)}
 .step.cur .row{outline:1px solid rgba(242,195,0,.35)}
 .step.future .row{opacity:.6}
@@ -77,9 +79,9 @@ h1.tap{cursor:pointer}
 .b.small{font-size:13px;padding:8px 10px;color:var(--mute);background:transparent;border:1px solid var(--line)}
 .step.handled .row{opacity:.75}
 .step .tm{text-align:right;line-height:1.2}
-.step .tm b{font-size:15px;color:var(--ink)}
+.step .tm b{font-size:16px;color:var(--ink);line-height:1}
 .step .tm b.late{color:var(--yellow)}
-.step .tm small{display:block;font-size:11px;color:var(--mute)}
+.step .tm small{display:block;font-size:11px;color:var(--mute);opacity:.85}
 .step.done .tm b{color:var(--ink)}
 .step .tm.edit{cursor:pointer;text-decoration:underline dotted}
 .lbl-sub{display:inline-block;font-size:11px;font-weight:700;padding:1px 6px;border-radius:4px;margin-left:6px;vertical-align:middle}
@@ -299,7 +301,7 @@ textarea.txt{min-height:60px}
    ===================================================================== */
 const LB = 0.45359237;
 const WD = ['日', '月', '火', '水', '木', '金', '土'];
-const SEED_VERSION = 7; // 統合版（2026-09-16）: 腹筋/カーフを最終種目の後へ、休憩 180/120、サプリ追加、3食目サーモン置換 // 初期データを変えたら上げる（db 上の plan_* / foods を再投入する）
+const SEED_VERSION = 8; // 朝のルーティン確定（リンゴ酢→1食目→経口サプリ→15分→サイリウム）、クレアチンをトレ前へ // 初期データを変えたら上げる（db 上の plan_* / foods を再投入する）
 // セット種類の日本語名と「目的と重さの目安」文言（{reps} と {kg} を置換）
 const SET_TYPES = {
   WU: { name: 'ウォームアップ', purpose: '軽めの重さで {reps}回。フォームを確かめる' },
@@ -340,7 +342,8 @@ const DEFAULT_SETTINGS = {
   workoutMin: 60, warmupMin: 5,
   cardioLabel: '35〜40分 ・ Zone2（ゆっくりジョグ or 傾斜歩き）・ 夜でもOK',
   warmupNote: '約5分 ・ 座ったままやらない ・ 痛みが出たら止める',
-  times: { weight: '06:40', morning: '06:45', meal1: '07:00', after_meal: '07:15', warmup: '08:30', workout: '08:35',
+  // 朝: 体重 → リンゴ酢（食事の15分前）→ 1食目 → 経口サプリ → 15分 → サイリウム
+  times: { weight: '06:40', morning: '06:45', meal1: '07:00', after_meal: '07:05', psyllium: '07:20', warmup: '08:30', workout: '08:35',
     meal2: '10:30', meal3: '13:30', meal4: '16:30', meal5: '19:30', cardio: '21:00', night: '22:30' }
 };
 const FOOD_ALIASES = {
@@ -480,12 +483,12 @@ const SEED = {
     [4, 'アシュワガンダ', 'night', '300mg 就寝前'],
     [5, 'フィッシュオイル', 'after_meal', ''],
     [6, '亜鉛', 'after_meal', ''],
-    [7, 'クレアチン', 'after_meal', '7g（タイミングはコーチ確認中）'],
+    [7, 'クレアチン', 'pre', '7g（タイミングはコーチ確認中）'],
     [8, 'プレワークアウト（Nitric Oxide 系）', 'pre', '']
   ],
   routine: [
-    { id: 1, name: 'リンゴ酢 ＋ 水500ml（銘柄・量はコーチ確認中）', timing: 'morning', order: 1, active: true },
-    { id: 2, name: 'サイリウム', timing: 'after_meal', order: 2, active: true },
+    { id: 1, name: 'リンゴ酢 大さじ1 ＋ 水500ml以上（ゆっくり飲む ・ 食事の15分前）', short: 'リンゴ酢', timing: 'morning', order: 1, active: true },
+    { id: 2, name: 'サイリウムハスク 大さじ1 ＋ 水1L以上（ゆっくり ・ 経口サプリの15分後）', short: 'サイリウム', timing: 'after_meal', order: 2, active: true },
     { id: 3, name: '水 5L', timing: 'anytime', order: 3, active: true, isWater: true }
   ]
 };
@@ -610,6 +613,8 @@ async function seedIfNeeded() {
   for (const f of SEED.foods) { const cur = ST.foods[f[0]]; if (!cur || cur.source === 'plan') await store.set('foods', f[0], { foodId: f[0], nameJa: f[1], nameEn: f[2], per: f[3], kcal: f[4], p: f[5], f: f[6], c: f[7], source: 'plan', note: '' }); }
   // v7: 休憩 トップ 180 秒／他 120 秒、ウォームアップ注記を既定に戻す（ユーザーが設定で変えていれば次回以降はそのまま）
   const migrate = Number(ST.settings.seedVersion) < 7 ? { restTopSec: 180, restMainSec: 120, restOtherSec: 120, warmupNote: DEFAULT_SETTINGS.warmupNote } : {};
+  // v8: 経口サプリ 07:05、サイリウムはその 15 分後（07:20）
+  if (Number(ST.settings.seedVersion) < 8) migrate.times = Object.assign({}, ST.settings.times, { after_meal: '07:05', psyllium: '07:20' });
   await store.set('settings', 'main', Object.assign({}, ST.settings, migrate, { seedVersion: SEED_VERSION }));
 }
 const sortedVals = (coll, key) => Object.values(ST[coll]).sort((a, b) => Number(a[key]) - Number(b[key]));
@@ -691,8 +696,10 @@ function quickSubs() {
   return out;
 }
 function suppsModel(date) { const log = (ST.log_supplements[date] || {}).items || {}; return sortedVals('plan_supplements', 'order').filter(s => s.active !== false).map(s => { const l = log[s.id] || {}; const at = l.loggedAt || legacyIso(date, l.time); return { id: s.id, name: s.name, dose: s.dose || '', timing: s.timing, done: !!l.done, na: !!l.na && !l.done, reason: l.na ? reasonJa(l) : '', loggedAt: l.done || l.na ? at : '', time: l.done ? fmtHm(at) : '' }; }); }
-function routineModel(date) { const log = (ST.log_routine[date] || {}).items || {}; return sortedVals('plan_routine', 'order').filter(r => r.active !== false).map(r => { const l = log[r.id] || {}, isWater = !!(r.isWater || /^水/.test(r.name)); const at = l.loggedAt || (isWater ? '' : legacyIso(date, l.time)); return { id: r.id, name: r.name, timing: r.timing, isWater, done: !!l.done, na: !!l.na && !l.done, reason: l.na ? reasonJa(l) : '', loggedAt: at, time: fmtHm(at), value: l.value }; }); }
+function routineModel(date) { const log = (ST.log_routine[date] || {}).items || {}; return sortedVals('plan_routine', 'order').filter(r => r.active !== false).map(r => { const l = log[r.id] || {}, isWater = !!(r.isWater || /^水/.test(r.name)); const at = l.loggedAt || (isWater ? '' : legacyIso(date, l.time)); return { id: r.id, name: r.name, short: r.short || '', timing: r.timing, isWater, done: !!l.done, na: !!l.na && !l.done, reason: l.na ? reasonJa(l) : '', loggedAt: at, time: fmtHm(at), value: l.value }; }); }
 function workoutDoc(date) { return ST.log_workout[date] || { date, sets: {}, meta: {}, warmup: {} }; }
+/** ウォームアップ所要の表示。3 時間超は異常値として分を出さない */
+function warmupMinutesText(min) { const m = Number(min) || 0; return m >= 1 && m <= 180 ? '完了 ' + m + '分' : '完了'; }
 function warmupModel(date) {
   const w = workoutDoc(date).warmup || {}, sets = w.sets || {}, checked = w.checked || {};
   const items = sortedVals('plan_warmup', 'id').map(x => { const n = Number(sets[x.id]) || (checked[x.id] ? 3 : 0); const target = x.targetSets || 3, min = x.minSets || 2;
@@ -703,6 +710,14 @@ function warmupModel(date) {
 }
 function exercisesFor(date) { const n = dayNoFor(date); return Object.values(ST.plan_exercises).filter(e => Number(e.dayNo) === n && e.active !== false).sort((a, b) => a.order - b.order); }
 
+/** セット数（分母付き）。スーパーセットは ①＋② で 1 セット、腹筋・カーフの枠は数えない */
+function setUnits(exs, wo) {
+  const logged = wo.sets || {}; let total = 0, done = 0;
+  exs.filter(e => !e.accessory).forEach(ex => { const sets = ex.sets && ex.sets.length ? ex.sets : parseSetScheme(ex.setScheme); const groups = {}; sets.forEach(st => { const k = st.move ? 'p' + st.pairNo : 's' + st.setNo; (groups[k] = groups[k] || []).push(st); }); Object.values(groups).forEach(g => { total++; if (g.every(st => logged[ex.id + '_' + st.setNo])) done++; }); });
+  return { total, done };
+}
+/** 今日画面の種目一覧: 最初の 3 種目＋「ほか N種目」 */
+function shortExerciseList(names) { return names.slice(0, 3).join('・') + (names.length > 3 ? ' ほか' + (names.length - 3) + '種目' : ''); }
 function todayModel(date) {
   const s = ST.settings, pd = planDay(date), wo = workoutDoc(date), exs = exercisesFor(date);
   const t = { date, dayNo: pd.dayNo, dayName: pd.name, dayNotes: pd.notes || '', isRest: isRestDay(date), dayOverride: !!dayDoc(date).dayNo,
@@ -710,7 +725,7 @@ function todayModel(date) {
     workoutMissed: dayDoc(date).workoutMissed || null, cardioMissed: dayDoc(date).cardioMissed || null,
     supplements: suppsModel(date), routine: routineModel(date), waterMl: waterMl(date), waterLoggedAt: waterLoggedAt(date), waterGoalMl: Number(s.waterGoalMl) || 5000,
     meals: sortedVals('plan_meals', 'mealNo').map(m => mealModel(date, m.mealNo)), warmup: warmupModel(date),
-    workoutFinished: !!wo.finished, workoutFinishedAt: wo.finished ? (wo.finishedAt || legacyIso(date, wo.finished)) : '', setsDone: Object.keys(wo.sets || {}).length, exercises: exs,
+    workoutFinished: !!wo.finished, workoutFinishedAt: wo.finished ? (wo.finishedAt || legacyIso(date, wo.finished)) : '', setsDone: Object.keys(wo.sets || {}).length, setUnits: setUnits(exs, wo), exercises: exs,
     cardio: (ST.log_cardio[date] || {}).entries || [], days: sortedVals('plan_days', 'dayNo') };
   const tl = buildTimeline(t); t.timeline = tl.steps; t.now = tl.now;
   const nm = t.meals.find(m => !m.status); t.nextMealNo = nm ? nm.mealNo : 0;
@@ -724,13 +739,13 @@ function buildTimeline(t) {
   const latestAt = items => items.reduce((a, x) => x.loggedAt > a ? x.loggedAt : a, '');
   const suppNames = items => items.map(x => x.name + (x.dose ? ' ' + x.dose : '')).join('・');
   const suppGroup = (timing, planned) => { const items = t.supplements.filter(x => x.timing === timing); if (!items.length) return null; const done = items.every(x => x.done), na = !done && items.every(x => x.na || x.done) && items.some(x => x.na);
-    return { id: 'supp:' + timing, kind: 'supp_group', timing, title: 'サプリ（' + ({ after_meal: '食後', pre: 'トレ前', intra: 'トレ中', post: 'トレ後', night: '夜', morning: '朝' }[timing] || timing) + '）', lines: [suppNames(items)].concat(na ? ['今日はなし（' + (items.find(x => x.na) || {}).reason + '）'] : []), planned, done, handled: done || na, mark: done ? 'ok' : na ? 'na' : '', loggedAt: done || na ? latestAt(items) : '', items, na }; };
-  const routineSteps = timing => t.routine.filter(x => x.timing === timing && !x.isWater).map(x => ({ id: 'routine:' + x.id, kind: 'routine', itemId: x.id, title: x.name, lines: x.na ? ['今日はなし（' + x.reason + '）'] : [], planned: T[timing], done: x.done, handled: x.done || x.na, mark: x.done ? 'ok' : x.na ? 'na' : '', loggedAt: x.done || x.na ? x.loggedAt : '', na: x.na }));
+    return { id: 'supp:' + timing, kind: 'supp_group', timing, title: ({ after_meal: '経口サプリ（1食目のあと ・ サイリウムの15分前）', pre: 'サプリ トレ前（クレアチンはタイミング確認中）', intra: 'サプリ（トレ中）', post: 'サプリ（トレ後）', night: '就寝前サプリ', morning: 'サプリ（朝）' }[timing] || 'サプリ（' + timing + '）'), lines: [suppNames(items)].concat(na ? ['今日はなし（' + (items.find(x => x.na) || {}).reason + '）'] : []), planned, done, handled: done || na, mark: done ? 'ok' : na ? 'na' : '', loggedAt: done || na ? latestAt(items) : '', items, na }; };
+  const routineSteps = timing => t.routine.filter(x => x.timing === timing && !x.isWater).map(x => ({ id: 'routine:' + x.id, kind: 'routine', itemId: x.id, title: x.name, short: x.short || '', lines: x.na ? ['今日はなし（' + x.reason + '）'] : [], planned: timing === 'after_meal' ? (T.psyllium || T.after_meal) : T[timing], done: x.done, handled: x.done || x.na, mark: x.done ? 'ok' : x.na ? 'na' : '', loggedAt: x.done || x.na ? x.loggedAt : '', na: x.na }));
   const mealStep = n => { const m = t.meals.find(x => x.mealNo === n); if (!m) return null;
     const lines = [m.status && m.status !== 'skip' && m.status !== 'plan' ? m.eaten.map(i => i.short).join('・') : m.planItems.map(p => p.short).join('・') + (m.note ? '　※' + m.note : '')];
     if (m.status === 'skip') lines.push('スキップ（' + (m.skipReason || '食べなかった') + '）'); else if (m.status) lines.push((m.status === 'plan' ? (m.variant === 'alt' ? '代替案で記録 ・ ' : 'プラン通り ・ ') : '変更して記録 ・ ') + macroLine(m.mac).replace('kcal', 'kcal' + (m.estimated ? '※' : ''))); else lines.push(macroLine(m.planMac));
     return { id: 'meal:' + n, kind: 'meal', mealNo: n, title: m.label, photo: m.photo, lines, planned: T['meal' + n] || '', done: m.status === 'plan', mark: m.status === 'plan' ? 'ok' : m.status === 'sub' ? 'sub' : m.status === 'skip' ? 'skip' : '', handled: !!m.status, loggedAt: m.status ? m.loggedAt : '', status: m.status }; };
-  const warmupStep = planned => ({ id: 'warmup', kind: 'warmup', title: 'ウォームアップ ' + t.warmup.items.length + '種 ・ 約' + s.warmupMin + '分', lines: [t.warmup.items.map(x => x.name).join('・') + ' ／ 各10回×2セット'].concat(t.warmup.done ? ['完了 ' + t.warmup.minutes + '分'] : t.warmup.doneCount ? [t.warmup.doneCount + '/' + t.warmup.items.length + '種 完了'] : []), planned, done: t.warmup.done, loggedAt: t.warmup.loggedAt, skipped: t.warmup.skipped });
+  const warmupStep = planned => ({ id: 'warmup', kind: 'warmup', title: 'ウォームアップ ' + t.warmup.items.length + '種 ・ 約' + s.warmupMin + '分', lines: [t.warmup.items.map(x => x.name).join('・') + ' ／ 各10回×2セット'].concat(t.warmup.done ? [warmupMinutesText(t.warmup.minutes)] : t.warmup.doneCount ? [t.warmup.doneCount + '/' + t.warmup.items.length + '種 完了'] : []), planned, done: t.warmup.done, loggedAt: t.warmup.loggedAt, skipped: t.warmup.skipped });
   const wAt = t.weight ? (t.weight.loggedAt || legacyIso(t.date, t.weight.time)) : (t.weightSkipped ? t.weightSkipped.loggedAt : '');
   steps.push({ id: 'weight', kind: 'weight', title: '体重', lines: [t.weight ? disp(t.weight.weightKg) + unit() + (t.prevWeight ? ' ' + deltaArrow(t.weight.weightKg - t.prevWeight.weightKg) + '（前回 ' + disp(t.prevWeight.weightKg) + unit() + '）' : '') + (t.weight.bodyFatPct !== '' ? ' ・ 体脂肪 ' + t.weight.bodyFatPct + '%' : '') : t.weightSkipped ? '測れなかった（' + reasonJa(t.weightSkipped) + '）' : (t.prevWeight ? '前回 ' + disp(t.prevWeight.weightKg) + unit() + '（' + t.prevWeight.date.slice(5) + '）' : '起床後・トイレ後に')], planned: T.weight, done: !!t.weight, handled: !!t.weight || !!t.weightSkipped, mark: t.weight ? 'ok' : t.weightSkipped ? 'na' : '', loggedAt: wAt, na: !!t.weightSkipped });
   const morning = routineSteps('morning'); morning.forEach(x => steps.push(x));
@@ -741,7 +756,7 @@ function buildTimeline(t) {
     const pre = suppGroup('pre', T.warmup); if (pre) steps.push(pre);
     steps.push(warmupStep(T.warmup));
     const wm = t.workoutMissed;
-    steps.push({ id: 'workout', kind: 'workout', title: '筋トレ Day' + t.dayNo + ' ' + t.dayName + ' ・ ' + t.exercises.filter(e => !e.accessory).length + '種目 ・ 約' + s.workoutMin + '分', lines: [t.exercises.filter(e => !e.accessory).map(e => e.nameJa).join('・')].concat(wm ? ['できなかった（' + reasonJa(wm) + '）・ ' + (wm.shift ? 'Day をずらす（明日 Day' + t.dayNo + ' をやり直す）' : 'そのまま進む')] : t.setsDone ? [t.setsDone + 'セット記録済み'] : []), planned: T.workout, done: t.workoutFinished, handled: t.workoutFinished || !!wm, mark: t.workoutFinished ? 'ok' : wm ? 'na' : '', loggedAt: t.workoutFinishedAt || (wm ? wm.loggedAt : ''), na: !!wm });
+    steps.push({ id: 'workout', kind: 'workout', title: '筋トレ Day' + t.dayNo + ' ' + t.dayName + ' ・ ' + t.exercises.filter(e => !e.accessory).length + '種目 ・ 約' + s.workoutMin + '分', lines: [shortExerciseList(t.exercises.filter(e => !e.accessory).map(e => e.nameJa))].concat(wm ? ['できなかった（' + reasonJa(wm) + '）・ ' + (wm.shift ? 'Day をずらす（明日 Day' + t.dayNo + ' をやり直す）' : 'そのまま進む')] : t.setUnits.done ? ['全' + t.setUnits.total + 'セット中 ' + t.setUnits.done + 'セット完了'] : []), planned: T.workout, done: t.workoutFinished, handled: t.workoutFinished || !!wm, mark: t.workoutFinished ? 'ok' : wm ? 'na' : '', loggedAt: t.workoutFinishedAt || (wm ? wm.loggedAt : ''), na: !!wm });
     { const acc = t.exercises.find(e => e.accessory); if (acc) { const logged = Object.values(workoutDoc(t.date).sets || {}).filter(x => Number(x.exerciseId) === acc.id); const sub = ((workoutDoc(t.date).meta || {})[acc.id] || {}).subName || ''; steps.push({ id: 'accessory', kind: 'accessory', title: (acc.accessory === 'abs' ? '腹筋' : 'カーフ: スミス カーフレイズ') + '（最終種目のあと ・ ' + (acc.accessory === 'abs' ? '種目・セット数・回数' : 'セット数・回数') + 'はコーチ確認中）', lines: [logged.length ? (sub ? sub + ' ・ ' : '') + logged.map(x => setActual(x)).join('・') : '種目名・重量・回数は自由入力で記録'], planned: T.workout, done: logged.length > 0, handled: logged.length > 0, mark: logged.length ? 'ok' : '', loggedAt: logged.length ? logged[logged.length - 1].loggedAt : '' }); } }
     ['intra', 'post'].forEach(tm => { const g = suppGroup(tm, T.workout); if (g) steps.push(g); });
     routineSteps('post').forEach(x => { x.planned = T.workout; steps.push(x); });
@@ -764,7 +779,7 @@ function buildTimeline(t) {
 }
 function deltaArrow(diffKg) { const d = disp(diffKg); if (!d) return '±0'; return (d > 0 ? '▲' : '▼') + Math.abs(d); }
 function nowCard(st, t) {
-  const c = { kind: st.kind, stepId: st.id, title: st.title, sub: st.lines.join(' ／ '), button: '完了', timerUntil: st.timerUntil || '', planned: st.planned || '' };
+  const c = { kind: st.kind, stepId: st.id, title: st.short || st.title, sub: st.lines.join(' ／ '), button: '完了', timerUntil: st.timerUntil || '', planned: st.planned || '' };
   const m = t.meals.find(x => x.mealNo === st.mealNo);
   ({ weight: () => { c.title = '体重を測る'; c.button = '保存'; },
     routine: () => { c.button = '飲んだ'; c.itemId = st.itemId; if (st.id === 'routine:1' && ST.settings.timerMorningMin) c.sub = '飲んだら' + ST.settings.timerMorningMin + '分タイマーが始まり、1食目の合図が出ます'; },
@@ -776,7 +791,7 @@ function nowCard(st, t) {
     cardio: () => { c.sub = '分数を記録'; c.button = '記録する'; },
     water: () => { c.button = '+500ml'; c.button2 = '+250ml'; }
   }[st.kind] || (() => {}))();
-  if (st.timerUntil && st.kind !== 'meal') { c.title = st.title + 'まで'; c.sub = '時間になったら知らせます'; }
+  if (st.timerUntil && st.kind !== 'meal') { c.title = (st.short || st.title) + 'まで'; c.sub = '時間になったら知らせます'; }
   return c;
 }
 function workoutModel(date) {
@@ -979,7 +994,7 @@ const A = {
   /** ウォームアップ: 「1セット完了」ごとに保存（sets{id:n}）。初回で startedAt を記録 */
   async warmupSet(date, id, delta) { const doc = workoutDoc(date), w = Object.assign({ sets: {} }, doc.warmup); w.sets = Object.assign({}, w.sets); const target = (ST.plan_warmup[String(id)] || {}).targetSets || 3;
     w.sets[id] = Math.max(0, Math.min(target, (Number(w.sets[id]) || 0) + delta)); if (!w.startedAt) w.startedAt = Date.now(); w.skipped = false; await store.set('log_workout', date, Object.assign({}, doc, { warmup: w })); },
-  async warmupStart(date) { const doc = workoutDoc(date), w = Object.assign({ sets: {} }, doc.warmup); if (w.startedAt) return; w.startedAt = Date.now(); await store.set('log_workout', date, Object.assign({}, doc, { warmup: w })); },
+  async warmupStart(date, force) { const doc = workoutDoc(date), w = Object.assign({ sets: {} }, doc.warmup); if (w.startedAt && !force) return; w.startedAt = Date.now(); await store.set('log_workout', date, Object.assign({}, doc, { warmup: w })); },
   /** 全種完了で「始める」を押したとき: 完了時刻と所要分を保存 */
   async warmupFinish(date) { const doc = workoutDoc(date), w = Object.assign({ sets: {} }, doc.warmup); if (w.done) return; const at = isoNow(); w.completed = true; w.done = fmtHm(at); w.loggedAt = at; w.startedAtIso = w.startedAt ? isoLocal(new Date(w.startedAt)) : at; w.minutes = w.startedAt ? Math.max(1, Math.round((Date.now() - w.startedAt) / 60000)) : Number(ST.settings.warmupMin) || 5; w.skipped = false; await store.set('log_workout', date, Object.assign({}, doc, { warmup: w })); },
   async warmupSkip(date, reason) { const doc = workoutDoc(date); await store.set('log_workout', date, Object.assign({}, doc, { warmup: Object.assign({}, doc.warmup, { skipped: true, completed: false, skipReason: reason, done: '' }) })); await A.setDaily(date, { warmupSkipped: { reason, at: nowHm() } }); },
@@ -1454,7 +1469,9 @@ function renderWarmup(d) {
   h += '<button class="done-btn" id="wuStart"' + (w.allDone ? '' : ' style="opacity:.45"') + '>' + target + 'を始める</button>';
   h += '<div class="mini"><button id="wuSkip">今日は飛ばす</button><button id="glossBtn">用語</button></div>';
   view.innerHTML = h;
-  if (!w.startedAt && UI.wuOpened !== d.date) { UI.wuOpened = d.date; A.warmupStart(d.date).catch(() => {}); }
+  // 画面を開いた時刻を startedAt に。3 時間以上前に開いたまま 1 セットも記録していなければ開き直しとみなして取り直す
+  const stale = w.startedAt && !w.doneCount && !w.items.some(i => i.sets > 0) && Date.now() - w.startedAt > 3 * 3600e3;
+  if ((!w.startedAt || stale) && UI.wuOpened !== d.date) { UI.wuOpened = d.date; A.warmupStart(d.date, !!stale).catch(() => {}); }
   if (w.startedAt) every(() => { const el = $('#wuElapsed'); if (el) el.textContent = mmss((Date.now() - w.startedAt) / 1000); }, 1000);
   $$('[data-wuset]', view).forEach(b => { b.onclick = () => { vibrate(40); act(A.warmupSet(d.date, Number(b.dataset.wuset), 1)); }; });
   $$('[data-wuundo]', view).forEach(b => { b.onclick = () => act(A.warmupSet(d.date, Number(b.dataset.wuundo), -1)); });
@@ -1527,9 +1544,9 @@ function dayReport(date) {
   const w = wo.warmup || {}, start = w.startedAtIso || (w.startedAt ? isoLocal(new Date(w.startedAt)) : ''), end = wo.finishedAt || '';
   const logged = Object.values(wo.sets || {}).map(x => x.loggedAt).filter(Boolean).sort();
   const t0 = start || logged[0] || '', t1 = end || logged[logged.length - 1] || '';
-  const dur = t0 && t1 ? Math.max(0, Math.round((new Date(t1) - new Date(t0)) / 60000)) : '';
+  let dur = t0 && t1 ? Math.max(0, Math.round((new Date(t1) - new Date(t0)) / 60000)) : ''; if (dur > 180) dur = '';
   const lines = [head, 'Duration: ' + (dur !== '' ? dur + ' min' : '—'), ''];
-  lines.push('Warm-up: ' + (w.done ? 'done (6 moves x 2 sets' + (w.minutes ? ', ' + w.minutes + ' min' : '') + ')' : w.skipped ? 'skipped (' + (w.skipReason || '') + ')' : 'not done'));
+  lines.push('Warm-up: ' + (w.done ? 'done (6 moves x 2 sets' + (w.minutes && w.minutes <= 180 ? ', ' + w.minutes + ' min' : '') + ')' : w.skipped ? 'skipped (' + (w.skipReason || '') + ')' : 'not done'));
   lines.push('');
   const notes = []; let n = 0;
   d.exercises.forEach(ex => {
@@ -1553,7 +1570,7 @@ function dayReport(date) {
 /** トレーニング完了画面: 所要時間・やった内容・有酸素・コーチ報告テキスト */
 function renderComplete(d) {
   const wo = workoutDoc(d.date), w = wo.warmup || {}, start = w.startedAtIso || '', end = wo.finishedAt || '';
-  const dur = start && end ? Math.max(0, Math.round((new Date(end) - new Date(start)) / 60000)) : '';
+  let dur = start && end ? Math.max(0, Math.round((new Date(end) - new Date(start)) / 60000)) : ''; if (dur > 180) dur = '';
   const cd = ((ST.log_cardio[d.date] || {}).entries || []), cm = (ST.log_daily[d.date] || {}).cardioMissed;
   let h = '<div class="ex-head"><h1>Day ' + d.dayNo + ' ' + esc(d.dayName) + ' 完了</h1><span class="p">' + (dur !== '' ? '所要 ' + dur + '分（ウォームアップ開始〜完了）' : '所要時間 —') + '</span></div>';
   h += '<div class="card"><div class="ttl">やった内容</div>' + d.exercises.map(ex => { const done = ex.sets.filter(x => x.done); let v; if (!done.length) v = ex.accessory ? 'コーチ確認中 ・ 未記録' : '— スキップ'; else if (ex.pair) { const by = {}; done.forEach(x => { (by[x.pairNo] = by[x.pairNo] || {})[x.move] = setActual(x); }); v = Object.keys(by).sort((a, b) => a - b).map(k => (by[k].a || '—') + ' / ' + (by[k].b || '—')).join('、'); } else v = done.map(x => setActual(x) + (x.setType === 'DROP' ? '（ドロップ）' : x.setType === 'TOP' ? '（トップ）' : '')).join('、'); return '<div class="cmp-row"><span>' + esc(ex.subName || ex.nameJa) + '</span><span class="v">' + esc(v) + '</span></div>'; }).join('') + '</div>';
@@ -1650,7 +1667,7 @@ async function boot() {
   use('downloads').then(dl => { CAP.downloads = dl; scheduleRender(); });
 }
 window.addEventListener('beforeunload', () => { try { localStorage.setItem('tl.tab', UI.tab); } catch (e) { /* ignore */ } });
-window.__tl = { resizeImage, validateEstimate, parseSetScheme, expandPairSets, repsText, setLabel, setActual, dayReport, bumpKg }; // テスト用フック（純粋関数のみ）
+window.__tl = { resizeImage, validateEstimate, parseSetScheme, expandPairSets, repsText, setLabel, setActual, dayReport, bumpKg, warmupMinutesText, setUnits, shortExerciseList }; // テスト用フック（純粋関数のみ）
 boot();
 })();
 </script>
