@@ -81,6 +81,15 @@
 - 筋トレ・有酸素: 行の ○ → 「今日はできなかった」→ 理由（仕事／体調不良／旅行／その他）。筋トレは「Day をずらす（明日同じ Day をやり直す）／そのまま進む」を選び log_daily に保存。ずらした分だけ以降の Day 判定が繰り下がる
 - 週まとめ: 体重グラフは隣り合う日だけ線で結び欠測日を飛ばす。7 日平均は暦 7 日窓の実測のみ。「体重 N/M 日 測定」、「できなかった項目とその理由」ブロック。レポートは `Weight: … (5/7 days measured, skipped: travel×2)` と Notes に自動集計。CSV に skipped / reason 列
 
+### 写真からカロリー・PFC を推定
+- 食事シートの「📷 写真で記録」（`sample` があり `sample.limits().images` が真のときだけ表示。無ければ従来のテキスト入力のみ）
+- `<input type="file" accept="image/*" capture="environment">` → 送信前に `resizeImage` で長辺 1280px・JPEG 0.8 に縮小（EXIF の向きは createImageBitmap で補正）
+- 補足入力（例「ご飯は半分残した」）をプロンプトに含め、`sample.json(prompt, {images:[blob], modelTier:'default', cache:false, signal})` で
+  `{items:[{name_ja,name_en,grams,kcal,p,f,c}], total, confidence:"high|medium|low", note}` を返させる。`validateEstimate` で形式を検証し、失敗時は 1 行エラー＋「手入力に切替」
+- 結果は食材ごとの行（グラム ± で比例配分、× で除外、名前タップで foods から差し替え）、合計 kcal/PFC※ と推定の確度
+- 「この内容で記録」→ 食材を foods に `source:"ai_photo"` で登録（100g 換算）、品目を `estimated:true` で log_meals に追加、写真は assets に保存して log_media（category:"meal", mealNo）に紐付け、meal.photo に assetId／確度／note。assets が無ければ写真はこのセッションのメモリだけに保持して推定・記録は行う
+- 今日画面の食事行に 📷（タップでサムネイル）、推定値を含む食事は kcal に「※」。週まとめ「写真記録 N回（推定値含む）」、レポート `(photo-logged: N, estimated values marked ※)`
+
 ### ダイアログ
 claude.ai のアーティファクトは sandbox iframe のため `confirm()` / `prompt()` は常に false / null を返す。確認・入力・時刻はすべてページ内ダイアログ（`askConfirm` / `askText` / `askTime`）で行う。
 

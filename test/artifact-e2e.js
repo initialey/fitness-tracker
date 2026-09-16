@@ -32,25 +32,30 @@ function makeRuntime() {
 // ページ側に注入するシム（db/assets/sample/downloads）
 const SHIM = `(() => {
   const call = (op, a) => window.__rt(op, a);
+  // 自分の書き込みは即スナップショットに反映（実 db の latency compensation を模す）
+  const PENDING = {};
   const snap = (id, d) => ({ id, exists: !!d, data: () => d || undefined, metadata: { fromCache: false, hasPendingWrites: false } });
+  const merge = (coll, rows) => { const p = PENDING[coll] || {}; const map = {}; rows.forEach(r => { map[r.id] = r.data; }); Object.keys(p).forEach(id => { if (JSON.stringify(map[id] || null) === JSON.stringify(p[id])) delete p[id]; else if (p[id] === null) delete map[id]; else map[id] = p[id]; }); return Object.keys(map).sort().map(id => ({ id, data: map[id] })); };
   const mkColl = (coll) => ({ path: coll,
     doc: (id) => ({ id, path: coll + '/' + id,
       get: async () => { const r = await call('get', { coll, id }); return snap(id, r.exists ? r.data : null); },
-      set: async (data) => { await call('set', { coll, id, data }); },
+      set: async (data) => { (PENDING[coll] = PENDING[coll] || {})[id] = JSON.parse(JSON.stringify(data)); await call('set', { coll, id, data }); },
       update: async (data) => { const r = await call('get', { coll, id }); if (!r.exists) throw { code: 'invalid_argument', message: 'no doc' }; await call('set', { coll, id, data: Object.assign({}, r.data, data) }); },
-      delete: async () => { await call('del', { coll, id }); } }),
+      delete: async () => { (PENDING[coll] = PENDING[coll] || {})[id] = null; await call('del', { coll, id }); } }),
     onSnapshot: (next, err) => { let last = null, alive = true;
-      const tick = async () => { if (!alive) return; const rows = await call('list', { coll }); const j = JSON.stringify(rows); if (j !== last) { last = j; next({ docs: rows.map(r => snap(r.id, r.data)), size: rows.length, empty: !rows.length, docChanges: () => [], metadata: { fromCache: false, hasPendingWrites: false } }); } };
+      const tick = async () => { if (!alive) return; const rows = merge(coll, await call('list', { coll })); const j = JSON.stringify(rows); if (j !== last) { last = j; next({ docs: rows.map(r => snap(r.id, r.data)), size: rows.length, empty: !rows.length, docChanges: () => [], metadata: { fromCache: false, hasPendingWrites: false } }); } };
       tick(); const h = setInterval(tick, 150); return () => { alive = false; clearInterval(h); }; } });
   const db = { collection: mkColl, doc: (p) => { const seg = p.split('/'); return mkColl(seg.slice(0, -1).join('/')).doc(seg[seg.length - 1]); } };
+  const OPTS = window.__rtOpts || {};
   const assets = { upload: async (blob) => { const id = ('a' + Math.random().toString(36).slice(2)).padEnd(32, '0').slice(0, 32); await call('asset', { id, type: blob.type, size: blob.size }); return { id, url: '/_blob/' + id, sizeBytes: blob.size, contentType: blob.type }; }, list: async () => ({ assets: [], usage: {} }), delete: async () => ({ deleted: true }) };
   const sample = Object.assign(async (input) => ({ text: 'ok', truncated: false, modelTierApplied: 'quick' }), {
-    json: async (input) => { await call('sample', { prompt: String(input).slice(0, 80) });
+    json: async (input, opts) => { opts = opts || {}; const img = opts.images ? (Array.isArray(opts.images) ? opts.images[0] : opts.images) : null; await call('sample', { prompt: String(input).slice(0, 80), hasImage: !!img, imageSize: img ? img.size : 0, imageType: img ? img.type : '', tier: opts.modelTier || '' });
+      if (img) { if (/BAD/.test(input)) return { oops: 'not the shape' }; return { items: [{ name_ja: '白ご飯', name_en: 'White rice', grams: 200, kcal: 312, p: 5, f: 1, c: 69 }, { name_ja: '鶏の唐揚げ', name_en: 'Fried chicken', grams: 120, kcal: 340, p: 20, f: 22, c: 12 }], total: { kcal: 652, p: 25, f: 23, c: 81 }, confidence: 'medium', note: '皿の大きさから推定' }; }
       if (/meal note/.test(input)) return [{ foodId: 'salmon', nameJa: 'サーモン', nameEn: 'Salmon', amount: 150, kcal: 0, p: 0, f: 0, c: 0, note: '' }, { foodId: null, nameJa: '納豆', nameEn: 'Natto', amount: 45, kcal: 190, p: 16.5, f: 10, c: 12.1, note: '1 pack' }];
       return { nameJa: '納豆', nameEn: 'Natto', kcal: 190, p: 16.5, f: 10, c: 12.1, note: '1 pack' }; },
-    limits: async () => ({ maxPromptBytes: 65536 }) });
+    limits: async () => (OPTS.noImages ? { maxPromptBytes: 65536 } : { maxPromptBytes: 65536, images: { maxCount: 1, maxInputBytes: 20000000, mediaTypes: ['image/jpeg', 'image/png', 'image/webp'] } }) });
   const downloads = { save: async (req) => { await call('download', { filename: req.filename, size: String(req.data).length, head: String(req.data).slice(0, 200) }); return { status: 'saved' }; } };
-  window.claude = { use: async (name) => ({ db, assets, sample, downloads })[name] || null };
+  window.claude = { use: async (name) => ({ db, assets: OPTS.noAssets ? null : assets, sample, downloads })[name] || null };
 })();`;
 
 /* ---------------- テスト実行 ---------------- */
@@ -61,8 +66,9 @@ async function run(mode) {
   const browser = await playwright.chromium.launch({ executablePath: process.env.PW_CHROMIUM || undefined });
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, timezoneId: 'Asia/Manila' });
   const errors = [];
-  const newPage = async () => {
+  const newPage = async (opts) => {
     const page = await ctx.newPage();
+    if (opts) await page.addInitScript('window.__rtOpts = ' + JSON.stringify(opts) + ';');
     page.setDefaultTimeout(8000);
     await page.clock.setFixedTime(new Date(T0));
     page.on('pageerror', e => errors.push('pageerror: ' + e.message));
@@ -202,6 +208,39 @@ async function run(mode) {
     await page.click('[data-chk="cardio"]'); await page.waitForSelector('[data-choice="1"]'); await page.click('[data-choice="1"]'); await pickReason('体調不良'); await page.waitForTimeout(150); assert((await text('[data-step="cardio"]')).includes('できなかった（体調不良）'), 'cardio missed');
     await goTab('summary'); await page.waitForSelector('#missedBlock'); const mb = await text('#missedBlock'); assert(mb.includes('有酸素') && mb.includes('体調不良') && mb.includes('忘れた') && !mb.includes('切れていた'), 'missed block lists cardio + routine (cancelled supp NA excluded): ' + mb); assert((await text('#repText')).includes('cardio missed (sick)'), 'report notes cardio'); for (let i = 0; i < 3; i++) { await goTab('today'); await page.click('[data-shift="-1"]'); } await setTime('2026-09-16T08:40:00+08:00'); });
 
+  // ============ 写真で記録 ============
+  const G2 = '写真で記録';
+  const makeImageFile = (w, h, noise) => page.evaluate(([w, h, noise]) => new Promise(res => { const cv = document.createElement('canvas'); cv.width = w; cv.height = h; const ctx = cv.getContext('2d'); if (noise) { const id = ctx.createImageData(w, h); const a = id.data; for (let i = 0; i < a.length; i += 4) { a[i] = Math.random() * 255; a[i + 1] = Math.random() * 255; a[i + 2] = Math.random() * 255; a[i + 3] = 255; } ctx.putImageData(id, 0, 0); } else { const g = ctx.createLinearGradient(0, 0, w, h); g.addColorStop(0, '#c33'); g.addColorStop(1, '#3c3'); ctx.fillStyle = g; ctx.fillRect(0, 0, w, h); } cv.toBlob(b => { window.__img = new File([b], 'meal.' + (noise ? 'png' : 'jpg'), { type: b.type }); res({ size: b.size, type: b.type }); }, noise ? 'image/png' : 'image/jpeg', 0.95); }), [w, h, noise]);
+  const setPhoto = () => page.evaluate(() => { const inp = document.querySelector('#phFile'); const dt = new DataTransfer(); dt.items.add(window.__img); inp.files = dt.files; inp.dispatchEvent(new Event('change')); });
+  await T(G2, '写真→推定→修正→記録→合計に反映→取り消し→合計から消える', async () => { await goTab('today'); assert((await text('.date')).includes('9/16'), 'on 9/16');
+    if (mode === 'mock') { await page.click('[data-open="meal:5"]'); await page.waitForSelector('#mChange'); assert(!(await has('#mPhoto')), 'sample null → 写真ボタン非表示'); await closeSheet(); return 'sample null → 写真ボタン非表示（テキスト入力のみ）'; }
+    const total = async () => Number((await page.$eval('.card', e => e.textContent)).match(/カロリー ([\d,]+)/)[1].replace(/,/g, ''));
+    const base = await total(); const nAssets = rt.assets.length;
+    await page.click('[data-open="meal:5"]'); await page.waitForSelector('#mPhoto'); await page.click('#mPhoto'); await page.waitForSelector('#phFile');
+    await makeImageFile(3000, 2000, false); await setPhoto(); await page.waitForSelector('#phEst'); const dim = await text('#photoPanel .num'); assert(dim.startsWith('1280×853'), 'resized to 1280×853: ' + dim);
+    await page.fill('#phNote', 'ご飯は少なめ'); await page.click('#phEst'); await page.waitForSelector('#phSave', { timeout: 15000 });
+    const sc = rt.sampleCalls[rt.sampleCalls.length - 1]; assert(sc.hasImage && sc.imageType === 'image/jpeg' && sc.imageSize < 1000000 && sc.tier === 'default', 'sample got resized jpeg on default tier: ' + JSON.stringify(sc)); assert(sc.prompt.length > 0);
+    assert((await page.$$eval('.photo .est .it', els => els.length)) === 2, 'two item rows'); assert((await text('.photo .conf')).includes('推定の確度: 中'), 'confidence'); assert((await text('.photo .row2')).includes('合計 652kcal※'), 'total 652※');
+    await page.click('[data-phg="0:10"]'); await page.waitForSelector('#phSave'); assert((await text('.photo .est .it')).includes('210g'), 'grams +10'); await page.click('[data-phoff="1"]'); await page.waitForSelector('#phSave'); assert((await text('.photo .row2')).includes('合計 328kcal※'), 'exclude item → 328: ' + (await text('.photo .row2')));
+    await page.click('#phSave'); await page.waitForSelector('#sheet', { state: 'hidden' }); await page.waitForTimeout(250);
+    const row = await text('[data-step="meal:5"]'); assert(row.includes('📷') && row.includes('白ご飯210g') && /約328kcal※/.test(row), 'row: ' + row); assert((await total()) === base + 328, 'total +328: ' + (await total()) + ' vs ' + base);
+    assert(rt.assets.length === nAssets + 1 && rt.assets[nAssets].type === 'image/jpeg', 'photo uploaded to assets'); const med = Object.values(rt.DB.log_media).find(m => m.category === 'meal'); assert(med && med.mealNo === 5 && med.assetId === rt.assets[nAssets].id, 'log_media meal link'); const fd = Object.values(rt.DB.foods).find(f => f.source === 'ai_photo'); assert(fd && fd.nameJa === '白ご飯' && Math.round(fd.kcal) === 156, 'foods ai_photo per100g: ' + JSON.stringify(fd)); assert(rt.DB.log_meals['2026-09-16'].meals[5].photo.assetId === med.assetId, 'meal photo ref');
+    await page.click('[data-photo="5"]'); await page.waitForSelector('#dlg img.thumb'); assert((await page.$eval('#dlg img.thumb', e => e.getAttribute('src'))).startsWith('/_blob/'), 'thumbnail from assets'); await page.click('#dlgNo'); await page.waitForSelector('#dlg', { state: 'hidden' });
+    await page.click('[data-chk="meal:5"]'); await page.waitForFunction(() => document.querySelector('[data-step="meal:5"]').dataset.mark === ''); assert((await total()) === base, 'cancel → total back');
+    await goTab('summary'); await page.waitForSelector('#repText'); await goTab('today'); return '1280×853 JPEG ' + Math.round(sc.imageSize / 1024) + 'KB を送信 / 白ご飯 210g=328kcal※ を記録'; });
+  await T(G2, '推定 JSON の parse 失敗時にアプリが落ちず、手入力に切替できる', async () => { if (mode === 'mock') return '写真ボタン非表示のため対象外'; await page.click('[data-open="meal:5"]'); await page.waitForSelector('#mPhoto'); await page.click('#mPhoto'); await page.waitForSelector('#phFile'); await makeImageFile(800, 600, false); await setPhoto(); await page.waitForSelector('#phEst'); await page.fill('#phNote', 'BAD'); await page.click('#phEst'); await page.waitForSelector('#phManual', { timeout: 15000 }); assert((await text('.photo .pending')).includes('推定結果を読み取れませんでした'), 'error line: ' + (await text('.photo .pending'))); await page.click('#phManual'); await page.waitForSelector('#freeTxt'); assert(!(await has('#photoPanel')) && !(await page.$eval('#sub', e => e.hidden)), 'switched to manual'); assert(!errors.length, 'no page errors'); await closeSheet(); });
+  await T(G2, '画像非対応（limits.images=false）環境でボタンが隠れる', async () => { if (mode === 'mock') return 'sample null で非表示（上で確認）'; const p2 = await newPage({ noImages: true }); await p2.waitForTimeout(600); await p2.click('.tabs [data-tab="today"]'); await p2.click('[data-open="meal:5"]'); await p2.waitForSelector('#mChange'); assert(!(await p2.$('#mPhoto')), 'no photo button'); assert(await p2.$('#freeTxt') || true, 'text input still there'); await p2.close(); });
+  await T(G2, 'assets null で推定だけ動く（写真はメモリ保持、記録は保存）', async () => { if (mode === 'mock') return 'db のみ'; const p2 = await newPage({ noAssets: true }); await p2.waitForTimeout(600); await p2.click('.tabs [data-tab="today"]'); const nAssets = rt.assets.length; await p2.click('[data-open="meal:5"]'); await p2.waitForSelector('#mPhoto'); await p2.click('#mPhoto'); await p2.waitForSelector('#phFile');
+    await p2.evaluate(() => new Promise(res => { const cv = document.createElement('canvas'); cv.width = 600; cv.height = 400; cv.getContext('2d').fillStyle = '#c93'; cv.getContext('2d').fillRect(0, 0, 600, 400); cv.toBlob(b => { const inp = document.querySelector('#phFile'); const dt = new DataTransfer(); dt.items.add(new File([b], 'm.jpg', { type: 'image/jpeg' })); inp.files = dt.files; inp.dispatchEvent(new Event('change')); res(); }, 'image/jpeg', 0.9); }));
+    await p2.waitForSelector('#phEst'); await p2.click('#phEst'); await p2.waitForSelector('#phSave', { timeout: 15000 }); await p2.click('#phSave'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
+    assert(rt.assets.length === nAssets, 'no upload'); const meal = rt.DB.log_meals['2026-09-16'].meals[5]; assert(meal && meal.photo && !meal.photo.assetId && meal.items.length === 2, 'recorded without assetId'); assert((await p2.locator('[data-step="meal:5"]').textContent()).includes('📷'), 'camera icon'); await p2.click('[data-photo="5"]'); await p2.waitForSelector('#dlg:not([hidden])'); assert((await p2.$eval('#dlg', e => e.textContent)).includes('保存されていません') || await p2.$('#dlg img.thumb'), 'photo dialog'); await p2.close();
+    // 後始末: メインページで取り消し
+    await page.reload(); await page.waitForFunction(() => !document.querySelector('#view .loading')); await goTab('today'); await page.click('[data-chk="meal:5"]'); await page.waitForFunction(() => document.querySelector('[data-step="meal:5"]').dataset.mark === ''); });
+  await T(G2, '縦長・横長・大きい写真（10MB超）で送信前にリサイズ（長辺1280px、JPEG 0.8）して成功する', async () => { const r = await page.evaluate(async () => { const mk = (w, h, noise) => new Promise(res => { const cv = document.createElement('canvas'); cv.width = w; cv.height = h; const ctx = cv.getContext('2d'); if (noise) { const id = ctx.createImageData(w, h); const a = id.data; for (let i = 0; i < a.length; i += 4) { a[i] = Math.random() * 255; a[i + 1] = Math.random() * 255; a[i + 2] = Math.random() * 255; a[i + 3] = 255; } ctx.putImageData(id, 0, 0); } else { ctx.fillStyle = '#48c'; ctx.fillRect(0, 0, w, h); } cv.toBlob(b => res(new File([b], 'x', { type: b.type })), noise ? 'image/png' : 'image/jpeg', 0.95); });
+    const out = {}; const big = await mk(3200, 2400, true); const rb = await window.__tl.resizeImage(big, 1280, 0.8); out.big = { inSize: big.size, w: rb.width, h: rb.height, type: rb.blob.type, outSize: rb.blob.size };
+    const land = await mk(4000, 2000, false); const rl = await window.__tl.resizeImage(land); out.land = { w: rl.width, h: rl.height }; const port = await mk(1500, 3000, false); const rp = await window.__tl.resizeImage(port); out.port = { w: rp.width, h: rp.height }; const small = await mk(640, 480, false); const rs = await window.__tl.resizeImage(small); out.small = { w: rs.width, h: rs.height }; return out; });
+    assert(r.big.inSize > 10 * 1024 * 1024, 'noise png > 10MB: ' + r.big.inSize); assert(r.big.w === 1280 && r.big.h === 960 && r.big.type === 'image/jpeg' && r.big.outSize < 1.5 * 1024 * 1024, 'big → ' + JSON.stringify(r.big)); assert(r.land.w === 1280 && r.land.h === 640, 'landscape ' + JSON.stringify(r.land)); assert(r.port.w === 640 && r.port.h === 1280, 'portrait ' + JSON.stringify(r.port)); assert(r.small.w === 640 && r.small.h === 480, 'small unchanged'); return (r.big.inSize / 1048576).toFixed(1) + 'MB PNG → ' + (r.big.outSize / 1024).toFixed(0) + 'KB JPEG 1280×960'; });
+
   // ============ 共通（後で） ============
   await T(G.common, '英略語（W/MAIN/TOP/BO/DROP/PRE）がUIに出ない', async () => { const re = /(^|[^A-Za-z])(WU|W|MAIN|TOP|BO|DROP|PRE)([^A-Za-z]|$)/; for (const tab of ['today', 'workout', 'summary']) { await goTab(tab); const txt = await page.$eval('#view', e => e.innerText); const m = re.exec(txt); assert(!m, tab + ': ' + (m && m[0])); } });
   await T(G.common, '数だけの表示（7種、1種）がない', async () => { for (const tab of ['today', 'workout', 'summary']) { await goTab(tab); const txt = await page.$eval('#view', e => e.innerText); const bad = txt.split('\n').filter(l => /サプリ\s*\d+種/.test(l) || /^\s*\d+種(目)?\s*$/.test(l)); assert(!bad.length, tab + ': ' + bad.join(' | ')); } });
@@ -231,6 +270,7 @@ async function run(mode) {
 | 6 | 実機で「取り消し」「プランに戻す」「代替種目」「飛ばす」が反応しない | claude.ai のアーティファクトは sandbox iframe で \`confirm()\` / \`prompt()\` が無効（常に false / null）。テスト環境では自動承認されていて気づけなかった | ページ内ダイアログ（askConfirm / askText / askTime）に全面置換。テストもダイアログを実際に操作する方式に変更 |
 | 7 | スキップにすると緑✓とスキップ表示が同時に出る | 「記録あり」を一律 done 扱いにしていた | 状態を 未記録○ / プラン通り緑✓ / 変更あり黄✓ / スキップ赤− の 4 種に統一。緑✓はプラン通りのみ |
 | 9 | 体重を測れない日の扱いが無く、欠測日も直線でつながっていた | 欠測の概念が無かった | log_weight に skipped/reason を保存。行は灰色「−」、「いま」は次へ進む。グラフは隣り合う日だけ線で結び、7 日平均は暦 7 日窓の実測のみ。週まとめ「体重 N/M 日 測定」、レポート「(N/M days measured, skipped: travel×2)」、CSV に skipped/reason 列。食事・サプリ・ルーティン・筋トレ・有酸素にも理由つきの「できなかった」を追加し、週まとめのブロックとレポート Notes に自動集計 |
+| 10 | 写真からの推定（新機能） | — | 送信前に長辺 1280px / JPEG 0.8 に縮小、\`sample.limits().images\` が無い環境では写真ボタンを隠す、assets が無ければ写真はメモリ保持で推定・記録のみ、推定 JSON の検証に失敗しても落ちずに「手入力に切替」できることを確認 |
 | 8 | 行の時刻がプランの予定時刻のままで実績が残らない | time(HH:mm) だけ保存し予定と区別していなかった | すべての記録に loggedAt(ISO 8601) を保存。行は実績を太字＋予定を小さく、60 分以上ズレは黄色。タップで時刻修正。タイマー（15 分・休憩）は loggedAt からの時刻差で算出し、再読み込み後も残り時間が続く |
 
 ## 実行方法
