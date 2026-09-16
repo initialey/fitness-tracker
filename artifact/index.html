@@ -270,6 +270,9 @@ textarea.txt{min-height:60px}
 .toast{position:fixed;left:50%;bottom:calc(90px + env(safe-area-inset-bottom,0px));transform:translateX(-50%) translateY(20px);background:var(--card2);color:var(--ink);padding:10px 16px;border-radius:10px;font-size:14px;opacity:0;transition:.2s;pointer-events:none;z-index:20;max-width:90vw}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .toast.err{background:var(--warn);color:#fff}
+/* ダイアログやシートが開いている間はトーストを上に逃がし、ボタンを覆わない */
+body:has(#dlg:not([hidden])) .toast,body:has(#sheet:not([hidden])) .toast{bottom:auto;top:calc(12px + env(safe-area-inset-top,0px));transform:translateX(-50%) translateY(-20px)}
+body:has(#dlg:not([hidden])) .toast.show,body:has(#sheet:not([hidden])) .toast.show{transform:translateX(-50%) translateY(0)}
 .sheet{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10;display:flex;align-items:flex-end;justify-content:center}
 .sheet-body{background:var(--card);width:100%;max-width:420px;max-height:85vh;overflow:auto;border-radius:16px 16px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px))}
 .sheet-body h3{margin:0 0 10px;font:700 17px var(--jp)}
@@ -671,8 +674,14 @@ function deriveStatus(items) {
   const planEaten = eaten.filter(i => i.origin === 'plan' && Number(i.grams) === Number(i.planGrams));
   return eaten.length === planEaten.length && planEaten.length === planN ? 'plan' : 'sub';
 }
+/** 間食（プラン外）は log_meals の meals に snack_1, snack_2… で保存。プランは無く、写真からの推定品目だけを持つ */
+const isSnack = n => /^snack_\d+$/.test(String(n));
+const snackIdx = n => Number(String(n).replace('snack_', '')) || 0;
+const mealLabel = n => isSnack(n) ? '間食' + (snackIdx(n) > 1 ? ' ' + snackIdx(n) : '') : n + '食目';
+function snackKeys(date) { return Object.keys((ST.log_meals[date] || {}).meals || {}).filter(isSnack).sort((a, b) => snackIdx(a) - snackIdx(b)); }
+function nextSnackKey(date) { const ks = snackKeys(date); return 'snack_' + (ks.length ? snackIdx(ks[ks.length - 1]) + 1 : 1); }
 function mealModel(date, mealNo) {
-  const plan = ST.plan_meals[String(mealNo)] || { mealNo, label: mealNo + '食目', items: [] };
+  const plan = ST.plan_meals[String(mealNo)] || (isSnack(mealNo) ? { mealNo, label: mealLabel(mealNo) + '（プラン外）', items: [], isSnack: true } : { mealNo, label: mealNo + '食目', items: [] });
   const log = (ST.log_meals[date] && ST.log_meals[date].meals || {})[mealNo] || null;
   const planItems = plan.items.map(it => { const f = foodOf(it.foodId); return Object.assign({ name: itemLabel(it, true), short: itemLabel(it, false), mac: f ? calcMacros(f, it.grams) : { kcal: 0, p: 0, f: 0, c: 0 } }, it); });
   const planMac = macrosOfItems(planItems.map(p => p.mac));
@@ -680,12 +689,12 @@ function mealModel(date, mealNo) {
   const raw = log ? (log.items || []) : planToItems(plan.items).map(i => Object.assign(i, { origin: 'plan', eaten: false, planGrams: i.grams }));
   const items = raw.map((it, i) => Object.assign({ idx: i, name: (ST.foods[it.foodId] || {}).nameJa || it.foodId, short: itemShort(it), per: (ST.foods[it.foodId] || {}).per || '100g', origin: it.origin || 'add', eaten: it.eaten !== false, deleted: !!it.deleted }, it));
   const eaten = items.filter(i => !i.deleted && i.eaten);
-  return { mealNo, label: plan.label, note: plan.note || '', logged: !!log, status: log ? deriveStatus(items) : '', variant: log ? log.variant || '' : '', loggedAt: log ? log.loggedAt || '' : '', skipReason: log ? reasonJa(log.skip) : '', photo: log ? log.photo || null : null, estimated: items.some(i => i.estimated && !i.deleted && i.eaten), planItems, planMac, planKcal: planMac.kcal, alt: plan.alt || null,
+  return { mealNo, label: plan.label, isSnack: !!plan.isSnack, note: plan.note || '', logged: !!log, status: log ? deriveStatus(items) : '', variant: log ? log.variant || '' : '', loggedAt: log ? log.loggedAt || '' : '', skipReason: log ? reasonJa(log.skip) : '', photo: log ? log.photo || null : null, estimated: items.some(i => i.estimated && !i.deleted && i.eaten), planItems, planMac, planKcal: planMac.kcal, alt: plan.alt || null,
     items, eaten, mac: macrosOfItems(eaten), kcal: macrosOfItems(eaten).kcal, choices: plan.items.filter(i => i.choices) };
 }
 function mealsModel(date) {
-  const meals = sortedVals('plan_meals', 'mealNo').map(m => mealModel(date, m.mealNo));
-  const total = macrosOfItems(meals.flatMap(m => m.eaten)), planTotal = macrosOfItems(meals.map(m => m.planMac));
+  const meals = sortedVals('plan_meals', 'mealNo').map(m => mealModel(date, m.mealNo)).concat(snackKeys(date).map(k => mealModel(date, k)));
+  const total = macrosOfItems(meals.flatMap(m => m.eaten)), planTotal = macrosOfItems(meals.filter(m => !m.isSnack).map(m => m.planMac));
   return { date, meals, total, planTotal, quickSubs: quickSubs() };
 }
 function quickSubs() {
@@ -724,7 +733,7 @@ function todayModel(date) {
     weekNo: calcWeekNo(s.startDate, date), comment: dayDoc(date).comment || '', weight: ST.log_weight[date] && !ST.log_weight[date].skipped ? ST.log_weight[date] : null, weightSkipped: ST.log_weight[date] && ST.log_weight[date].skipped ? ST.log_weight[date] : null, prevWeight: latestWeightBefore(date),
     workoutMissed: dayDoc(date).workoutMissed || null, cardioMissed: dayDoc(date).cardioMissed || null,
     supplements: suppsModel(date), routine: routineModel(date), waterMl: waterMl(date), waterLoggedAt: waterLoggedAt(date), waterGoalMl: Number(s.waterGoalMl) || 5000,
-    meals: sortedVals('plan_meals', 'mealNo').map(m => mealModel(date, m.mealNo)), warmup: warmupModel(date),
+    meals: mealsModel(date).meals, warmup: warmupModel(date),
     workoutFinished: !!wo.finished, workoutFinishedAt: wo.finished ? (wo.finishedAt || legacyIso(date, wo.finished)) : '', setsDone: Object.keys(wo.sets || {}).length, setUnits: setUnits(exs, wo), exercises: exs,
     cardio: (ST.log_cardio[date] || {}).entries || [], days: sortedVals('plan_days', 'dayNo') };
   const tl = buildTimeline(t); t.timeline = tl.steps; t.now = tl.now;
@@ -744,6 +753,7 @@ function buildTimeline(t) {
   const mealStep = n => { const m = t.meals.find(x => x.mealNo === n); if (!m) return null;
     const lines = [m.status && m.status !== 'skip' && m.status !== 'plan' ? m.eaten.map(i => i.short).join('・') : m.planItems.map(p => p.short).join('・') + (m.note ? '　※' + m.note : '')];
     if (m.status === 'skip') lines.push('スキップ（' + (m.skipReason || '食べなかった') + '）'); else if (m.status) lines.push((m.status === 'plan' ? (m.variant === 'alt' ? '代替案で記録 ・ ' : 'プラン通り ・ ') : '変更して記録 ・ ') + macroLine(m.mac).replace('kcal', 'kcal' + (m.estimated ? '※' : ''))); else lines.push(macroLine(m.planMac));
+    if (m.isSnack) return { id: 'meal:' + n, kind: 'meal', mealNo: n, title: m.label, photo: m.photo, lines: [m.eaten.map(i => i.short).join('・'), (m.photo ? '写真から推定 ・ ' : '') + macroLine(m.mac).replace('kcal', 'kcal' + (m.estimated ? '※' : ''))], planned: '', done: true, mark: 'ok', handled: true, loggedAt: m.loggedAt, status: m.status, isSnack: true };
     return { id: 'meal:' + n, kind: 'meal', mealNo: n, title: m.label, photo: m.photo, lines, planned: T['meal' + n] || '', done: m.status === 'plan', mark: m.status === 'plan' ? 'ok' : m.status === 'sub' ? 'sub' : m.status === 'skip' ? 'skip' : '', handled: !!m.status, loggedAt: m.status ? m.loggedAt : '', status: m.status }; };
   const warmupStep = planned => ({ id: 'warmup', kind: 'warmup', title: 'ウォームアップ ' + t.warmup.items.length + '種 ・ 約' + s.warmupMin + '分', lines: [t.warmup.items.map(x => x.name).join('・') + ' ／ 各10回×2セット'].concat(t.warmup.done ? [warmupMinutesText(t.warmup.minutes)] : t.warmup.doneCount ? [t.warmup.doneCount + '/' + t.warmup.items.length + '種 完了'] : []), planned, done: t.warmup.done, loggedAt: t.warmup.loggedAt, skipped: t.warmup.skipped });
   const wAt = t.weight ? (t.weight.loggedAt || legacyIso(t.date, t.weight.time)) : (t.weightSkipped ? t.weightSkipped.loggedAt : '');
@@ -768,6 +778,8 @@ function buildTimeline(t) {
   const ng = suppGroup('night', T.night); if (ng) steps.push(ng);
   routineSteps('night').forEach(x => steps.push(x));
   steps.push({ id: 'water', kind: 'water', title: '水 合計', lines: [(t.waterMl / 1000).toFixed(1) + ' / ' + (t.waterGoalMl / 1000) + ' L' + (t.waterMl < t.waterGoalMl ? '（あと ' + ((t.waterGoalMl - t.waterMl) / 1000).toFixed(1) + ' L）' : ' 達成')], planned: T.night, done: t.waterMl >= t.waterGoalMl, loggedAt: t.waterMl > 0 ? t.waterLoggedAt || '' : '' });
+  // 間食（プラン外）は記録した実績時刻の位置に差し込む（記録済みは実績、未記録は予定の時刻で比較）
+  t.meals.filter(m => m.isSnack).forEach(m => { const st = mealStep(m.mealNo); if (!st) return; const hm = st.loggedAt ? fmtHm(st.loggedAt) : '99:99'; const tkey = x => x.handled && x.loggedAt ? fmtHm(x.loggedAt) : (x.planned || ''); let at = steps.findIndex(x => tkey(x) && tkey(x) > hm); if (at < 0) at = steps.findIndex(x => x.id === 'water'); if (at < 0) at = steps.length; steps.splice(at, 0, st); });
   const byId = {}; steps.forEach(x => { byId[x.id] = x; });
   steps.forEach(x => {
     x.handled = x.handled || x.done; x.mark = x.mark || (x.done ? 'ok' : ''); x.time = x.handled && x.loggedAt ? fmtHm(x.loggedAt) : ''; x.timerUntil = ''; x.late = x.handled && isLate(x.loggedAt, x.planned);
@@ -843,7 +855,7 @@ function summaryModel(weekNo) {
 /** 日別の履歴 1 行 */
 function dayHistory(d) {
   const ms = mealsModel(d), meals = ms.meals, wo = ST.log_workout[d] || {}, rest = isRestDay(d);
-  return { date: d, dayNo: dayNoFor(d), rest, kcal: ms.total.kcal, planKcal: ms.planTotal.kcal, mealsOk: meals.filter(m => m.status === 'plan' || m.status === 'sub').length, mealsN: meals.length,
+  return { date: d, dayNo: dayNoFor(d), rest, kcal: ms.total.kcal, planKcal: ms.planTotal.kcal, mealsOk: meals.filter(m => !m.isSnack && (m.status === 'plan' || m.status === 'sub')).length, mealsN: meals.filter(m => !m.isSnack).length, snacks: meals.filter(m => m.isSnack).length,
     workout: rest ? null : Object.keys(wo.sets || {}).length > 0, warmup: !!(wo.warmup || {}).done, cardio: ((ST.log_cardio[d] || {}).entries || []).length > 0, water: waterMl(d) >= (Number(ST.settings.waterGoalMl) || 5000),
     supps: pct(Object.values((ST.log_supplements[d] || {}).items || {}).filter(x => x.done).length, Object.values(ST.plan_supplements).filter(x => x.active !== false).length), weight: ST.log_weight[d] && !ST.log_weight[d].skipped ? Number(ST.log_weight[d].weightKg) : null, weightSkipped: !!(ST.log_weight[d] && ST.log_weight[d].skipped), times: dayTimes(d) };
 }
@@ -976,7 +988,7 @@ const A = {
       items.push({ foodId: f.foodId, grams: it.grams, kcal: it.kcal, p: it.p, f: it.f, c: it.c, origin: 'add', eaten: true, deleted: false, planGrams: '', estimated: true });
     }
     let photoRef = { confidence: est.confidence, note: est.note, loggedAt: isoNow() };
-    if (CAP.assets && photo && photo.blob) { try { const r = await CAP.assets.upload(photo.blob, { type: 'image/jpeg' }); photoRef.assetId = r.id; photoRef.url = r.url; await A.addMedia({ date, type: 'photo', category: 'meal', assetId: r.id, url: r.url, exerciseId: '', mealNo: n, note: '食事 ' + n + ' の写真（AI 推定 ' + est.confidence + '）' }); } catch (e) { toast('写真の保存に失敗: ' + (e.code || e.message) + '（記録は保存します）', true); } }
+    if (CAP.assets && photo && photo.blob) { try { const r = await CAP.assets.upload(photo.blob, { type: 'image/jpeg' }); photoRef.assetId = r.id; photoRef.url = r.url; await A.addMedia({ date, type: 'photo', category: 'meal', assetId: r.id, url: r.url, exerciseId: '', mealNo: n, note: mealLabel(n) + ' の写真（AI 推定 ' + est.confidence + '）' }); } catch (e) { toast('写真の保存に失敗: ' + (e.code || e.message) + '（記録は保存します）', true); } }
     if (!photoRef.assetId && photo && photo.dataUrl) PHOTO_MEM[date + '#' + n] = photo.dataUrl;
     const cur = mealModel(date, n); const base = replace || cur.status === 'skip' || !cur.logged ? [] : cur.items.filter(i => !i.deleted).map(({ foodId, grams, kcal, p, f, c, origin, eaten, planGrams, estimated }) => ({ foodId, grams, kcal, p, f, c, origin, eaten, deleted: false, planGrams, estimated }));
     await A.mealCommit(date, n, base.concat(items), { photo: photoRef });
@@ -1133,7 +1145,9 @@ function renderToday(t) {
   let h = '<h1 class="tap" id="dayHead">Day ' + t.dayNo + ' ・ ' + esc(t.dayName) + (t.dayNotes ? '（' + esc(t.dayNotes) + '）' : '') + (t.isRest ? ' ・ 休み' : '') + (t.dayOverride ? ' ・ 手動' : '') + ' ›</h1>';
   h += '<p class="date"><button class="nav" data-shift="-1" aria-label="前日">‹</button><span>' + md(UI.date) + ' <b>' + wd(UI.date) + '</b>' + (UI.date === todayYmd() ? '' : ' <span class="mute" style="font-size:16px">' + (UI.date < todayYmd() ? '過去' : '未来') + '</span>') + '</span><button class="nav" data-shift="1" aria-label="翌日">›</button></p>';
   if (ST.mode === 'mock') h += '<div class="mode">モックモード ・ 保存されていません</div>';
-  h += '<div class="now' + (t.now.kind === 'done' ? ' done' : '') + '" id="now"></div><div class="tl">';
+  h += '<div class="now' + (t.now.kind === 'done' ? ' done' : '') + '" id="now"></div>';
+  if (CAP.sample && CAP.images) h += '<button class="b b-yel" id="photoBtn" style="width:100%;margin:0 0 14px">📷 食べたものを写真で記録</button><input type="file" accept="image/*" capture="environment" id="photoFile" hidden>';
+  h += '<div class="tl">';
   t.timeline.forEach(st => {
     const tm = st.handled && st.loggedAt ? '<span class="tm edit" data-time="' + esc(st.id) + '" title="時刻を修正"><b' + (st.late ? ' class="late"' : '') + '>' + esc(fmtHm(st.loggedAt)) + '</b><small>予定 ' + esc(st.planned || '—') + '</small></span>' : '<span class="tm">' + (st.timerUntil ? '<b>' + esc(fmtHm(st.timerUntil)) + '</b><small>タイマー</small>' : esc(st.planned || '') + ' <small style="display:inline">予定</small>') + '</span>';
     const lbl = st.mark === 'sub' ? '<span class="lbl-sub sub">変更あり</span>' : st.mark === 'skip' ? '<span class="lbl-sub skip">スキップ</span>' : st.mark === 'na' ? '<span class="lbl-sub na">' + (st.kind === 'weight' ? '測れなかった' : st.kind === 'workout' || st.kind === 'cardio' ? 'できなかった' : '今日はなし') + '</span>' : st.skipped ? '<span class="lbl-sub skip">飛ばした</span>' : '';
@@ -1152,6 +1166,7 @@ function renderToday(t) {
   $$('[data-photo]').forEach(el => { el.onclick = e => { e.stopPropagation(); showMealPhoto(t.date, Number(el.dataset.photo)); }; });
   $$('[data-chk^="supp:"], [data-chk^="routine:"]').forEach(b => { const st = t.timeline.find(x => x.id === b.dataset.chk); if (!st || st.handled) return; bindLongPress(b, () => { if (st.kind === 'supp_group') askReason('supp', st.title + ' 今日はなし').then(r => { if (r) act(A.suppNA(t.date, st.timing, r.reason, r.reasonText), '記録しました'); }); else askReason('supp', st.title + ' 今日はなし').then(r => { if (r) act(A.routineNA(t.date, st.itemId, r.reason, r.reasonText), '記録しました'); }); }); });
   $$('[data-open]').forEach(el => { el.onclick = () => stepAction(t, el.dataset.open, false); });
+  const pb = $('#photoBtn'), pf = $('#photoFile'); if (pb && pf) { pb.onclick = () => { pf.value = ''; pf.click(); }; pf.onchange = () => photoFromToday(t, pf.files[0]); }
   every(() => { const c = $('#nowClock'); if (c) c.textContent = nowHm(); }, 60000);
   const ta = $('#dayComment'); ta.onblur = () => { if (ta.value !== t.comment) act(A.setDaily(t.date, { comment: ta.value }), 'メモを保存'); };
 }
@@ -1175,6 +1190,7 @@ function stepAction(t, id, chk) {
       if (st.na && chk) { const prev = ST.log_supplements[t.date]; return act(A.toggleSuppGroup(t.date, st.timing, false)).then(() => undo('サプリの「今日はなし」を取り消しました', () => store.set('log_supplements', t.date, prev))); }
       return chk ? act(A.toggleSuppGroup(t.date, st.timing, !st.done)) : openSuppSheet(t, st); }
     case 'meal': if (chk && !st.handled) return act(A.mealPlanDone(t.date, st.mealNo), st.mealNo + '食目 プラン通り');
+      if (chk && st.isSnack) { const n = st.mealNo; return act(A.mealCancel(t.date, n)).then(() => toastAction('間食の記録を取り消しました', '元に戻す', () => act(A.mealUndo(t.date, n)))); }
       if (chk && st.handled) return act(A.mealCancel(t.date, st.mealNo)).then(() => toastAction(st.mealNo + '食目の記録を取り消しました', '元に戻す', () => act(A.mealUndo(t.date, st.mealNo))));
       return openMealSheet(st.mealNo, false);
     case 'warmup': return go('workout');
@@ -1219,6 +1235,19 @@ function renderNow(t) {
     stepAction(t, n.stepId, true);
   };
   if (b2) b2.onclick = () => { if (n.kind === 'meal') openMealSheet(n.mealNo, true); else if (n.kind === 'water') act(A.addWater(t.date, 250)); };
+}
+/** 今日画面の「📷 食べたものを写真で記録」: 縮小 → どの食事か選ぶ（記録済みなら 追加／置き換え）→ 食事シートの写真パネルへ */
+async function photoFromToday(t, file) {
+  if (!file) return;
+  let r; try { r = await resizeImage(file, 1280, 0.8); } catch (e) { return toast('画像を読み込めませんでした', true); }
+  const ms = mealsModel(t.date);
+  const choices = ms.meals.filter(m => !m.isSnack).map(m => ({ label: m.label + '（' + esc(m.planItems.map(p => p.short).join('・')) + '）' + (m.logged && m.status !== 'skip' ? ' ・ 記録済み' : ''), value: String(m.mealNo) })).concat([{ label: '間食（プラン外）', value: 'snack', cls: 'b-yel' }]);
+  const v = await askChoice('どの食事として記録しますか？', '', choices); if (!v) return;
+  let mealNo, mode = 'replace';
+  if (v === 'snack') mealNo = nextSnackKey(t.date);
+  else { mealNo = Number(v); const m = ms.meals.find(x => x.mealNo === mealNo); if (m && m.logged && m.status !== 'skip') { const w = await askChoice(m.label + ' は記録済みです', 'どうしますか？', [{ label: '追加する（今の記録に写真の内容を足す）', value: 'add', cls: 'b-yel' }, { label: '置き換える（今の記録を写真の内容にする）', value: 'replace' }]); if (!w) return; mode = w; } }
+  UI.sheetMeal = { mealNo, sub: false, pending: null, photo: { status: 'ready', note: '', mode, blob: r.blob, dataUrl: r.dataUrl, width: r.width, height: r.height, orig: file.size } };
+  openMealSheet(mealNo, false);
 }
 /** 食事の写真サムネイルを表示（assets の id か、このセッションのメモリ） */
 function showMealPhoto(date, n) {
@@ -1293,13 +1322,14 @@ function openMediaSheet(category, exerciseId) {
 }
 /* ---- 食事シート（今日の食事行をタップしたときだけ開く） ---- */
 function openMealSheet(mealNo, sub) {
-  const date = UI.date, d = mealsModel(date), m = d.meals.find(x => x.mealNo === mealNo); if (!m) return;
+  const date = UI.date, d = mealsModel(date), m = d.meals.find(x => x.mealNo === mealNo) || (isSnack(mealNo) ? mealModel(date, mealNo) : null); if (!m) return;
   const keep = UI.sheetMeal && UI.sheetMeal.mealNo === mealNo ? UI.sheetMeal : {};
   UI.sheetMeal = { mealNo, sub: !!sub, pending: keep.pending || null, photo: keep.photo || null };
   const t = todayModel(date), step = t.timeline.find(x => x.id === 'meal:' + mealNo) || {}, hist = mealHist(date, mealNo);
   let h = '<h3>' + esc(m.label) + ' <span class="mute num" style="font-weight:500;font-size:14px">・ 予定 ' + esc(step.planned || '—') + (m.logged && m.loggedAt ? ' ・ 記録 <b' + (isLate(m.loggedAt, step.planned) ? ' style="color:var(--yellow)"' : '') + '>' + esc(fmtHm(m.loggedAt)) + '</b> <u id="mTime" style="cursor:pointer">修正</u>' : '') + '</span></h3>';
-  h += '<div class="btns" style="margin-bottom:10px"><button class="b-ghost" id="mUndo"' + (hist.length ? '' : ' disabled') + '>↩ 1つ戻す' + (hist.length ? '（' + hist.length + '）' : '') + '</button><button class="b-ghost" id="mReset">プランの内容に戻す</button>' + (m.logged ? '<button class="b-ghost" id="mCancel" style="color:var(--warn)">記録を取り消す</button>' : '') + '</div>';
-  h += '<div class="ttl">プランの内容' + (m.note ? ' <span class="mute small" style="font-weight:400">' + esc(m.note) + '</span>' : '') + '</div><div class="items">' + m.planItems.map(p => esc(p.name)).join(' ・ ') + '<br><span class="num" style="font-size:14px">' + esc(macroLine(m.planMac)) + '</span></div>';
+  h += '<div class="btns" style="margin-bottom:10px"><button class="b-ghost" id="mUndo"' + (hist.length ? '' : ' disabled') + '>↩ 1つ戻す' + (hist.length ? '（' + hist.length + '）' : '') + '</button>' + (m.isSnack ? '' : '<button class="b-ghost" id="mReset">プランの内容に戻す</button>') + (m.logged ? '<button class="b-ghost" id="mCancel" style="color:var(--warn)">記録を取り消す</button>' : '') + '</div>';
+  if (m.isSnack) h += '<div class="mute small" style="margin:6px 0 10px">プランにない飲食（間食・外食）。写真から推定した品目を記録し、1 日合計に加えます</div>';
+  else h += '<div class="ttl">プランの内容' + (m.note ? ' <span class="mute small" style="font-weight:400">' + esc(m.note) + '</span>' : '') + '</div><div class="items">' + m.planItems.map(p => esc(p.name)).join(' ・ ') + '<br><span class="num" style="font-size:14px">' + esc(macroLine(m.planMac)) + '</span></div>';
   if (m.logged) h += '<div class="badge ' + (m.status === 'plan' ? 'ok' : m.status === 'sub' ? 'warn' : 'bad') + '" style="margin-bottom:6px">' + (m.status === 'plan' ? (m.variant === 'alt' ? '代替案で記録済み' : 'プラン通り 記録済み') : m.status === 'sub' ? '変更して記録済み' : 'スキップ（食べなかった）') + ' ・ ' + esc(macroLine(m.mac)) + '</div>';
   // 品目一覧: プラン由来はチェック、追加・差替えは × でソフト削除
   h += '<div class="list">' + m.items.map(it => { const f = ST.foods[it.foodId];
@@ -1310,7 +1340,7 @@ function openMealSheet(mealNo, sub) {
     h += '<div class="chips" style="margin-top:8px" data-choicegroup="' + esc(ch.foodId) + '">' + ch.choices.map(c => '<button data-choice="' + esc(c) + '"' + (resolveFoodId(c) === curId ? ' class="on"' : '') + '>' + esc((ST.foods[c] || {}).nameJa || c) + ((ch.choiceGrams || {})[c] ? ' ' + (ch.choiceGrams || {})[c] + 'g' : '') + 'で</button>').join('') + '</div>'; });
   const allEaten = m.items.filter(i => i.origin === 'plan' && !i.deleted).every(i => i.eaten) && m.items.some(i => i.origin === 'plan');
   const canPhoto = !!(CAP.sample && CAP.images);
-  h += '<div class="btns" style="margin-top:10px">' + (allEaten && m.logged ? '' : '<button class="b-main" id="mPlan">プラン通り食べた</button>') + '<button class="b-sub" id="mChange">' + (m.logged ? '変更・追加' : '変更して記録') + '</button>' + (canPhoto ? '<button class="b-sub" id="mPhoto">📷 写真で記録</button>' : '') + '</div>';
+  h += '<div class="btns" style="margin-top:10px">' + (allEaten && m.logged || m.isSnack ? '' : '<button class="b-main" id="mPlan">プラン通り食べた</button>') + '<button class="b-sub" id="mChange">' + (m.logged ? '変更・追加' : '変更して記録') + '</button>' + (canPhoto ? '<button class="b-sub" id="mPhoto">📷 写真で記録</button>' : '') + '</div>';
   if (m.photo) h += '<div class="mute small" style="margin-top:6px">📷 写真から推定して記録済み（確度 ' + esc({ high: '高', medium: '中', low: '低' }[m.photo.confidence] || '不明') + '）<u data-showphoto="1" style="cursor:pointer;margin-left:6px">写真を見る</u></div>';
   if (UI.sheetMeal.photo) h += photoPanelHtml(UI.sheetMeal.photo);
   if (m.alt && !m.logged) h += '<button class="b b-sub" style="width:100%;margin-top:8px" id="mAlt">' + esc(m.alt.label) + '（' + esc(macroLine(macrosOfItems(planToItems(m.alt.items)))) + '）</button>';
@@ -1354,7 +1384,7 @@ function bindPhotoPanel(s, d, m, date, mealNo) {
   $$('[data-phoff]', s).forEach(b => { b.onclick = () => { noteVal(); const it = ph.est.items[Number(b.dataset.phoff)]; it.on = !it.on; rerender(); }; });
   $$('[data-phname]', s).forEach(el => { el.onclick = () => { noteVal(); const i = Number(el.dataset.phname); askFood('食材を差し替え', ph.est.items[i].nameJa).then(f => { if (!f) return; const it = ph.est.items[i]; const mac = calcMacros(f, f.per === '100g' ? it.grams : 1); ph.est.items[i] = Object.assign({}, it, { nameJa: f.nameJa, nameEn: f.nameEn || '', foodId: f.foodId }, mac); rerender(); }); }; });
   const save = $('#phSave', s); if (save) save.onclick = async () => { noteVal(); if (!ph.est.items.some(i => i.on)) return toast('記録する品目がありません', true); save.disabled = true; save.textContent = '保存中…';
-    try { const msg = await A.recordPhotoMeal(date, mealNo, ph.est, ph, m.status === 'plan'); UI.sheetMeal.photo = null; closeSheet(); toastAction(msg + 'しました', '元に戻す', () => act(A.mealUndo(date, mealNo))); } catch (e) { save.disabled = false; save.textContent = 'この内容で記録'; toast('保存に失敗: ' + (e.code || e.message), true); } };
+    try { const msg = await A.recordPhotoMeal(date, mealNo, ph.est, ph, ph.mode ? ph.mode === 'replace' : m.status === 'plan'); UI.sheetMeal.photo = null; closeSheet(); toastAction(msg + 'しました', '元に戻す', () => act(A.mealUndo(date, mealNo))); } catch (e) { save.disabled = false; save.textContent = 'この内容で記録'; toast('保存に失敗: ' + (e.code || e.message), true); } };
 }
 async function estimateMealPhotoWith(ph) {
   const raw = await CAP.sample.json(photoPrompt(ph.note), { images: [ph.blob], modelTier: 'default', cache: false, signal: ph.ctl.signal });
@@ -1370,8 +1400,8 @@ function photoPrompt(note) { return 'You estimate the food in the attached photo
 function bindMealSheet(s, d, m, date, mealNo) {
   const undoToast = msg => toastAction(msg, '元に戻す', () => act(A.mealUndo(date, mealNo)));
   $('#mUndo', s).onclick = () => act(A.mealUndo(date, mealNo)).then(ok => { if (ok) toast('1つ戻しました'); });
-  $('#mReset', s).onclick = () => { askConfirm('プランの内容に戻す', '今日の変更を破棄してプラン通りに戻します。よろしいですか？', '戻す').then(ok => { if (ok) act(A.mealReset(date, mealNo)).then(() => undoToast(mealNo + '食目をプランの内容に戻しました')); }); };
-  const mc = $('#mCancel', s); if (mc) mc.onclick = () => { askConfirm('記録を取り消す', mealNo + '食目を「未記録」に戻します（合計からも外れます）。よろしいですか？', '取り消す').then(ok => { if (!ok) return; act(A.mealCancel(date, mealNo)).then(() => { closeSheet(); undoToast(mealNo + '食目の記録を取り消しました'); }); }); };
+  const mrst = $('#mReset', s); if (mrst) mrst.onclick = () => { askConfirm('プランの内容に戻す', '今日の変更を破棄してプラン通りに戻します。よろしいですか？', '戻す').then(ok => { if (ok) act(A.mealReset(date, mealNo)).then(() => undoToast(mealNo + '食目をプランの内容に戻しました')); }); };
+  const mc = $('#mCancel', s); if (mc) mc.onclick = () => { askConfirm('記録を取り消す', mealLabel(mealNo) + 'を「未記録」に戻します（合計からも外れます）。よろしいですか？', '取り消す').then(ok => { if (!ok) return; act(A.mealCancel(date, mealNo)).then(() => { closeSheet(); undoToast(mealNo + '食目の記録を取り消しました'); }); }); };
   const mt = $('#mTime', s); if (mt) mt.onclick = () => { const t = todayModel(date), st = t.timeline.find(x => x.id === 'meal:' + mealNo); askTime(m.label + ' の記録時刻', '予定 ' + (st.planned || '—'), fmtHm(m.loggedAt)).then(hm => { if (hm) act(A.setLoggedAt(date, st, withHm(m.loggedAt, hm)), '時刻を ' + hm + ' に修正'); }); };
   $$('[data-eat]', s).forEach(b => { b.onclick = () => act(A.mealToggleEaten(date, mealNo, Number(b.dataset.eat))); });
   $$('[data-del]', s).forEach(b => { b.onclick = () => { const it = m.items.find(i => i.idx === Number(b.dataset.del)); act(A.mealSoftDelete(date, mealNo, it.idx, true)).then(() => undoToast(it.short + ' を削除しました')); }; });
@@ -1667,7 +1697,7 @@ async function boot() {
   use('downloads').then(dl => { CAP.downloads = dl; scheduleRender(); });
 }
 window.addEventListener('beforeunload', () => { try { localStorage.setItem('tl.tab', UI.tab); } catch (e) { /* ignore */ } });
-window.__tl = { resizeImage, validateEstimate, parseSetScheme, expandPairSets, repsText, setLabel, setActual, dayReport, bumpKg, warmupMinutesText, setUnits, shortExerciseList }; // テスト用フック（純粋関数のみ）
+window.__tl = { resizeImage, validateEstimate, isSnack, mealLabel, parseSetScheme, expandPairSets, repsText, setLabel, setActual, dayReport, bumpKg, warmupMinutesText, setUnits, shortExerciseList }; // テスト用フック（純粋関数のみ）
 boot();
 })();
 </script>

@@ -103,6 +103,7 @@ Day1 Push → Day2 Pull → Day3 休み（有酸素のみ） → Day4 Legs → D
 - foods にクリームオブライス（ジャスミン米をフードプロセッサーで粉に、または市販の米粉）・Skippy PB を追加。サーモンは差替えチップにだけ出す
 - 記録の状態は 4 つ: 未記録○ / プラン通り 緑✓ / 変更あり 黄✓ / スキップ 赤−（理由付き）
 - 写真からの推定記録（`sample` の画像入力が使えるときだけ）。推定値は kcal に「※」
+- 今日画面の「いま」カード直下に「📷 食べたものを写真で記録」を常設（プランにない間食・外食の入口）。撮影 → 縮小 → 「どの食事として記録しますか？」（1〜5食目／間食（プラン外））→ 記録済みの食事なら 追加／置き換え → 補足入力 → AI 推定 → 品目を修正 → 記録。間食は `log_meals.meals.snack_N` に status "photo" で保存し、1 日合計に加算、タイムラインには実績時刻の位置に差し込む（行に 📷、kcal※、✓ 再タップで取り消し）
 
 ## 3. サプリ・ルーティン
 
@@ -147,7 +148,7 @@ Day1 Push → Day2 Pull → Day3 休み（有酸素のみ） → Day4 Legs → D
 | `plan_days` / `plan_exercises` / `plan_warmup` / `plan_meals` / `plan_supplements` / `plan_routine` / `foods` | 上記マスタ（`SEED_VERSION` を上げると plan_* と plan 由来の foods を差し替え。ログは触らない）。`plan_exercises` は setScheme（`WU10-12,TOP6-8,BO10-12` / `MAIN8,MAIN10,MAIN12` / `MAIN10-15x3,DROP*`）, progressive, pair[2 動作], accessory("abs"/"calves") を持つ |
 | `log_weight/{date}` | value, unit "kg", skipped(bool), skipReason, loggedAt（互換: weightKg, reason） |
 | `log_workout/{date}` | sets{"exId_setNo": {exerciseId, setNo, setType, weightKg, reps, loggedAt}}（スーパーセットは 1-1/1-2 が別 setNo）, meta{exId: {note, rpe, subName}}, warmup{completed, minutes, sets, loggedAt, skipped, skipReason}, finished, finishedAt（完了画面はここから所要時間を出す） |
-| `log_meals/{date}` | meals{mealNo: {status: plan / substitute / skip / photo, items[{foodId, grams, kcal, p, f, c, origin, eaten, deleted, planGrams, estimated}], loggedAt, photoId, reason, variant, photo{assetId, confidence, note}}} |
+| `log_meals/{date}` | meals{mealNo または snack_N（間食・プラン外）: {status: plan / substitute / skip / photo, items[{foodId, grams, kcal, p, f, c, origin, eaten, deleted, planGrams, estimated}], loggedAt, photoId, reason, variant, photo{assetId, confidence, note}}} |
 | `log_supplements/{date}` `log_routine/{date}` | items{id: {done, loggedAt}}（今日はなし: na, reason）。水は value(ml) |
 | `log_cardio/{date}` | entries[{type: jog / incline / other, minutes, hr, note, loggedAt}] |
 | `log_daily/{date}` | dayNo（手動上書き）, dayName, notes, waterMl, waterLoggedAt, skippedItems[{item, reason}], workoutMissed{reason, shift}, cardioMissed, warmupSkipped |
