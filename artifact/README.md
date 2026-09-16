@@ -88,7 +88,7 @@
 
 ### 写真からカロリー・PFC を推定
 - 食事シートと今日画面の「📷 写真で記録」（`sample` があれば表示。`sample.limits().images` が無い環境でも隠さず、「AIで推定」だけ出さずに案内文＋「手入力に切替」を出す。`sample` が完全に無ければ従来のテキスト入力のみ）
-- `<input type="file" accept="image/*" capture="environment">` → 送信前に `resizeImage` で長辺 1280px・JPEG 0.8 に縮小（EXIF の向きは createImageBitmap で補正）
+- `<input type="file" accept="image/*">`（`capture` は付けない。付けるとカメラに直行してギャラリーを選べない端末があるため、ネイティブの選択肢で「撮影」「ギャラリーから選ぶ」を両方出す）→ 送信前に `resizeImage` で長辺 1280px・JPEG 0.8 に縮小（EXIF の向きは createImageBitmap で補正）
 - 補足入力（例「ご飯は半分残した」）をプロンプトに含め、`sample.json(prompt, {images:[blob], modelTier:'default', cache:false, signal})` で
   `{items:[{name_ja,name_en,grams,kcal,p,f,c}], total, confidence:"high|medium|low", note}` を返させる。`validateEstimate` で形式を検証し、失敗時は 1 行エラー＋「手入力に切替」
 - 結果は食材ごとの行（グラム ± で比例配分、× で除外、名前タップで foods から差し替え）、合計 kcal/PFC※ と推定の確度

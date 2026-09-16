@@ -257,7 +257,7 @@ async function run(mode) {
     await page.click('[data-chk="meal:5"]'); await page.waitForFunction(() => document.querySelector('[data-step="meal:5"]').dataset.mark === ''); assert((await total()) === base, 'cancel → total back');
     await goTab('summary'); await page.waitForSelector('#repText'); await goTab('today'); return '1280×853 JPEG ' + Math.round(sc.imageSize / 1024) + 'KB を送信 / 白ご飯 210g=328kcal※ を記録'; });
   await T(G2, '今日画面の「📷 食べたものを写真で記録」→ 間食（プラン外）として記録 → タイムラインに時刻順で挿入 → 合計に反映 → 取り消しで消える', async () => { await goTab('today'); if (mode === 'mock') { assert(!(await has('#photoBtn')), 'sample null → ボタン非表示'); return 'sample null → ボタン非表示'; }
-    await setTime('2026-09-16T15:00:00+08:00'); await goTab('workout'); await goTab('today'); assert(await has('#photoBtn') && (await text('#photoBtn')).includes('写真で記録'), 'button under now card'); assert(await page.$eval('#photoFile', e => e.getAttribute('accept') === 'image/*' && e.getAttribute('capture') === 'environment'), 'camera input');
+    await setTime('2026-09-16T15:00:00+08:00'); await goTab('workout'); await goTab('today'); assert(await has('#photoBtn') && (await text('#photoBtn')).includes('写真で記録'), 'button under now card'); assert(await page.$eval('#photoFile', e => e.getAttribute('accept') === 'image/*' && e.getAttribute('capture') === null), 'gallery picker: no capture attribute so camera and library both offered');
     const total = async () => Number((await page.$eval('.card', e => e.textContent)).match(/カロリー ([\d,]+)/)[1].replace(/,/g, '')); const base = await total();
     const pick = () => page.evaluate(() => { const inp = document.querySelector('#photoFile'); const dt = new DataTransfer(); dt.items.add(window.__img); inp.files = dt.files; inp.dispatchEvent(new Event('change')); });
     await makeImageFile(1600, 1200, false); await pick(); await page.waitForSelector('#dlg:not([hidden]) [data-choice]'); const labels = await page.$$eval('#dlg [data-choice]', els => els.map(e => e.textContent)); assert(labels.length === 6 && labels[0].startsWith('1食目') && labels[5].includes('間食（プラン外）'), 'meal choices: ' + labels.join(' | ')); await page.click('#dlg [data-choice="5"]');
@@ -330,6 +330,7 @@ async function run(mode) {
 | 15 | 朝のサプリとサイリウムが両方 07:15、クレアチンが朝のサプリ行に混在。ウォームアップ所要が 289 分。筋トレ行の「37セット記録済み」に分母が無くスーパーセットを二重カウント。種目一覧が長すぎる。実績時刻と予定が詰まる。完了行の背景が真っ黒。サプリ行の途中切れ | 予定時刻が同じ／startedAt が朝に開いた時刻のまま／セット単位の定義が無かった／CSS | 経口サプリ 07:05 → 15 分 → サイリウム 07:20（loggedAt 基準のタイマー）。クレアチンは「サプリ トレ前（クレアチンはタイミング確認中）」の別行。開いたまま 3 時間超なら startedAt を取り直し、180 分超は「完了」だけ表示。「全22セット中 5セット完了」（①＋② で 1 セット）。種目は最初の 3 つ＋「ほか5種目」。実績時刻は右寄せ縦並び（予定は下に小さく）、完了行は --card に薄字、✓ だけ緑、全行折り返し |
 | 16 | プランにない間食・外食をその場で記録する入口が無い。ダイアログのボタンを「元に戻す」トーストが覆う（db モードで再発） | 写真記録が食事シート内だけだった／トーストが画面下に固定 | 今日画面の「いま」カード直下に「📷 食べたものを写真で記録」を常設。撮影 → 縮小 → どの食事か選ぶ（記録済みなら 追加／置き換え）→ 推定 → 記録。間食は log_meals.meals.snack_N（status photo）に保存し合計に加算、タイムラインは実績時刻の位置に挿入、✓ 再タップで取り消し。ダイアログ／シートが開いている間はトーストを画面上部に移動 |
 | 17 | 写真ボタンが \`sample.limits().images\` に依存し、この環境（sample は使えるが images 非対応）で完全に隠れて見つからない | 画像非対応を「機能ごと隠す」にしていた | ボタンは \`sample\` があれば常に表示。images 非対応の環境では「AIで推定」だけ出さず「この環境は写真からの自動計算に対応していません」と案内して手入力に切替（写真はメモとして残せる） |
+| 18 | 写真ボタンに \`capture=\"environment\"\` が付いていて、カメラに直行しギャラリーから選べない端末がある | capture 属性がカメラ限定になる | 両方の写真入力から \`capture\` を外し、ネイティブの選択肢（撮影 ／ ギャラリーから選ぶ）を両方出す |
 
 ## 実行方法
 
