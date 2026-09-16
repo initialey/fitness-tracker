@@ -5,7 +5,7 @@
 - **mock**: `window.claude` なし → メモリ上のモックモード
 - **db**: `claude.use("db"/"assets"/"sample"/"downloads")` を疑似ランタイムで注入（db は Node 側に永続し、再読み込み・二重オープンを再現。実際の claude.ai ランタイムではなく API 形状を模したもの）
 
-合計 51 項目 ／ NG 0 件 ／ ページエラー mock 0 件・db 0 件
+合計 52 項目 ／ NG 0 件 ／ ページエラー mock 0 件・db 0 件
 
 ## 共通
 
@@ -14,9 +14,10 @@
 | db が null でもモックモードで動き「保存されていません」の帯が出る | ✓ | ✓ |  |
 | タブは 今日・筋トレ・週 のみ | ✓ | ✓ |  |
 | 375〜430px で横スクロールなし・下タブが safe-area にかぶらない | ✓ | ✓ | tabs padding-bottom=10px（env(safe-area-inset-bottom) 加算） / tabs padding-bottom=10px（env(safe-area-inset-bottom) 加算） |
-| 英略語（W/MAIN/TOP/BO/DROP/PRE）がUIに出ない | ✓ | ✓ |  |
+| db スキーマ: log_weight{value,unit,skipped,skipReason,loggedAt} / warmup{completed,minutes,loggedAt} / meals{status: plan|substitute|skip|photo, photoId, reason} / log_daily{dayNo,dayName,notes,skippedItems[]} | ✓ | ✓ | db のみ / statuses=plan,plan,skip,substitute / 9/16 skippedItems=meal 3 |
+| 英略語（W/MAIN/TOP/BO/DROP/PRE/FINAL）がUIに出ない | ✓ | ✓ |  |
 | 数だけの表示（7種、1種）がない | ✓ | ✓ |  |
-| 同日に2回開いても二重保存されない | ✓ | ✓ | db のみ / docs: {"log_workout":3,"plan_days":7,"plan_exercises":30,"plan_warmup":6,"plan_meals":5,"plan_supplements":7,"plan_routine":3,"foods":19,"settings":1,"log_weight":2,"log_routine":2,"log_meals":1,"log_supplements":2,"log_media":1,"log_cardio":1,"log_daily":1} |
+| 同日に2回開いても二重保存されない | ✓ | ✓ | db のみ / docs: {"log_workout":3,"plan_days":7,"plan_exercises":30,"plan_warmup":6,"plan_meals":5,"plan_supplements":7,"plan_routine":4,"foods":21,"settings":1,"log_weight":2,"log_daily":4,"log_routine":2,"log_meals":1,"log_supplements":2,"log_media":1,"log_cardio":1} |
 
 ## 今日画面
 
@@ -55,14 +56,14 @@
 | 必ずウォームアップから始まり、6種が完了扱いになるまで「筋トレを始める」が押せない | ✓ | ✓ |  |
 | アニメーション・3ステップ・動画リンク・セットカウンターが6種すべてで動く | ✓ | ✓ | minutes=35 |
 | セット一覧（完了=実績値、現在=黄、未=薄）、タップで前セットに戻れる | ✓ | ✓ |  |
-| 前回値なし→クイック重量ボタン。前回値あり→提案（TOP +kg、BO ×0.85、DROP ×0.7） | ✓ | ✓ | 前回値なし → クイック重量 / ダンベル TOP 22×8(上限)→23kg / バックオフ 23×0.85=20kg / メイン 30×12(上限)→32kg / ドロップ 32×0.7=22kg |
-| 完了→休憩タイマー（TOP150秒/他90秒）→自動で次セット。「飛ばす」で即次へ | ✓ | ✓ |  |
+| 前回値なし→クイック重量ボタン。前回値あり→提案（メイン 上限到達で+kg、最終セット 最重量×0.7） | ✓ | ✓ | 前回値なし → クイック重量 / ダンベル メイン 22×12(上限)→23kg / 最終セット 23×0.7=16kg / メイン 30×12(上限)→32kg / 最終セット 32×0.7=22kg |
+| 完了→休憩タイマー（メイン・最終 150秒/ウォームアップ 90秒）→自動で次セット。「飛ばす」で即次へ | ✓ | ✓ |  |
 | 代替種目名の上書きが保存され、マスタ名は不変 | ✓ | ✓ |  |
 | 違和感メモ・RPE が保存 | ✓ | ✓ |  |
 | フォーム動画アップロード（assets）と一覧。assets が null ならボタン非表示 | ✓ | ✓ | assets null → 非表示 / assets.upload → log_media.assetId → 一覧 |
 | 途中で閉じて再開すると同じ種目・セットから続けられる | ✓ | ✓ |  |
 | 最終セット→次種目。最終種目→有酸素入力→今日へ戻る | ✓ | ✓ |  |
-| Day3・Day7 はウォームアップ→有酸素のみ | ✓ | ✓ |  |
+| Day3・Day7 はウォームアップ→腹筋→有酸素（筋トレなし） | ✓ | ✓ |  |
 
 ## 週画面
 
@@ -71,7 +72,7 @@
 | 体重グラフ（実測＋7日平均）。データ1日でも壊れない | ✓ | ✓ |  |
 | 遵守率にウォームアップ・筋トレ・有酸素・食事・サプリ・水が含まれる | ✓ | ✓ |  |
 | コーチ向けレポート生成→コピーが実データと一致 | ✓ | ✓ |  |
-| CSV エクスポート。downloads が null ならボタン非表示 | ✓ | ✓ | downloads null → 非表示 / training-log-2026-09-16.csv (14194 bytes) |
+| CSV エクスポート。downloads が null ならボタン非表示 | ✓ | ✓ | downloads null → 非表示 / training-log-2026-09-16.csv (15169 bytes) |
 
 ## 欠測・できなかった
 
@@ -91,7 +92,7 @@
 | 推定 JSON の parse 失敗時にアプリが落ちず、手入力に切替できる | ✓ | ✓ | 写真ボタン非表示のため対象外 |
 | 画像非対応（limits.images=false）環境でボタンが隠れる | ✓ | ✓ | sample null で非表示（上で確認） |
 | assets null で推定だけ動く（写真はメモリ保持、記録は保存） | ✓ | ✓ | db のみ |
-| 縦長・横長・大きい写真（10MB超）で送信前にリサイズ（長辺1280px、JPEG 0.8）して成功する | ✓ | ✓ | 25.2MB PNG → 608KB JPEG 1280×960 / 25.2MB PNG → 607KB JPEG 1280×960 |
+| 縦長・横長・大きい写真（10MB超）で送信前にリサイズ（長辺1280px、JPEG 0.8）して成功する | ✓ | ✓ | 25.2MB PNG → 608KB JPEG 1280×960 / 25.2MB PNG → 608KB JPEG 1280×960 |
 
 ## テスト中に見つけて修正した内容
 
@@ -104,9 +105,10 @@
 | 5 | 提案重量 TOP が「TOP の半分」等の英略語を含む | 文言の残り | 「トップの半分」に統一。UI 全体を英略語なしで検証 |
 | 6 | 実機で「取り消し」「プランに戻す」「代替種目」「飛ばす」が反応しない | claude.ai のアーティファクトは sandbox iframe で `confirm()` / `prompt()` が無効（常に false / null）。テスト環境では自動承認されていて気づけなかった | ページ内ダイアログ（askConfirm / askText / askTime）に全面置換。テストもダイアログを実際に操作する方式に変更 |
 | 7 | スキップにすると緑✓とスキップ表示が同時に出る | 「記録あり」を一律 done 扱いにしていた | 状態を 未記録○ / プラン通り緑✓ / 変更あり黄✓ / スキップ赤− の 4 種に統一。緑✓はプラン通りのみ |
+| 8 | 行の時刻がプランの予定時刻のままで実績が残らない | time(HH:mm) だけ保存し予定と区別していなかった | すべての記録に loggedAt(ISO 8601) を保存。行は実績を太字＋予定を小さく、60 分以上ズレは黄色。タップで時刻修正。タイマー（15 分・休憩）は loggedAt からの時刻差で算出し、再読み込み後も残り時間が続く |
 | 9 | 体重を測れない日の扱いが無く、欠測日も直線でつながっていた | 欠測の概念が無かった | log_weight に skipped/reason を保存。行は灰色「−」、「いま」は次へ進む。グラフは隣り合う日だけ線で結び、7 日平均は暦 7 日窓の実測のみ。週まとめ「体重 N/M 日 測定」、レポート「(N/M days measured, skipped: travel×2)」、CSV に skipped/reason 列。食事・サプリ・ルーティン・筋トレ・有酸素にも理由つきの「できなかった」を追加し、週まとめのブロックとレポート Notes に自動集計 |
 | 10 | 写真からの推定（新機能） | — | 送信前に長辺 1280px / JPEG 0.8 に縮小、`sample.limits().images` が無い環境では写真ボタンを隠す、assets が無ければ写真はメモリ保持で推定・記録のみ、推定 JSON の検証に失敗しても落ちずに「手入力に切替」できることを確認 |
-| 8 | 行の時刻がプランの予定時刻のままで実績が残らない | time(HH:mm) だけ保存し予定と区別していなかった | すべての記録に loggedAt(ISO 8601) を保存。行は実績を太字＋予定を小さく、60 分以上ズレは黄色。タップで時刻修正。タイマー（15 分・休憩）は loggedAt からの時刻差で算出し、再読み込み後も残り時間が続く |
+| 11 | コーチ回答の反映で食事シートの補足（「筋トレ後の食事 ・ 必ず摂る」）が状態バッジと同じ見た目になり、テストでも状態バッジと取り違えた | 補足を badge クラスで描画していた | 補足は薄字の注記に変更。種目・セット構成（全セット10〜12回・最終セット −30%）・食事・サプリ・腹筋ルーティン・db スキーマ（log_weight value/unit/skipped、warmup.completed、meals.status、log_daily.skippedItems）を SEED_VERSION 4 で差し替え、休みの日は ウォームアップ→腹筋→有酸素 の順に |
 
 ## 実行方法
 

@@ -25,35 +25,38 @@
 
 | コレクション | doc id | 内容 |
 |---|---|---|
-| `settings` | `main` | startDate, unit(kg/lb), tz, waterGoalMl, restTopSec, restOtherSec, incDbKg, incBarKg, timerMorningMin, timerAfterMealMin, **riceBasis("raw"/"cooked"、コーチ回答待ち)**, workoutMin, warmupMin, cardioLabel, times{weight,morning,meal1..5,after_meal,warmup,workout,cardio,night}, seedVersion |
+| `settings` | `main` | startDate, unit(kg/lb), tz, waterGoalMl, restMainSec(150), restTopSec, restOtherSec(90), incDbKg(1), incBarKg(2), weeklyGainPct(5), timerMorningMin, timerAfterMealMin, riceBasis("raw"/"cooked"), workoutMin, warmupMin, cardioLabel, times{weight,morning,meal1..5,after_meal,warmup,workout,cardio,night}, seedVersion |
 | `plan_days` | dayNo | name, isRest, cardioRequired, notes |
-| `plan_exercises` | id | dayNo, order, nameJa, nameEn, isPreexhaust, supersetGroup, setScheme, howTo, videoQuery, active, **sets[]**（set_scheme を展開済み） |
+| `plan_exercises` | id | dayNo, order, nameJa, nameEn, isPreexhaust, supersetGroup, setScheme（例 `WU10-12,MAIN10-12x2,FINAL16-20`）, howTo, videoQuery, active, **sets[]**（set_scheme を展開済み） |
 | `plan_warmup` | id | name, nameEn, anim(swing/alt/cross/circle/hips/toe), reps, targetSets(3), minSets(2), steps[3]（コーチ指定 6 種、毎回必須） |
-| `plan_meals` | mealNo | label, items[{foodId, grams, label?, short?, choices?}], alt?{label, items}（4食目の代替案）。foodId `rice` は settings.riceBasis で rice_raw / rice_cooked に解決 |
-| `plan_supplements` | id | name, dose(空欄), timing, order, active |
-| `plan_routine` | id | name, timing, order, active, isWater |
-| `foods` | foodId | nameJa, nameEn, per(100g/1pc/1scoop), kcal, p, f, c, source(plan/user/ai), note |
-| `log_weight` | YYYY-MM-DD | loggedAt(ISO 8601), time, weightKg, bodyFatPct ／ 測れなかった日は {skipped:true, reason, reasonText, loggedAt} |
-| `log_workout` | YYYY-MM-DD | sets{ "exId_setNo": {exerciseId, setNo, setType, weightKg, reps, at} }, meta{ exId: {note, rpe, subName} }, **warmup{sets{id:n}, startedAt(ms), done(HH:mm), minutes, skipped, skipReason}**, finished(HH:mm) |
+| `plan_meals` | mealNo | label, note, items[{foodId, grams, label?, short?, choices?}], alt?{label, items}（4食目の代替案）。foodId `rice` は settings.riceBasis で rice_raw / rice_cooked に解決 |
+| `plan_supplements` | id | name, dose, timing(after_meal/night), order, active, pending（量がコーチ確認中なら true） |
+| `plan_routine` | id | name, timing(morning/after_meal/anytime/post), order, active, isWater。id 4 = 腹筋（毎日、筋トレ後／休みの日はウォームアップ後） |
+| `foods` | foodId | nameJa, nameEn, per(100g/1pc/1scoop), kcal, p, f, c, source(plan/user/ai/ai_photo), note |
+| `log_weight` | YYYY-MM-DD | value, unit("kg"), skipped(bool), skipReason, loggedAt(ISO 8601), bodyFatPct（互換: weightKg, time, reason, reasonText） |
+| `log_workout` | YYYY-MM-DD | sets{ "exId_setNo": {exerciseId, setNo, setType(WU/MAIN/FINAL/PRE/TOP/BO/DROP), weightKg, reps, loggedAt} }, meta{ exId: {note, rpe, subName} }, **warmup{completed, minutes, sets{id:n}, startedAt(ms), done(HH:mm), loggedAt, skipped, skipReason}**, finished(HH:mm) |
 | `log_cardio` | YYYY-MM-DD | entries[{type, minutes, note, at}] |
-| `log_meals` | YYYY-MM-DD | meals{ mealNo: {status(plan/sub/skip: 品目から自動判定), variant(""/"alt"), items[{foodId, grams, kcal, p, f, c, origin(plan/add), eaten, deleted(ソフト削除・シートを閉じると確定), planGrams, choiceOf}]} } |
+| `log_meals` | YYYY-MM-DD | meals{ mealNo: {status(plan / substitute / skip / photo: 品目から自動判定して保存), items[{foodId, grams, kcal, p, f, c, origin(plan/add), eaten, deleted(ソフト削除・シートを閉じると確定), planGrams, estimated}], loggedAt, photoId, reason(スキップ理由), variant(""/"alt"), photo{assetId, confidence, note}, skip{reason, reasonText}} } |
 | `log_supplements` | YYYY-MM-DD | items{ id: {done, loggedAt} }、今日はなし: {done:false, na:true, reason, reasonText, loggedAt} |
 | `log_routine` | YYYY-MM-DD | items{ id: {done, loggedAt} }、水は {done, value(ml), loggedAt}、今日はなし: {na, reason} |
 | `log_media` | id | date, type(photo/video), category(body/form/meal), assetId, url, exerciseId, note |
-| `log_daily` | YYYY-MM-DD | dayNo(手動上書き), isRestOverride, comment, warmupSkipped{reason, at}, workoutMissed{reason, reasonText, shift, loggedAt}, cardioMissed{reason, reasonText, loggedAt} |
+| `log_daily` | YYYY-MM-DD | dayNo(手動上書き), dayName, notes, skippedItems[{item, itemJa, reason, reasonJa}]（できなかった項目の自動集計）, isRestOverride, comment, warmupSkipped{reason, at}, workoutMissed{reason, reasonText, shift, loggedAt}, cardioMissed{reason, reasonText, loggedAt} |
 
 重量は常に kg で保存。表示時のみ lb 換算（1 lb = 0.45359237 kg、小数 1 桁）。
-初回起動時に `plan_days` が空、または `settings.seedVersion` が `SEED_VERSION` より古ければ、`SEED` 定数（spec 第 5 章、ホームジム代替入り、サプリ量は空欄）で `plan_*` と `foods`(source=plan) を投入し直す。ログは触らない。プランを変えたら `SEED_VERSION` を上げて再公開する。
+初回起動時に `plan_days` が空、または `settings.seedVersion` が `SEED_VERSION`（現在 4 = コーチ回答 2026-09-16 反映）より古ければ、`SEED` 定数（[training-log-spec.md](training-log-spec.md)）で `plan_*` と `foods`(source=plan) を投入し直す。ログは触らない。プランを変えたら `SEED_VERSION` を上げて再公開する。
 
 ### 食事プラン（コーチ指定）
 1. 全卵4個(約200g)・卵白150g・ヒマラヤ塩1g
 2. 白米200g・鶏胸肉150g・ヒマラヤ塩1.5g・オリーブオイル3g・インゲン(バギオ豆)80g
 3. 白米150g・鶏胸肉150g・ヒマラヤ塩1.5g・インゲン80g
-4. 米粉(クリームオブライス)乾燥50g・ホエイ1スクープ(30g)・無糖ピーナッツバター15g ／ 代替案: 白米150g・鶏胸肉100g・全卵1個
-5. 赤身牛肉(調理後)150g・インゲン または ブロッコリー100g
+4. クリームオブライス(乾燥)50g・ホエイ1スクープ(30g)・Skippy ピーナッツバター15g（プレワークアウト食）／ 代替案: 白米150g・鶏胸肉100g・全卵1個
+5. 赤身牛肉(調理後)150g・インゲン または ブロッコリー100g（サーモン追加OK +20g、グミは自由）
 
-サーモンは差替えチップにだけ出る。白米は「炊飯後基準・要確認」を表示に必ず付ける（設定で生米基準に切替可）。
-食後サプリ 7 種: クレアチン・マグネシウム・フィッシュオイル・亜鉛・アシュワガンダ・B12+D3・ベルベリン（量はコーチ回答待ち）。
+2食目は筋トレ後の食事で必ず摂る。サーモンは差替えチップにだけ出る。白米は「炊飯後基準・要確認」を表示に必ず付ける（設定で生米基準に切替可）。
+サプリ: B12＋D3・ベルベリン（1食目のあと、ラベル通り）／ マグネシウム グリシネート 400mg・アシュワガンダ 300mg（就寝前）／ フィッシュオイル・亜鉛・クレアチン（食後、量はコーチ確認中）。
+
+### 筋トレの決まり（コーチ回答）
+全セット 10〜12 回・限界 1 回手前（RIR 1）。最終セットはその日いちばん重かった重さの −30% で 16〜20 回（`suggestSets` が最重量 ×0.7 を提案）。休憩はメイン／最終 2:30、ウォームアップ後 1:30。前回 12 回できたら +1kg（ダンベル）/ +2kg（バーベル）、週 +5% 目安。腹筋は毎日（ルーティン id 4）。有酸素は 35〜40 分 Zone2。
 
 ## 画面
 
@@ -61,7 +64,7 @@
 
 1. **今日**: 「いま」カード＋タイムライン。各行は全文表示（省略なし）: 食事は品目と kcal/PFC、サプリは名前を全部、筋トレは種目名を全部、ウォームアップは 6 種の内容。右端 ✓ でその場完了（食事の ✓ ＝ プラン通り食べた）。行タップで詳細（食事 → 下からのシート: プラン由来の品目はチェックで「食べた／食べなかった」、追加・差替えは × でソフト削除→「↩ 戻す」、直後に「元に戻す」トースト 5 秒、「↩ 1つ戻す」（最大 20 手）、「プランの内容に戻す」（確認あり）。差替えチップは「卵白150g → 卵白200g に置き換え」「サーモン150g を追加」と表示してから確定。自由入力 AI 計算／手入力）。最下部に 1 日合計（達成率バー＋あと N kcal）。日付の前後移動はここだけ
 2. **筋トレ**: 必ず **ウォームアップ画面** から始まる。各動きは 名前＋英名 → 棒人間のインライン SVG アニメ → やり方 3 ステップ → ▶ 動画で見る → セットカウンター「セット 0/3」＋［1セット完了］（2/3 以上で完了扱い、3/3 で緑）。上部に「6種中 N種 完了」と経過時間。全種完了で「筋トレを始める」（休みの日は「有酸素を始める」）が有効になり、所要分を log_workout.warmup.minutes に保存。飛ばすには理由入力→log_daily に記録。休みの日も有酸素前に同じ 6 種。その後 1 画面 1 セット: 「種目 1/6 ・ セット 1/3」→ 種目名＋動画／やり方／用語 → 【いまのセット】カード（番号＋種類の日本語名＋目的の一文）→ セット一覧（完了は実績値、現在は黄色）→ 大数字±（初回は目安なし＋クイック重量ボタン、前回値があれば提案）→ 完了 → 休憩タイマー → 次セット。英略語（WU/MAIN/TOP…）は UI に出さない
-3. **週**: 履歴だけ（日別 kcal・食事・ウォームアップ・筋トレ・有酸素・水・サプリの表、体重 30 日、TOP 重量推移、コーチ向けレポート→コピー、写真一覧、設定・CSV）。当日の入力操作は置かない
+3. **週**: 履歴だけ（日別 kcal・食事・ウォームアップ・筋トレ・有酸素・水・サプリの表、体重 30 日、いちばん重かった重量（種目別・日ごと）、コーチ向けレポート→コピー、写真一覧、設定・CSV）。当日の入力操作は置かない
 
 ### 記録時刻（loggedAt）
 すべての記録（体重・食事・サプリ・ルーティン・水・セット・有酸素・ウォームアップ・筋トレ完了・メディア）に `loggedAt`（ISO 8601、端末時刻、オフセット付き）を保存し、`settings.tz` で表示する。旧データの `time`(HH:mm) は互換的に ISO へ変換して扱う。
@@ -95,7 +98,7 @@ claude.ai のアーティファクトは sandbox iframe のため `confirm()` / 
 
 ## テスト
 
-`npm run e2e:artifact` で mock / db（疑似ランタイム）両モードの 36 項目を実行し、結果を [TEST.md](TEST.md) に書き出す。
+`npm run e2e:artifact` で mock / db（疑似ランタイム）両モードの 52 項目を実行し、結果を [TEST.md](TEST.md) に書き出す。
 
 ## モックモード
 
@@ -106,7 +109,8 @@ claude.ai のアーティファクトは sandbox iframe のため `confirm()` / 
 
 - [ ] `user` capability が使えるようになったら `data/users/<uid>/` へ移行（現在は rules でオーナー専用）
 - [ ] db が 5,000 ドキュメントに近づいたときの古いログの整理（CSV 書き出し→削除）
-- [ ] コーチ回答後のプラン編集 UI（現在は Claude に頼んで db を書き換えるか、SEED を直して再公開）
+- [ ] プラン編集 UI（現在は SEED を直して `SEED_VERSION` を上げ再公開）
+- [ ] フィッシュオイル・亜鉛・クレアチンの量（コーチ確認中）
 - [ ] タイムゾーン: 端末のローカル時刻を使っている（settings.tz は未使用）
 - [ ] 写真・動画の Drive 共有リンクは無い。レポートには `/_blob/<id>` の相対 URL が入るので、コーチには Messenger で直接送る前提
 - [ ] 通知（タイマー終了時のバイブのみ。バックグラウンド通知なし）

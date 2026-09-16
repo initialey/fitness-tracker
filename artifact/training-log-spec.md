@@ -1,0 +1,88 @@
+# トレログ 仕様（簡潔版・コーチ回答反映 2026-09-16）
+
+Claude Artifact 1 ファイル（`index.html`）。スマホの claude.ai だけで使う。詳細な実装メモは [README.md](README.md)、テスト結果は [TEST.md](TEST.md)。
+
+## 1. トレーニングの決まり（コーチ回答）
+
+| 項目 | 内容 |
+|---|---|
+| 回数 | 全セット 10〜12 回、限界の 1 回手前（RIR 1）まで |
+| 最終セット | その日いちばん重かった重さの −30% で 16〜20 回（アプリが自動で目安を出す） |
+| 休憩 | 2〜3 分（アプリは 2:30、ウォームアップ後は 1:30） |
+| 重量の伸ばし方 | 前回 12 回できたら次回 +1kg（ダンベル）/ +2kg（バーベル）。週 +5% が目安 |
+| 腹筋 | 毎日。筋トレ後 or 朝の空腹時（ルーティン行として毎日表示） |
+| 有酸素 | 35〜40 分・Zone2（ゆっくりジョグ or 傾斜歩き）。夜でも OK。休みの日も必須 |
+| ベンチ角度 | インクライン系は 35° または 45° |
+| ウォームアップ | 毎回 6 種（腕前後振り・交互振り・胸クロス・腕回し・腰回し・つま先タッチ）各 10 回 × 2〜3 セット。完了しないと筋トレ／有酸素を始められない |
+| 器具 | ロープアタッチメントは購入必須。ベンチは 35°/45° |
+
+### 週サイクル（7 日、開始日 2026-09-16）
+Day1 Push → Day2 Pull → Day3 休み（有酸素のみ） → Day4 Legs → Day5 Upper → Day6 Pull & Arms → Day7 休み。
+筋トレを「できなかった（Day をずらす）」にした日の翌日から Day が 1 つ繰り下がる。
+
+### 種目（ホームジム代替を確定）
+セット構成: WU = 軽めのウォームアップ 10〜12、MAIN ×2、最終 16〜20。事前疲労種目（★）は WU + MAIN ×2 のみ。
+
+| Day | 種目（コーチの元種目 → 代替） |
+|---|---|
+| 1 Push | ケーブルフライ 座位ミッド角度★（ペックデッキ→）／ インクライン DB プレス 35°/45° ／ スミス チェストプレス（マシンプレス→）／ DB ショルダープレス ／ サイドレイズ ／ ロープ プッシュダウン |
+| 2 Pull | ラットプルダウン（どのラットプルでも可）／ ベントオーバーロウ（T-bar→）／ ワイドグリップ ロウ 胸の高さ（マシンロウ→）／ ロープ フェイスプル（ハイ/ロー可）／ インクライン DB カール ／ ハンマーカール |
+| 4 Legs | レッグエクステンション★ ／ スクワット（WU 2 本）／ スミス ハックスクワット（レッグプレス→）／ ライイングレッグカール または RDL（レッグカール→）／ ケーブルアブダクション ＋ スモウスクワット（アダクター→）／ スミス カーフレイズ |
+| 5 Upper | インクライン DB プレス ／ スミス ショルダープレス ／ ケーブルフライ 座位ミッド ／ サイドレイズ ／ ロープ リアデルト ／ ロープ オーバーヘッド エクステンション |
+| 6 Pull & Arms | ベントオーバーロウ ／ ラットプルダウン ／ ワイドグリップ ロウ ／ バーベルカール ／ ロープ プッシュダウン ／ ロープ ハンマーカール |
+
+## 2. 食事（コーチ確定）
+
+| 食事 | 内容 | 補足 |
+|---|---|---|
+| 1食目 | 全卵 4 個・卵白 150g・塩 1g | サプリ B12＋D3・ベルベリンはこのあと |
+| 2食目 | 白米 200g・鶏胸肉 150g・塩 1.5g・オリーブオイル 3g・インゲン 80g | 筋トレ後の食事。必ず摂る |
+| 3食目 | 白米 150g・鶏胸肉 150g・塩 1.5g・インゲン 80g | |
+| 4食目 | クリームオブライス（乾燥）50g・ホエイ 1 スクープ・Skippy ピーナッツバター 15g | プレワークアウト食。代替案: 白米 150g・鶏胸肉 100g・全卵 1 個 |
+| 5食目 | 赤身牛肉 150g・インゲン または ブロッコリー 100g | サーモン追加 OK（+20g）。グミは自由 |
+
+- 白米は表示に必ず「炊飯後基準／生米基準」を付ける（設定で切替、保存は foodId で区別）
+- foods にクリームオブライス・Skippy PB を追加。サーモンは差替えチップにだけ出す
+- 記録の状態は 4 つ: 未記録○ / プラン通り 緑✓ / 変更あり 黄✓ / スキップ 赤−（理由付き）
+- 写真からの推定記録（`sample` の画像入力が使えるときだけ）。推定値は kcal に「※」
+
+## 3. サプリ・ルーティン
+
+| 名前 | タイミング | 量 |
+|---|---|---|
+| B12＋D3 | 1食目のあと | ラベル通り |
+| ベルベリン | 1食目のあと | ラベル通り |
+| マグネシウム グリシネート | 就寝前 | 400mg |
+| アシュワガンダ | 就寝前 | 300mg |
+| フィッシュオイル・亜鉛・クレアチン | 食後 | コーチ確認中（アプリでは「量はコーチ確認中」表示） |
+
+ルーティン: 朝 リンゴ酢＋水 500ml（→15 分タイマー）／ 食後 サイリウム ／ 水 5L（+250ml ボタン）／ 腹筋（毎日）。
+
+## 4. 画面（3 タブ）
+
+1. **今日**: 「いま」カード（次にやること＋現在時刻）＋タイムライン。体重 → 朝ルーティン → 1食目 → 食後サプリ → 2食目… → ウォームアップ → 筋トレ → 腹筋 → 有酸素 → 夜サプリ → 水。各行は全文表示、右端 ✓ でその場完了、行タップで詳細シート。記録には必ず実績時刻（loggedAt）を保存し、予定と 60 分以上ズレると黄色
+2. **筋トレ**: ウォームアップ 6 種（棒人間アニメ・3 ステップ・動画リンク・セットカウンター）→ 1 画面 1 セット。セット種類は日本語名＋目的の一文（英略語なし）。前回値から重量を提案、最終セットは最重量 ×0.7 を提案。休憩タイマーは閉じても続く
+3. **週**: 日別履歴（kcal・食事・ウォームアップ・筋トレ・有酸素・水・サプリ・遅れ）、体重 30 日（欠測日は線を切る・7 日平均は実測のみ）、いちばん重かった重量（種目別）、できなかった項目と理由、コーチ向けレポート（英語・コピー）、写真一覧、設定（単位・白米基準・CSV）
+
+「できなかった」は体重・食事・サプリ・ルーティン・筋トレ（Day をずらす選択）・有酸素すべてに理由付きで記録し、週まとめとレポートに自動集計。
+
+## 5. データ（db、1 日 1 ドキュメント）
+
+| コレクション | 主なフィールド |
+|---|---|
+| `settings/main` | startDate, unit, riceBasis, restMainSec 150, restOtherSec 90, incDbKg 1, incBarKg 2, weeklyGainPct 5, times{…}, seedVersion |
+| `plan_days` / `plan_exercises` / `plan_warmup` / `plan_meals` / `plan_supplements` / `plan_routine` / `foods` | 上記マスタ（`SEED_VERSION` を上げると plan_* と plan 由来の foods を差し替え。ログは触らない） |
+| `log_weight/{date}` | value, unit "kg", skipped(bool), skipReason, loggedAt（互換: weightKg, reason） |
+| `log_workout/{date}` | sets{"exId_setNo": {exerciseId, setNo, setType, weightKg, reps, loggedAt}}, meta{exId: {note, rpe, subName}}, warmup{completed, minutes, sets, loggedAt, skipped, skipReason}, finished |
+| `log_meals/{date}` | meals{mealNo: {status: plan / substitute / skip / photo, items[{foodId, grams, kcal, p, f, c, origin, eaten, deleted, planGrams, estimated}], loggedAt, photoId, reason, variant, photo{assetId, confidence, note}}} |
+| `log_supplements/{date}` `log_routine/{date}` | items{id: {done, loggedAt}}（今日はなし: na, reason）。水は value(ml) |
+| `log_cardio/{date}` | entries[{type, minutes, note, loggedAt}] |
+| `log_daily/{date}` | dayNo（手動上書き）, dayName, notes, skippedItems[{item, reason}], workoutMissed{reason, shift}, cardioMissed, warmupSkipped |
+| `log_media/{id}` | date, type, category(body/form/meal), assetId, mealNo, exerciseId |
+
+## 6. 運用
+
+- 公開 capabilities: `db`（オーナーのみ読み書き）, `assets`, `sample`, `downloads`
+- db が無い環境（ローカルで開いた等）はモックモードで動き、保存されない
+- プラン変更は `SEED` を直して `SEED_VERSION` を上げ、同じファイルで再公開（URL は変わらない）
+- テスト: `npm run e2e:artifact`（mock / db 両モード、結果は TEST.md）

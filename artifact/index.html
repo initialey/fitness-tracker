@@ -293,14 +293,15 @@ textarea.txt{min-height:60px}
    ===================================================================== */
 const LB = 0.45359237;
 const WD = ['日', '月', '火', '水', '木', '金', '土'];
-const SEED_VERSION = 3; // 初期データを変えたら上げる（db 上の plan_* / foods を再投入する）
+const SEED_VERSION = 4; // コーチ回答（2026-09-16）反映版 // 初期データを変えたら上げる（db 上の plan_* / foods を再投入する）
 // セット種類の日本語名と「目的と重さの目安」文言（{reps} と {kg} を置換）
 const SET_TYPES = {
   WU: { name: 'ウォームアップ', purpose: '軽めの重さで {reps}回。フォームを確かめる' },
-  MAIN: { name: 'メイン', purpose: '中くらいの重さで {reps}回。前回より少し重く' },
+  MAIN: { name: 'メイン', purpose: '{reps}回。限界の1回手前（RIR 1）まで。前回より少し重く' },
   TOP: { name: 'トップセット', purpose: '今日いちばん重い重さで {reps}回。限界の1〜2回手前まで' },
   BO: { name: 'バックオフ', purpose: 'トップより軽くして {reps}回（目安 {kg}）' },
   DROP: { name: 'ドロップ', purpose: '休まず重さを落として {reps}回、上がらなくなるまで' },
+  FINAL: { name: '最終セット', purpose: 'いちばん重かった重さの −30% で {reps}回（目安 {kg}）。限界1回手前まで' },
   PRE: { name: '事前疲労', purpose: '軽〜中くらいで {reps}回。狙う筋肉を先に疲れさせる' }
 };
 // 「できなかった」理由（タップ選択）。en はコーチ向けレポート用
@@ -318,16 +319,18 @@ const GLOSSARY = [
   ['トップセット', '今日いちばん重い 1 セット。限界の 1〜2 回手前で止める'],
   ['バックオフ', 'トップセットの後に重さを 15% ほど落として回数を多めにするセット'],
   ['ドロップ', 'セットの直後に休まず重さを落とし、上がらなくなるまで続ける'],
+  ['最終セット', 'その種目でいちばん重かった重さの −30% で 16〜20 回。コーチ指定の締めのセット'],
+  ['RIR 1', '限界まであと 1 回、というところで止める。全セット共通'],
   ['事前疲労', '複合種目の前に単関節種目で狙う筋肉を先に疲れさせる方法'],
   ['スーパーセット', '2 種目を休憩なしで交互に行う。同じ記号（A・B…）の種目が組']
 ];
 const DEFAULT_SETTINGS = {
   startDate: '2026-09-16', unit: 'kg', tz: 'Asia/Manila', waterGoalMl: 5000,
-  restTopSec: 150, restOtherSec: 90, incDbKg: 1, incBarKg: 2,
+  restTopSec: 150, restMainSec: 150, restOtherSec: 90, incDbKg: 1, incBarKg: 2, weeklyGainPct: 5,
   timerMorningMin: 15, timerAfterMealMin: 15,
-  riceBasis: 'cooked', // 'raw' | 'cooked'（コーチ回答待ち。表示に必ず基準を明記）
+  riceBasis: 'cooked', // 'raw' | 'cooked'（表示に必ず基準を明記）
   workoutMin: 60, warmupMin: 5,
-  cardioLabel: '35〜40分 ・ ウォーキング（種類はコーチ確認中）',
+  cardioLabel: '35〜40分 ・ Zone2（ゆっくりジョグ or 傾斜歩き）・ 夜でもOK',
   warmupNote: '約5分 ・ 座ってからやらない ・ 痛みが出たら止める',
   times: { weight: '06:40', morning: '06:45', meal1: '07:00', after_meal: '07:15', warmup: '08:30', workout: '08:35',
     meal2: '10:30', meal3: '13:30', meal4: '16:30', meal5: '19:30', cardio: '21:00', night: '22:30' }
@@ -339,9 +342,10 @@ const FOOD_ALIASES = {
   '鮭': 'salmon', 'サーモン': 'salmon', 'pb': 'peanut_butter', 'ピーナッツバター': 'peanut_butter', '塩': 'salt_himalayan',
   'プロテイン': 'whey', 'ホエイ': 'whey', 'whey': 'whey', '豆': 'green_beans', 'インゲン': 'green_beans', 'オイル': 'olive_oil', '油': 'olive_oil'
 };
-/* 初期プラン（training-log-spec 第5章 / training_plan.html）。
-   種目はホームジム前提の暫定代替入り: T-bar→ベントオーバーロウ / ペックデッキ→ケーブルフライ / マシンプレス→スミス /
-   レッグプレス→スミスハックスクワット / シーテッドハムカール→ライイングカール / ロープ→V・D ハンドル。コーチ回答で上書き */
+/* 初期プラン（training-log-spec.md、コーチ回答 2026-09-16 で確定）。
+   代替種目: T-bar→ベントオーバーロウ / ペックデッキ→ケーブルフライ座位ミッド / マシンロウ→ワイドグリップロウ（胸の高さ） /
+   レッグプレス→スミスハックスクワット / レッグカール→ライイングカール or RDL / アダクター→ケーブルアブダクション＋スモウスクワット /
+   カーフ→スミス。ロープアタッチメントは購入必須 */
 const SEED = {
   days: [
     { dayNo: 1, name: 'Push', isRest: false, cardioRequired: true, notes: '胸・肩・三頭' },
@@ -352,37 +356,38 @@ const SEED = {
     { dayNo: 6, name: 'Pull & Arms', isRest: false, cardioRequired: true, notes: '背中・腕' },
     { dayNo: 7, name: 'Rest', isRest: true, cardioRequired: true, notes: '有酸素のみ' }
   ],
+  // 全セット 10-12 回・限界 1 回手前（RIR 1）。最終セット = 最重量の −30% で 16-20 回。休憩 2〜3 分
   exercises: [
-    [1, 1, 1, 'ケーブルフライ（事前疲労）', 'Cable fly (pre-exhaust)', true, '', 'WU12-15,MAIN12-15x2', 'ペックデッキの代替。肘を軽く曲げ胸で寄せる。', 'cable fly form'],
-    [2, 1, 2, 'インクラインダンベルプレス', 'Incline DB press', false, '', 'WU10-12,TOP6-8,BO10-12', '角度30°。肩甲骨を寄せて胸を張り、肘は45°。', 'incline dumbbell press form'],
-    [3, 1, 3, 'スミス チェストプレス', 'Smith chest press', false, '', 'MAIN10-12x3', 'マシンプレスの代替。バーは乳首ライン。', 'smith machine bench press form'],
-    [4, 1, 4, 'ダンベルショルダープレス', 'DB shoulder press', false, '', 'WU12,TOP8-10,BO10-12', '腰を反らさない。', 'dumbbell shoulder press form'],
-    [5, 1, 5, 'サイドレイズ', 'Lateral raise', false, 'A', 'MAIN12-15x3', '小指側をやや上に。反動を使わない。', 'lateral raise form'],
-    [6, 1, 6, 'Vハンドル プッシュダウン', 'V-handle pushdown', false, 'A', 'MAIN10-12x3,DROP12-15', 'ロープの代替。肘を固定して伸ばしきる。', 'cable pushdown form'],
-    [7, 2, 1, 'ラットプルダウン', 'Lat pulldown', false, '', 'WU12,TOP8-10,BO10-12', '胸を張り、肘を腰へ引く。', 'lat pulldown form'],
-    [8, 2, 2, 'ベントオーバーロウ', 'Bent-over row', false, '', 'WU10,TOP6-8,BO10-12', 'T-bar ロウの代替。背中フラット、へそへ引く。', 'bent over barbell row form'],
-    [9, 2, 3, 'Vハンドル シーテッドロウ', 'V-handle seated row', false, '', 'MAIN10-12x3', 'ロープの代替。肩甲骨を寄せ切る。', 'seated cable row form'],
-    [10, 2, 4, 'Dハンドル フェイスプル', 'D-handle face pull', false, 'B', 'MAIN12-15x3', 'ロープの代替。肘を高く、外旋を意識。', 'face pull form'],
-    [11, 2, 5, 'インクラインダンベルカール', 'Incline DB curl', false, 'B', 'MAIN10-12x3', '肘を後ろに置いたまま。', 'incline dumbbell curl form'],
-    [12, 2, 6, 'ハンマーカール', 'Hammer curl', false, '', 'MAIN10-12x2,DROP12-15', '親指上。', 'hammer curl form'],
-    [13, 4, 1, 'レッグエクステンション（事前疲労）', 'Leg extension (pre-exhaust)', true, '', 'WU15,MAIN12-15x2', 'トップで1秒止める。', 'leg extension form'],
-    [14, 4, 2, 'スクワット', 'Squat', false, '', 'WU10,WU8,TOP6-8,BO10-12', '深さは平行以下。膝とつま先の向きを合わせる。', 'barbell squat form'],
-    [15, 4, 3, 'スミス ハックスクワット', 'Smith hack squat', false, '', 'MAIN10-12x3', 'レッグプレスの代替。足は前方に置く。', 'smith machine hack squat form'],
-    [16, 4, 4, 'ライイングレッグカール', 'Lying leg curl', false, '', 'WU12,MAIN10-12x3', 'シーテッドハムカールの代替。腰を浮かせない。', 'lying leg curl form'],
-    [17, 4, 5, 'ルーマニアンデッドリフト', 'Romanian deadlift', false, '', 'WU10,TOP8-10,BO10-12', 'ハムのストレッチで止める。背中は真っ直ぐ。', 'romanian deadlift form'],
-    [18, 4, 6, 'スタンディングカーフレイズ', 'Standing calf raise', false, '', 'MAIN12-15x4', 'ボトムで止める。', 'standing calf raise form'],
-    [19, 5, 1, 'インクラインダンベルプレス', 'Incline DB press', false, '', 'WU10-12,TOP6-8,BO10-12', 'Day1 と同じ。前回より重量 or 回数を狙う。', 'incline dumbbell press form'],
-    [20, 5, 2, 'スミス ショルダープレス', 'Smith shoulder press', false, '', 'WU12,TOP8-10,BO10-12', '顎の前を通す。', 'smith machine shoulder press form'],
-    [21, 5, 3, 'ケーブルフライ', 'Cable fly', false, '', 'MAIN12-15x3', 'ペックデッキの代替。', 'cable fly form'],
-    [22, 5, 4, 'サイドレイズ', 'Lateral raise', false, 'C', 'MAIN12-15x3', '', 'lateral raise form'],
-    [23, 5, 5, 'リアデルト（Dハンドル）', 'Rear delt fly (D-handle)', false, 'C', 'MAIN12-15x3', 'ロープの代替。', 'cable rear delt fly form'],
-    [24, 5, 6, 'オーバーヘッド エクステンション', 'Overhead extension', false, '', 'MAIN10-12x3', '肘を閉じる。', 'overhead triceps extension form'],
-    [25, 6, 1, 'ベントオーバーロウ', 'Bent-over row', false, '', 'WU10,TOP6-8,BO10-12', 'T-bar の代替。', 'bent over barbell row form'],
-    [26, 6, 2, 'ラットプルダウン', 'Lat pulldown', false, '', 'MAIN10-12x3', '', 'lat pulldown form'],
-    [27, 6, 3, 'ワンハンド ダンベルロウ', 'One-arm DB row', false, '', 'MAIN10-12x3', '', 'one arm dumbbell row form'],
-    [28, 6, 4, 'バーベルカール', 'Barbell curl', false, 'D', 'MAIN8-10x3', '', 'barbell curl form'],
-    [29, 6, 5, 'Vハンドル プッシュダウン', 'V-handle pushdown', false, 'D', 'MAIN10-12x3', '', 'cable pushdown form'],
-    [30, 6, 6, 'Dハンドル カール', 'D-handle cable curl', false, '', 'MAIN12-15x2,DROP15', '', 'cable curl form']
+    [1, 1, 1, 'ケーブルフライ（座位・ミッド角度・事前疲労）', 'Seated cable fly, mid angle (pre-exhaust)', true, '', 'WU10-12,MAIN10-12x2', 'ペックデッキの代替。座って肘を軽く曲げ、胸の高さで寄せる。', 'seated cable fly mid'],
+    [2, 1, 2, 'インクラインダンベルプレス', 'Incline DB press', false, '', 'WU10-12,MAIN10-12x2,FINAL16-20', 'ベンチ角度 35° または 45°。肩甲骨を寄せて胸を張り、肘は 45°。', 'incline dumbbell press form'],
+    [3, 1, 3, 'スミス チェストプレス', 'Smith chest press', false, '', 'MAIN10-12x2,FINAL16-20', 'マシンプレスの代替。バーは乳首ライン。', 'smith machine bench press form'],
+    [4, 1, 4, 'ダンベルショルダープレス', 'DB shoulder press', false, '', 'WU10-12,MAIN10-12x2,FINAL16-20', '腰を反らさない。', 'dumbbell shoulder press form'],
+    [5, 1, 5, 'サイドレイズ', 'Lateral raise', false, 'A', 'MAIN10-12x2,FINAL16-20', '小指側をやや上に。反動を使わない。', 'lateral raise form'],
+    [6, 1, 6, 'ロープ プッシュダウン', 'Rope pushdown', false, 'A', 'MAIN10-12x2,FINAL16-20', 'ロープアタッチメント（購入必須）。肘を固定して伸ばしきり、最後に外へ開く。', 'rope pushdown form'],
+    [7, 2, 1, 'ラットプルダウン', 'Lat pulldown', false, '', 'WU10-12,MAIN10-12x2,FINAL16-20', 'どのラットプルでもOK。胸を張り、肘を腰へ引く。', 'lat pulldown form'],
+    [8, 2, 2, 'ベントオーバーロウ', 'Bent-over row', false, '', 'WU10-12,MAIN10-12x2,FINAL16-20', 'T-bar ロウの代替。背中フラット、へそへ引く。', 'bent over barbell row form'],
+    [9, 2, 3, 'ワイドグリップ ロウ（胸の高さに引く）', 'Wide-grip row to chest', false, '', 'MAIN10-12x2,FINAL16-20', 'マシンロウの代替。ワイドグリップで胸の高さに引き、背中の中部を狙う。', 'wide grip cable row chest'],
+    [10, 2, 4, 'ロープ フェイスプル', 'Rope face pull', false, 'B', 'MAIN10-12x2,FINAL16-20', 'ロープ。肘を高く、外旋を意識。ハイ/ローどちらのケーブルでもOK。', 'rope face pull form'],
+    [11, 2, 5, 'インクラインダンベルカール', 'Incline DB curl', false, 'B', 'MAIN10-12x2,FINAL16-20', '肘を後ろに置いたまま。', 'incline dumbbell curl form'],
+    [12, 2, 6, 'ハンマーカール', 'Hammer curl', false, '', 'MAIN10-12x2,FINAL16-20', '親指上。', 'hammer curl form'],
+    [13, 4, 1, 'レッグエクステンション（事前疲労）', 'Leg extension (pre-exhaust)', true, '', 'WU10-12,MAIN10-12x2', 'トップで1秒止める。', 'leg extension form'],
+    [14, 4, 2, 'スクワット', 'Squat', false, '', 'WU10-12,WU10-12,MAIN10-12x2,FINAL16-20', '深さは平行以下。膝とつま先の向きを合わせる。', 'barbell squat form'],
+    [15, 4, 3, 'スミス ハックスクワット', 'Smith hack squat', false, '', 'MAIN10-12x2,FINAL16-20', 'レッグプレスの代替。足は前方に置く。', 'smith machine hack squat form'],
+    [16, 4, 4, 'ライイングレッグカール（または RDL）', 'Lying leg curl (or RDL)', false, '', 'WU10-12,MAIN10-12x2,FINAL16-20', 'レッグカールの代替。腰を浮かせない。RDL でも可。', 'lying leg curl form'],
+    [17, 4, 5, 'ケーブルアブダクション ＋ スモウスクワット（同時）', 'Cable abduction + sumo squat', false, '', 'MAIN10-12x2,FINAL16-20', 'アダクターの代替。ケーブルを足首に付けて外に開く動きと、ワイドスタンスのスモウスクワットを組み合わせる。', 'cable hip abduction sumo squat'],
+    [18, 4, 6, 'スミス カーフレイズ', 'Smith calf raise', false, '', 'MAIN10-12x2,FINAL16-20', 'スミスで。膝は伸ばす or 軽く曲げる。ボトムで止める。', 'smith machine calf raise form'],
+    [19, 5, 1, 'インクラインダンベルプレス', 'Incline DB press', false, '', 'WU10-12,MAIN10-12x2,FINAL16-20', 'ベンチ角度 35° または 45°。Day1 と同じ。前回より少し重く。', 'incline dumbbell press form'],
+    [20, 5, 2, 'スミス ショルダープレス', 'Smith shoulder press', false, '', 'WU10-12,MAIN10-12x2,FINAL16-20', '顎の前を通す。', 'smith machine shoulder press form'],
+    [21, 5, 3, 'ケーブルフライ（座位・ミッド角度）', 'Seated cable fly, mid angle', false, '', 'MAIN10-12x2,FINAL16-20', 'ペックデッキの代替。', 'seated cable fly mid'],
+    [22, 5, 4, 'サイドレイズ', 'Lateral raise', false, 'C', 'MAIN10-12x2,FINAL16-20', '', 'lateral raise form'],
+    [23, 5, 5, 'ロープ リアデルト', 'Rope rear delt pull', false, 'C', 'MAIN10-12x2,FINAL16-20', 'ロープで顔の横へ引く。', 'rope rear delt pull'],
+    [24, 5, 6, 'ロープ オーバーヘッド エクステンション', 'Rope overhead extension', false, '', 'MAIN10-12x2,FINAL16-20', 'ロープ。肘を閉じる。', 'rope overhead triceps extension'],
+    [25, 6, 1, 'ベントオーバーロウ', 'Bent-over row', false, '', 'WU10-12,MAIN10-12x2,FINAL16-20', 'T-bar の代替。', 'bent over barbell row form'],
+    [26, 6, 2, 'ラットプルダウン', 'Lat pulldown', false, '', 'MAIN10-12x2,FINAL16-20', 'どのラットプルでもOK。', 'lat pulldown form'],
+    [27, 6, 3, 'ワイドグリップ ロウ（胸の高さに引く）', 'Wide-grip row to chest', false, '', 'MAIN10-12x2,FINAL16-20', 'マシンロウの代替。', 'wide grip cable row chest'],
+    [28, 6, 4, 'バーベルカール', 'Barbell curl', false, 'D', 'MAIN10-12x2,FINAL16-20', '', 'barbell curl form'],
+    [29, 6, 5, 'ロープ プッシュダウン', 'Rope pushdown', false, 'D', 'MAIN10-12x2,FINAL16-20', 'ロープ。', 'rope pushdown form'],
+    [30, 6, 6, 'ロープ ハンマーカール（ケーブル）', 'Rope cable hammer curl', false, '', 'MAIN10-12x2,FINAL16-20', 'ロープ。', 'rope cable hammer curl']
   ],
   // コーチ指定の毎回必須ウォームアップ（6 種、各10回×2〜3セット）: [id, 名前, 英名, アニメ種別, 3ステップ]
   warmup: [
@@ -396,14 +401,16 @@ const SEED = {
   // [foodId, nameJa, nameEn, per, kcal, p, f, c]（一般的な栄養成分表ベース。コーチ回答後に修正）
   foods: [
     ['egg_whole', '全卵', 'Whole egg', '100g', 143, 12.6, 9.5, 0.7],
-    ['egg_white', '卵白', 'Egg white', '100g', 52, 10.9, 0.2, 0.7],
+    ['egg_white', '卵白（MTGミールプラン or 手動分離）', 'Egg white', '100g', 52, 10.9, 0.2, 0.7],
     ['rice_raw', '白米（生）', 'White rice (raw)', '100g', 358, 6.1, 0.9, 77.6],
     ['rice_cooked', '白米（炊飯後）', 'White rice (cooked)', '100g', 156, 2.5, 0.3, 37.1],
     ['chicken_raw', '鶏胸肉 皮なし（生）', 'Chicken breast (raw)', '100g', 105, 23.3, 1.9, 0.1],
     ['chicken_cooked', '鶏胸肉 皮なし（加熱後）', 'Chicken breast (cooked)', '100g', 165, 31.0, 3.6, 0],
     ['green_beans', 'インゲン（バギオ豆）', 'Green beans', '100g', 23, 1.8, 0.1, 5.1],
     ['olive_oil', 'オリーブオイル', 'Olive oil', '100g', 884, 0, 100, 0],
-    ['rice_flour', '米粉（クリームオブライス・乾燥）', 'Cream of rice (dry)', '100g', 356, 6.0, 0.7, 81.3],
+    ['rice_flour', '米粉（乾燥）', 'Rice flour (dry)', '100g', 356, 6.0, 0.7, 81.3],
+    ['cream_of_rice', 'クリームオブライス（ジャスミン米粉・乾燥）', 'Cream of rice (jasmine, dry)', '100g', 356, 6.0, 0.7, 81.3],
+    ['skippy_pb', 'ピーナッツバター Skippy', 'Skippy peanut butter', '100g', 594, 22, 50, 22],
     ['whey', 'ホエイプロテイン（1スクープ30g）', 'Whey protein', '1scoop', 120, 24, 1.5, 3],
     ['peanut_butter', 'ピーナッツバター（無糖）', 'Peanut butter (unsweetened)', '100g', 588, 25, 50, 20],
     ['beef_lean_cooked', '赤身牛肉（調理後）', 'Lean beef (cooked)', '100g', 200, 30, 8, 0],
@@ -417,31 +424,37 @@ const SEED = {
     { mealNo: 1, label: '1食目', items: [
       { foodId: 'egg_whole', grams: 200, label: '全卵4個（約200g）', short: '全卵4個' },
       { foodId: 'egg_white', grams: 150 }, { foodId: 'salt_himalayan', grams: 1, short: '塩1g' }] },
-    { mealNo: 2, label: '2食目', items: [
+    { mealNo: 2, label: '2食目', note: '筋トレ後の食事 ・ 必ず摂る', items: [
       { foodId: 'rice', grams: 200 }, { foodId: 'chicken_cooked', grams: 150, short: '鶏胸肉150g' },
       { foodId: 'salt_himalayan', grams: 1.5, short: '塩1.5g' }, { foodId: 'olive_oil', grams: 3 }, { foodId: 'green_beans', grams: 80, short: 'インゲン80g' }] },
     { mealNo: 3, label: '3食目', items: [
       { foodId: 'rice', grams: 150 }, { foodId: 'chicken_cooked', grams: 150, short: '鶏胸肉150g' },
       { foodId: 'salt_himalayan', grams: 1.5, short: '塩1.5g' }, { foodId: 'green_beans', grams: 80, short: 'インゲン80g' }] },
-    { mealNo: 4, label: '4食目', items: [
-      { foodId: 'rice_flour', grams: 50, label: '米粉（クリームオブライス）乾燥50g', short: '米粉50g' },
+    { mealNo: 4, label: '4食目', note: 'プレワークアウト食（速く吸収される炭水化物）', items: [
+      { foodId: 'cream_of_rice', grams: 50, label: 'クリームオブライス（乾燥）50g ・ ジャスミン米をフードプロセッサーで粉に', short: 'クリームオブライス50g' },
       { foodId: 'whey', grams: 1, label: 'ホエイ1スクープ（30g）', short: 'ホエイ1スクープ' },
-      { foodId: 'peanut_butter', grams: 15, short: '無糖PB15g' }],
+      { foodId: 'skippy_pb', grams: 15, label: 'ピーナッツバター Skippy 15g', short: 'Skippy PB15g' }],
       alt: { label: '代替案: 白米150g・鶏胸肉100g・全卵1個', items: [
         { foodId: 'rice', grams: 150 }, { foodId: 'chicken_cooked', grams: 100, short: '鶏胸肉100g' }, { foodId: 'egg_whole', grams: 50, label: '全卵1個（約50g）', short: '全卵1個' }] } },
-    { mealNo: 5, label: '5食目', items: [
+    { mealNo: 5, label: '5食目', note: 'サーモン追加OK（+20g）・ グミは自由', items: [
       { foodId: 'beef_lean_cooked', grams: 150, label: '赤身牛肉（調理後）150g', short: '赤身牛肉150g' },
       { foodId: 'green_beans', grams: 100, choices: ['green_beans', 'broccoli'], label: 'インゲン または ブロッコリー 100g', short: 'インゲン/ブロッコリー100g' }] }
   ],
-  // 食後サプリ 7 種（量はコーチ回答待ちで空欄）
+  // サプリ（コーチ回答 2026-09-16）: [id, 名前, timing, 用量]。用量が空欄のものは回答待ち
   supplements: [
-    [1, 'クレアチン', 'after_meal'], [2, 'マグネシウム', 'after_meal'], [3, 'フィッシュオイル', 'after_meal'], [4, '亜鉛', 'after_meal'],
-    [5, 'アシュワガンダ', 'after_meal'], [6, 'B12+D3', 'after_meal'], [7, 'ベルベリン', 'after_meal']
+    [1, 'B12＋D3', 'after_meal', 'ラベル通り（1食目のあと）'],
+    [2, 'ベルベリン', 'after_meal', '1食目のあと（用量はラベル通り）'],
+    [3, 'マグネシウム グリシネート', 'night', '400mg 就寝前'],
+    [4, 'アシュワガンダ', 'night', '300mg 就寝前'],
+    [5, 'フィッシュオイル', 'after_meal', ''],
+    [6, '亜鉛', 'after_meal', ''],
+    [7, 'クレアチン', 'after_meal', '']
   ],
   routine: [
     { id: 1, name: 'リンゴ酢 ＋ 水500ml', timing: 'morning', order: 1, active: true },
     { id: 2, name: 'サイリウム', timing: 'after_meal', order: 2, active: true },
-    { id: 3, name: '水 5L', timing: 'anytime', order: 3, active: true, isWater: true }
+    { id: 3, name: '水 5L', timing: 'anytime', order: 3, active: true, isWater: true },
+    { id: 4, name: '腹筋（毎日・筋トレ後 or 朝の空腹時）', timing: 'post', order: 4, active: true }
   ]
 };
 
@@ -549,7 +562,7 @@ async function seedIfNeeded() {
   await replace('plan_exercises', SEED.exercises.map(r => ({ _id: r[0], id: r[0], dayNo: r[1], order: r[2], nameJa: r[3], nameEn: r[4], isPreexhaust: r[5], supersetGroup: r[6], setScheme: r[7], howTo: r[8], videoQuery: r[9], active: true, sets: parseSetScheme(r[7]) })));
   await replace('plan_warmup', SEED.warmup.map(r => ({ _id: r[0], id: r[0], name: r[1], nameEn: r[2], anim: r[3], reps: '各10回×2〜3セット', targetSets: 3, minSets: 2, steps: r[4] })));
   await replace('plan_meals', SEED.meals.map(m => Object.assign({ _id: m.mealNo }, m)));
-  await replace('plan_supplements', SEED.supplements.map((s, i) => ({ _id: s[0], id: s[0], name: s[1], dose: '', timing: s[2], order: i + 1, active: true })));
+  await replace('plan_supplements', SEED.supplements.map((s, i) => ({ _id: s[0], id: s[0], name: s[1], dose: s[3] || '', timing: s[2], order: i + 1, active: true, pending: !s[3] })));
   await replace('plan_routine', SEED.routine.map(r => Object.assign({ _id: r.id }, r)));
   for (const f of SEED.foods) { const cur = ST.foods[f[0]]; if (!cur || cur.source === 'plan') await store.set('foods', f[0], { foodId: f[0], nameJa: f[1], nameEn: f[2], per: f[3], kcal: f[4], p: f[5], f: f[6], c: f[7], source: 'plan', note: '' }); }
   await store.set('settings', 'main', Object.assign({}, ST.settings, { seedVersion: SEED_VERSION }));
@@ -595,6 +608,8 @@ function planToItems(items, choices) {
 /** 記録品目の表示名（短縮） */
 function itemShort(it) { const f = ST.foods[it.foodId]; if (it.foodId === 'rice_cooked' || it.foodId === 'rice_raw') return '白米' + it.grams + 'g（' + (it.foodId === 'rice_raw' ? '生米基準' : '炊飯後基準') + '）'; const nm = f ? f.nameJa.replace(/[（(].*$/, '') : it.foodId; return nm + it.grams + (f && f.per !== '100g' ? (f.per === '1scoop' ? 'スクープ' : '個') : 'g'); }
 /** 記録品目から状態を導く: 何も食べていない=skip / プラン品目を全部そのまま=plan / それ以外=sub */
+/** 保存済み status の正規化: substitute/photo → sub（内部表現） */
+function normStatus(st) { return st === 'substitute' || st === 'photo' ? 'sub' : (st || ''); }
 function deriveStatus(items) {
   const live = items.filter(i => !i.deleted), eaten = live.filter(i => i.eaten), planN = live.filter(i => i.origin === 'plan').length;
   if (!eaten.length) return 'skip';
@@ -610,7 +625,7 @@ function mealModel(date, mealNo) {
   const raw = log ? (log.items || []) : planToItems(plan.items).map(i => Object.assign(i, { origin: 'plan', eaten: false, planGrams: i.grams }));
   const items = raw.map((it, i) => Object.assign({ idx: i, name: (ST.foods[it.foodId] || {}).nameJa || it.foodId, short: itemShort(it), per: (ST.foods[it.foodId] || {}).per || '100g', origin: it.origin || 'add', eaten: it.eaten !== false, deleted: !!it.deleted }, it));
   const eaten = items.filter(i => !i.deleted && i.eaten);
-  return { mealNo, label: plan.label, logged: !!log, status: log ? deriveStatus(items) : '', variant: log ? log.variant || '' : '', loggedAt: log ? log.loggedAt || '' : '', skipReason: log ? reasonJa(log.skip) : '', photo: log ? log.photo || null : null, estimated: items.some(i => i.estimated && !i.deleted && i.eaten), planItems, planMac, planKcal: planMac.kcal, alt: plan.alt || null,
+  return { mealNo, label: plan.label, note: plan.note || '', logged: !!log, status: log ? deriveStatus(items) : '', variant: log ? log.variant || '' : '', loggedAt: log ? log.loggedAt || '' : '', skipReason: log ? reasonJa(log.skip) : '', photo: log ? log.photo || null : null, estimated: items.some(i => i.estimated && !i.deleted && i.eaten), planItems, planMac, planKcal: planMac.kcal, alt: plan.alt || null,
     items, eaten, mac: macrosOfItems(eaten), kcal: macrosOfItems(eaten).kcal, choices: plan.items.filter(i => i.choices) };
 }
 function mealsModel(date) {
@@ -662,7 +677,7 @@ function buildTimeline(t) {
     return { id: 'supp:' + timing, kind: 'supp_group', timing, title: 'サプリ（' + ({ after_meal: '食後', pre: 'トレ前', intra: 'トレ中', post: 'トレ後', night: '夜', morning: '朝' }[timing] || timing) + '）', lines: [suppNames(items)].concat(na ? ['今日はなし（' + (items.find(x => x.na) || {}).reason + '）'] : []), planned, done, handled: done || na, mark: done ? 'ok' : na ? 'na' : '', loggedAt: done || na ? latestAt(items) : '', items, na }; };
   const routineSteps = timing => t.routine.filter(x => x.timing === timing && !x.isWater).map(x => ({ id: 'routine:' + x.id, kind: 'routine', itemId: x.id, title: x.name, lines: x.na ? ['今日はなし（' + x.reason + '）'] : [], planned: T[timing], done: x.done, handled: x.done || x.na, mark: x.done ? 'ok' : x.na ? 'na' : '', loggedAt: x.done || x.na ? x.loggedAt : '', na: x.na }));
   const mealStep = n => { const m = t.meals.find(x => x.mealNo === n); if (!m) return null;
-    const lines = [m.status && m.status !== 'skip' && m.status !== 'plan' ? m.eaten.map(i => i.short).join('・') : m.planItems.map(p => p.short).join('・')];
+    const lines = [m.status && m.status !== 'skip' && m.status !== 'plan' ? m.eaten.map(i => i.short).join('・') : m.planItems.map(p => p.short).join('・') + (m.note ? '　※' + m.note : '')];
     if (m.status === 'skip') lines.push('スキップ（' + (m.skipReason || '食べなかった') + '）'); else if (m.status) lines.push((m.status === 'plan' ? (m.variant === 'alt' ? '代替案で記録 ・ ' : 'プラン通り ・ ') : '変更して記録 ・ ') + macroLine(m.mac).replace('kcal', 'kcal' + (m.estimated ? '※' : ''))); else lines.push(macroLine(m.planMac));
     return { id: 'meal:' + n, kind: 'meal', mealNo: n, title: m.label, photo: m.photo, lines, planned: T['meal' + n] || '', done: m.status === 'plan', mark: m.status === 'plan' ? 'ok' : m.status === 'sub' ? 'sub' : m.status === 'skip' ? 'skip' : '', handled: !!m.status, loggedAt: m.status ? m.loggedAt : '', status: m.status }; };
   const warmupStep = planned => ({ id: 'warmup', kind: 'warmup', title: 'ウォームアップ ' + t.warmup.items.length + '種 ・ 約' + s.warmupMin + '分', lines: [t.warmup.items.map(x => x.name).join('・') + ' ／ 各10回×2〜3セット'].concat(t.warmup.done ? ['完了 ' + t.warmup.minutes + '分'] : t.warmup.doneCount ? [t.warmup.doneCount + '/' + t.warmup.items.length + '種 完了'] : []), planned, done: t.warmup.done, loggedAt: t.warmup.loggedAt, skipped: t.warmup.skipped });
@@ -678,9 +693,10 @@ function buildTimeline(t) {
     const wm = t.workoutMissed;
     steps.push({ id: 'workout', kind: 'workout', title: '筋トレ Day' + t.dayNo + ' ' + t.dayName + ' ・ ' + t.exercises.length + '種目 ・ 約' + s.workoutMin + '分', lines: [t.exercises.map(e => e.nameJa).join('・')].concat(wm ? ['できなかった（' + reasonJa(wm) + '）・ ' + (wm.shift ? 'Day をずらす（明日 Day' + t.dayNo + ' をやり直す）' : 'そのまま進む')] : t.setsDone ? [t.setsDone + 'セット記録済み'] : []), planned: T.workout, done: t.workoutFinished, handled: t.workoutFinished || !!wm, mark: t.workoutFinished ? 'ok' : wm ? 'na' : '', loggedAt: t.workoutFinishedAt || (wm ? wm.loggedAt : ''), na: !!wm });
     ['intra', 'post'].forEach(tm => { const g = suppGroup(tm, T.workout); if (g) steps.push(g); });
+    routineSteps('post').forEach(x => { x.planned = T.workout; steps.push(x); });
   }
   [2, 3, 4, 5].forEach(n => { const m = mealStep(n); if (m) steps.push(m); });
-  if (t.isRest) steps.push(warmupStep(T.cardio));
+  if (t.isRest) { steps.push(warmupStep(T.cardio)); routineSteps('post').forEach(x => { x.planned = T.cardio; steps.push(x); }); }
   const lastC = t.cardio.length ? t.cardio[t.cardio.length - 1] : null, cm = t.cardioMissed;
   steps.push({ id: 'cardio', kind: 'cardio', title: '有酸素 ' + s.cardioLabel, lines: t.cardio.length ? [t.cardio.map(c => ({ walk: 'ウォーキング', jog: 'ジョグ', stairs: '階段', other: 'その他' }[c.type] || c.type) + ' ' + c.minutes + '分' + (c.note ? '（' + c.note + '）' : '')).join('・')] : cm ? ['できなかった（' + reasonJa(cm) + '）'] : [], planned: T.cardio, done: t.cardio.length > 0, handled: t.cardio.length > 0 || !!cm, mark: t.cardio.length ? 'ok' : cm ? 'na' : '', loggedAt: lastC ? (lastC.loggedAt || legacyIso(t.date, lastC.at)) : (cm ? cm.loggedAt : ''), na: !!cm });
   const ng = suppGroup('night', T.night); if (ng) steps.push(ng);
@@ -724,19 +740,21 @@ function workoutModel(date) {
     return { id: ex.id, nameJa: ex.nameJa, nameEn: ex.nameEn, howTo: ex.howTo || '', isPreexhaust: !!ex.isPreexhaust, supersetGroup: ex.supersetGroup || '',
       videoUrl: 'https://www.youtube.com/results?search_query=' + encodeURIComponent(ex.videoQuery || ex.nameEn || ex.nameJa), subName: meta.subName || '', note: meta.note || '', rpe: meta.rpe || '', prevDate, isDb, inc, sets: suggestSets(sets, inc) };
   });
-  return { date, dayNo: pd.dayNo, dayName: pd.name, isRest: isRestDay(date), exercises: list, finished: !!wo.finished, warmup: warmupModel(date), restTopSec: Number(s.restTopSec) || 150, restOtherSec: Number(s.restOtherSec) || 90, cardio: (ST.log_cardio[date] || {}).entries || [] };
+  return { date, dayNo: pd.dayNo, dayName: pd.name, isRest: isRestDay(date), exercises: list, finished: !!wo.finished, warmup: warmupModel(date), restTopSec: Number(s.restTopSec) || 150, restMainSec: Number(s.restMainSec) || 150, restOtherSec: Number(s.restOtherSec) || 90, cardio: (ST.log_cardio[date] || {}).entries || [] };
 }
 function suggestSets(sets, inc) {
-  let topKg = '', prevSetKg = '';
+  let topKg = '', prevSetKg = '', heaviest = '';
   sets.forEach(st => {
     let w = '', reps = '', reason = '';
     const pw = st.prevWeightKg === '' ? '' : Number(st.prevWeightKg), pr = st.prevReps === '' ? '' : Number(st.prevReps), bump = st.setType !== 'WU' && pw !== '' && pr !== '' && pr >= st.max;
     if (['TOP', 'MAIN', 'WU'].includes(st.setType)) { if (pw !== '') { w = bump ? r1(pw + inc) : pw; reason = bump ? '上限到達 → +' + inc + 'kg' : '据え置き'; } else if (st.setType === 'WU' && topKg !== '') { w = Math.round(topKg * 0.5); reason = 'トップの半分'; } reps = bump || pr === '' ? st.min : pr; }
     else if (st.setType === 'BO') { const base = topKg !== '' ? topKg : (pw !== '' ? pw / 0.85 : ''); if (base !== '') { w = Math.round(base * 0.85); reason = 'トップ ' + r1(base) + 'kg × 0.85'; } reps = pr !== '' && !bump ? pr : st.min; }
     else if (st.setType === 'DROP') { if (prevSetKg !== '') { w = Math.round(prevSetKg * 0.7); reason = '直前 ' + prevSetKg + 'kg × 0.7'; } reps = st.min; }
+    else if (st.setType === 'FINAL') { const base = heaviest !== '' ? heaviest : (pw !== '' ? pw / 0.7 : ''); if (base !== '') { w = Math.round(base * 0.7); reason = '最重量 ' + r1(base) + 'kg × 0.7（−30%）'; } reps = st.min; }
     st.suggestWeightKg = w; st.suggestReps = reps; st.suggestReason = reason;
     const eff = st.weightKg !== '' ? Number(st.weightKg) : w;
     if (st.setType === 'TOP' && eff !== '') topKg = eff; if (eff !== '') prevSetKg = eff;
+    if (eff !== '' && st.setType !== 'WU' && st.setType !== 'FINAL' && st.setType !== 'DROP' && (heaviest === '' || eff > heaviest)) heaviest = eff;
   });
   return sets;
 }
@@ -745,7 +763,8 @@ function summaryModel(weekNo) {
   const weights = Object.keys(ST.log_weight).filter(d => !ST.log_weight[d].skipped).sort().map(d => ({ date: d, value: Number(ST.log_weight[d].weightKg) }));
   const exNames = {}; Object.values(ST.plan_exercises).forEach(e => { exNames[e.id] = e.nameEn || e.nameJa; });
   const top = {};
-  Object.keys(ST.log_workout).sort().forEach(d => Object.values(ST.log_workout[d].sets || {}).forEach(st => { if (st.setType !== 'TOP' || st.weightKg === '') return; const k = exNames[st.exerciseId] || ('#' + st.exerciseId); (top[k] = top[k] || []).push({ date: d, value: Number(st.weightKg), reps: Number(st.reps) || 0 }); }));
+  // 種目ごと・日ごとの「いちばん重かったセット」（ウォームアップ・最終セット・ドロップは除く）
+  Object.keys(ST.log_workout).sort().forEach(d => { const best = {}; Object.values(ST.log_workout[d].sets || {}).forEach(st => { if (['WU', 'FINAL', 'DROP'].includes(st.setType) || st.weightKg === '') return; const k = exNames[st.exerciseId] || ('#' + st.exerciseId); if (!best[k] || Number(st.weightKg) > best[k].value) best[k] = { date: d, value: Number(st.weightKg), reps: Number(st.reps) || 0 }; }); Object.keys(best).forEach(k => { (top[k] = top[k] || []).push(best[k]); }); });
   const inRange = d => d >= range.start && d <= range.end;
   const days = []; for (let d = range.start; d <= range.end; d = addDays(d, 1)) { if (d > today) break; days.push(dayHistory(d)); }
   const wdays = { measured: 0, skipped: 0, total: days.length, reasons: {} };
@@ -769,7 +788,7 @@ function missedItems(range) {
   const today = todayYmd(), out = [];
   for (let d = range.start; d <= range.end && d <= today; d = addDays(d, 1)) {
     const w = ST.log_weight[d]; if (w && w.skipped) out.push({ date: d, item: '体重', itemEn: 'weight', reason: reasonJa(w), reasonEn: reasonEn('weight', w.reason, w.reasonText) });
-    Object.entries((ST.log_meals[d] || {}).meals || {}).forEach(([n, m]) => { if (m.status === 'skip') out.push({ date: d, item: n + '食目', itemEn: 'meal ' + n, reason: m.skip ? reasonJa(m.skip) : '食べなかった', reasonEn: m.skip ? reasonEn('meal', m.skip.reason, m.skip.reasonText) : 'skipped' }); });
+    Object.entries((ST.log_meals[d] || {}).meals || {}).forEach(([n, m]) => { if (normStatus(m.status) === 'skip') out.push({ date: d, item: n + '食目', itemEn: 'meal ' + n, reason: m.skip ? reasonJa(m.skip) : '食べなかった', reasonEn: m.skip ? reasonEn('meal', m.skip.reason, m.skip.reasonText) : 'skipped' }); });
     const sup = Object.entries((ST.log_supplements[d] || {}).items || {}).filter(([, v]) => v.na && !v.done); if (sup.length) { const v = sup[0][1]; out.push({ date: d, item: 'サプリ ' + sup.map(([id]) => (ST.plan_supplements[id] || {}).name || id).join('・'), itemEn: 'supplements (' + sup.length + ')', reason: reasonJa(v), reasonEn: reasonEn('supp', v.reason, v.reasonText) }); }
     Object.entries((ST.log_routine[d] || {}).items || {}).forEach(([id, v]) => { if (v.na && !v.done) out.push({ date: d, item: (ST.plan_routine[id] || {}).name || id, itemEn: ((ST.plan_routine[id] || {}).name || id), reason: reasonJa(v), reasonEn: reasonEn('supp', v.reason, v.reasonText) }); });
     const dd = ST.log_daily[d] || {};
@@ -790,7 +809,7 @@ function weekAdherence(range) {
     a.warmup.planned++; if (wo && wo.warmup && wo.warmup.done) a.warmup.done++;
     const cardio = (ST.log_cardio[d] || {}).entries || []; if (pd.cardioRequired !== false) { a.cardio.planned++; if (cardio.length) a.cardio.done++; } a.cardio.minutes += cardio.reduce((x, c) => x + Number(c.minutes || 0), 0);
     a.meals.planned += mealsPerDay;
-    Object.values((ST.log_meals[d] || {}).meals || {}).forEach(m => { if (m.status === 'plan' || m.status === 'sub') a.meals.onPlan++; else if (m.status === 'skip') a.meals.skips++; if (m.status === 'sub') { a.meals.subs++; (m.items || []).forEach(it => { a.meals.subFoods[it.foodId] = (a.meals.subFoods[it.foodId] || 0) + 1; }); } });
+    Object.values((ST.log_meals[d] || {}).meals || {}).forEach(m => { const ms = normStatus(m.status); if (ms === 'plan' || ms === 'sub') a.meals.onPlan++; else if (ms === 'skip') a.meals.skips++; if (ms === 'sub') { a.meals.subs++; (m.items || []).forEach(it => { a.meals.subFoods[it.foodId] = (a.meals.subFoods[it.foodId] || 0) + 1; }); } });
     a.supplements.planned += activeSup; Object.values((ST.log_supplements[d] || {}).items || {}).forEach(x => { if (x.done) a.supplements.done++; });
     a.water.days++; if (waterMl(d) >= goal) a.water.ok++;
   }
@@ -814,7 +833,7 @@ function weeklyReport(weekNo, opts) {
   const timeLine = 'Timing: ' + onTime + '/' + logged + ' logged within 60 min of plan' + (tl.length ? '; late: ' + tl.join(', ') : '');
   return ['Week ' + sm.weekNo + ' (' + shortRange(r.start, r.end) + ') Report', wLine,
     'Workouts: ' + a.workouts.done + '/' + a.workouts.planned + ' done, Warm-up: ' + a.warmup.done + '/' + a.warmup.planned + ', Cardio: ' + a.cardio.done + '/' + a.cardio.planned + (a.cardio.minutes ? ' (' + a.cardio.minutes + ' min)' : ''),
-    'Top sets: ' + (topParts.length ? topParts.join(' / ') : 'n/a'),
+    'Heaviest sets: ' + (topParts.length ? topParts.join(' / ') : 'n/a'),
     'Meals: ' + a.meals.onPlan + '/' + a.meals.planned + ' on plan' + (a.meals.subs ? ' (' + a.meals.subs + ' subs: ' + subList.join(', ') + ')' : '') + (a.meals.skips ? ' (' + a.meals.skips + ' skipped)' : '') + (sm.photoMeals ? ' (photo-logged: ' + sm.photoMeals + ', estimated values marked ※)' : ''),
     'Supplements: ' + a.supplements.pct + '%', 'Water: ' + a.water.ok + '/' + a.water.days + ' days ≥ ' + (Number(ST.settings.waterGoalMl) / 1000) + 'L',
     timeLine, 'Notes: ' + (notes.length ? notes.join('; ') : 'none'), link('Form check videos', form, opts.formViaMessenger), link('Body photos', body, false)].join('\n');
@@ -824,13 +843,16 @@ function weeklyReport(weekNo, opts) {
    5. アクション（1 操作 = 1 ドキュメント書込）
    ===================================================================== */
 const A = {
-  async saveWeight(date, v, bf) { const kg = toKg(v); if (kg === '') throw new Error('体重が数値ではありません'); const prev = ST.log_weight[date] || {}; const at = !prev.skipped && prev.loggedAt ? prev.loggedAt : isoNow(); await store.set('log_weight', date, { date, time: fmtHm(at), loggedAt: at, weightKg: kg, bodyFatPct: bf === '' || bf == null ? '' : Number(bf), note: '' }); },
+  async saveWeight(date, v, bf) { const kg = toKg(v); if (kg === '') throw new Error('体重が数値ではありません'); const prev = ST.log_weight[date] || {}; const at = !prev.skipped && prev.loggedAt ? prev.loggedAt : isoNow(); await store.set('log_weight', date, { date, value: kg, unit: 'kg', weightKg: kg, time: fmtHm(at), loggedAt: at, bodyFatPct: bf === '' || bf == null ? '' : Number(bf), note: '', skipped: false }); await A.syncDaily(date); },
   /** 体重を測れなかった: 数値なしで理由だけ保存（あとで測れたら saveWeight で上書きされる） */
-  async weightSkip(date, reason, reasonText) { await store.set('log_weight', date, { date, skipped: true, reason, reasonText: reasonText || '', loggedAt: isoNow() }); },
-  async weightCancel(date) { await store.del('log_weight', date); },
+  async weightSkip(date, reason, reasonText) { await store.set('log_weight', date, { date, value: null, unit: 'kg', skipped: true, reason, skipReason: reasonText || reason, reasonText: reasonText || '', loggedAt: isoNow() }); await A.syncDaily(date); },
+  async weightCancel(date) { await store.del('log_weight', date); await A.syncDaily(date); },
+  /** log_daily の dayName / notes / skippedItems[] を最新化（スキーマ #3） */
+  async syncDaily(date) { const cur = ST.log_daily[date] || { date }; const items = missedItems({ start: date, end: date }).map(m => ({ item: m.itemEn, itemJa: m.item, reason: m.reasonEn, reasonJa: m.reason })); const next = Object.assign({ date }, cur, { dayNo: cur.dayNo || null, dayName: planDay(date).name, notes: cur.comment || '', skippedItems: items }); if (JSON.stringify(next) !== JSON.stringify(cur)) await store.set('log_daily', date, next); },
   /** サプリ・ルーティン「今日はなし（理由）」 */
-  async suppNA(date, timing, reason, reasonText) { const doc = Object.assign({ date, items: {} }, ST.log_supplements[date]); doc.items = Object.assign({}, doc.items); const at = isoNow(); Object.values(ST.plan_supplements).filter(s => s.timing === timing && s.active !== false).forEach(s => { doc.items[s.id] = { done: false, na: true, reason, reasonText: reasonText || '', loggedAt: at }; }); await store.set('log_supplements', date, doc); },
-  async routineNA(date, id, reason, reasonText) { const doc = Object.assign({ date, items: {} }, ST.log_routine[date]); doc.items = Object.assign({}, doc.items, { [id]: { done: false, na: true, reason, reasonText: reasonText || '', loggedAt: isoNow() } }); await store.set('log_routine', date, doc); },
+  async suppNA(date, timing, reason, reasonText) { await A._suppNA(date, timing, reason, reasonText); await A.syncDaily(date); },
+  async _suppNA(date, timing, reason, reasonText) { const doc = Object.assign({ date, items: {} }, ST.log_supplements[date]); doc.items = Object.assign({}, doc.items); const at = isoNow(); Object.values(ST.plan_supplements).filter(s => s.timing === timing && s.active !== false).forEach(s => { doc.items[s.id] = { done: false, na: true, reason, reasonText: reasonText || '', loggedAt: at }; }); await store.set('log_supplements', date, doc); },
+  async routineNA(date, id, reason, reasonText) { const doc = Object.assign({ date, items: {} }, ST.log_routine[date]); doc.items = Object.assign({}, doc.items, { [id]: { done: false, na: true, reason, reasonText: reasonText || '', loggedAt: isoNow() } }); await store.set('log_routine', date, doc); await A.syncDaily(date); },
   /** 筋トレ・有酸素「今日はできなかった（理由）」。shift=true で翌日以降の Day を 1 つずらす */
   async workoutMissed(date, reason, reasonText, shift) { await A.setDaily(date, { workoutMissed: { reason, reasonText: reasonText || '', shift: !!shift, loggedAt: isoNow() } }); },
   async cardioMissed(date, reason, reasonText) { await A.setDaily(date, { cardioMissed: { reason, reasonText: reasonText || '', loggedAt: isoNow() } }); },
@@ -853,7 +875,9 @@ const A = {
   /** 品目配列から食事ドキュメントを作って保存（履歴に積む） */
   mealCommit(date, n, items, extra) { const cur = (ST.log_meals[date] && ST.log_meals[date].meals || {})[n] || null; mealHistPush(date, n, cur);
     const clean = items.map(({ foodId, grams, kcal, p, f, c, origin, eaten, deleted, planGrams, estimated }) => Object.assign({ foodId, grams, kcal, p, f, c, origin: origin || 'add', eaten: eaten !== false, deleted: !!deleted, planGrams: planGrams == null ? '' : planGrams }, estimated ? { estimated: true } : {}));
-    return A.setMeal(date, n, Object.assign({ variant: cur ? cur.variant || '' : '', loggedAt: (cur && cur.loggedAt) || isoNow(), photo: cur ? cur.photo || null : null }, extra || {}, { status: deriveStatus(clean), items: clean })); },
+    const doc = Object.assign({ variant: cur ? cur.variant || '' : '', loggedAt: (cur && cur.loggedAt) || isoNow(), photo: cur ? cur.photo || null : null }, extra || {}, { items: clean });
+    const st = deriveStatus(clean); doc.status = st === 'sub' ? (doc.photo && clean.some(i => i.estimated && !i.deleted && i.eaten) ? 'photo' : 'substitute') : st; doc.photoId = doc.photo && doc.photo.assetId ? doc.photo.assetId : ''; doc.reason = doc.skip ? (doc.skip.reasonText || doc.skip.reason) : '';
+    return A.setMeal(date, n, doc).then(() => A.syncDaily(date)); },
   planLogItems(n, opt) { opt = opt || {}; const plan = ST.plan_meals[String(n)]; if (!plan) throw new Error('食事 ' + n + ' のプランがありません'); const src = opt.variant === 'alt' && plan.alt ? plan.alt.items : plan.items;
     return planToItems(src, opt.choices).map(i => Object.assign(i, { origin: 'plan', eaten: true, planGrams: i.grams })); },
   /** プラン通り（variant:'alt' で代替案、choices で「または」の選択） */
@@ -861,7 +885,7 @@ const A = {
   mealHalf(date, n) { const cur = mealModel(date, n); return A.mealCommit(date, n, cur.items.map(i => { if (i.deleted || i.origin !== 'plan') return i; const g = r1(Number(i.planGrams) / 2), f = ST.foods[i.foodId]; return Object.assign({}, i, { grams: g, eaten: true }, f ? calcMacros(f, g) : {}); })); },
   mealSkip(date, n, reason, reasonText) { const cur = mealModel(date, n); return A.mealCommit(date, n, cur.items.filter(i => i.origin === 'plan').map(i => Object.assign({}, i, { eaten: false, deleted: false })), { skip: { reason: reason || '食べなかった', reasonText: reasonText || '' } }); },
   /** 記録を取り消す → 未記録（ドキュメントから削除）。履歴に積むので「元に戻す」できる */
-  mealCancel(date, n) { const cur = (ST.log_meals[date] && ST.log_meals[date].meals || {})[n] || null; mealHistPush(date, n, cur); return A.setMeal(date, n, null); },
+  mealCancel(date, n) { const cur = (ST.log_meals[date] && ST.log_meals[date].meals || {})[n] || null; mealHistPush(date, n, cur); return A.setMeal(date, n, null).then(() => A.syncDaily(date)); },
   /** プランの内容に戻す（今日の変更を破棄してプラン通りに） */
   mealReset(date, n) { return A.mealCommit(date, n, A.planLogItems(n, {}), { variant: '' }); },
   mealToggleEaten(date, n, idx) { const cur = mealModel(date, n); return A.mealCommit(date, n, cur.items.map(i => i.idx === idx ? Object.assign({}, i, { eaten: !i.eaten }) : i)); },
@@ -896,7 +920,7 @@ const A = {
   mealUndo(date, n) { const st = mealHist(date, n); if (!st.length) return Promise.resolve(false); const prev = st.pop(); return A.setMeal(date, n, prev).then(() => true); },
   async addFood(food) { let id = food.foodId || String(food.nameEn || food.nameJa).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'food'; if (ST.foods[id]) id += '_' + Date.now().toString(36);
     const row = { foodId: id, nameJa: food.nameJa, nameEn: food.nameEn || '', per: food.per || '100g', kcal: Number(food.kcal) || 0, p: Number(food.p) || 0, f: Number(food.f) || 0, c: Number(food.c) || 0, source: food.source || 'user', note: food.note || '' }; await store.set('foods', id, row); return row; },
-  async setDaily(date, patch) { await store.set('log_daily', date, Object.assign({ date }, ST.log_daily[date], patch)); },
+  async setDaily(date, patch) { const next = Object.assign({ date }, ST.log_daily[date], patch); next.dayName = ST.plan_days[String(next.dayNo || calcDayNo(ST.settings.startDate, date))] ? ST.plan_days[String(next.dayNo || calcDayNo(ST.settings.startDate, date))].name : ''; if (patch.comment != null) next.notes = patch.comment; await store.set('log_daily', date, next); await A.syncDaily(date); },
   async saveSet(date, exId, setNo, setType, v, reps) { const doc = workoutDoc(date), sets = Object.assign({}, doc.sets); const at = isoNow(); sets[exId + '_' + setNo] = { exerciseId: exId, setNo, setType, weightKg: toKg(v), reps: reps === '' ? '' : Number(reps), at: fmtHm(at), loggedAt: at }; await store.set('log_workout', date, Object.assign({}, doc, { sets })); },
   async deleteSet(date, exId, setNo) { const doc = workoutDoc(date), sets = Object.assign({}, doc.sets); delete sets[exId + '_' + setNo]; await store.set('log_workout', date, Object.assign({}, doc, { sets })); },
   async saveMeta(date, exId, patch) { const doc = workoutDoc(date), meta = Object.assign({}, doc.meta); meta[exId] = Object.assign({}, meta[exId], patch); await store.set('log_workout', date, Object.assign({}, doc, { meta })); },
@@ -906,8 +930,8 @@ const A = {
     w.sets[id] = Math.max(0, Math.min(target, (Number(w.sets[id]) || 0) + delta)); if (!w.startedAt) w.startedAt = Date.now(); w.skipped = false; await store.set('log_workout', date, Object.assign({}, doc, { warmup: w })); },
   async warmupStart(date) { const doc = workoutDoc(date), w = Object.assign({ sets: {} }, doc.warmup); if (w.startedAt) return; w.startedAt = Date.now(); await store.set('log_workout', date, Object.assign({}, doc, { warmup: w })); },
   /** 全種完了で「始める」を押したとき: 完了時刻と所要分を保存 */
-  async warmupFinish(date) { const doc = workoutDoc(date), w = Object.assign({ sets: {} }, doc.warmup); if (w.done) return; const at = isoNow(); w.done = fmtHm(at); w.loggedAt = at; w.startedAtIso = w.startedAt ? isoLocal(new Date(w.startedAt)) : at; w.minutes = w.startedAt ? Math.max(1, Math.round((Date.now() - w.startedAt) / 60000)) : Number(ST.settings.warmupMin) || 5; w.skipped = false; await store.set('log_workout', date, Object.assign({}, doc, { warmup: w })); },
-  async warmupSkip(date, reason) { const doc = workoutDoc(date); await store.set('log_workout', date, Object.assign({}, doc, { warmup: Object.assign({}, doc.warmup, { skipped: true, skipReason: reason, done: '' }) })); await A.setDaily(date, { warmupSkipped: { reason, at: nowHm() } }); },
+  async warmupFinish(date) { const doc = workoutDoc(date), w = Object.assign({ sets: {} }, doc.warmup); if (w.done) return; const at = isoNow(); w.completed = true; w.done = fmtHm(at); w.loggedAt = at; w.startedAtIso = w.startedAt ? isoLocal(new Date(w.startedAt)) : at; w.minutes = w.startedAt ? Math.max(1, Math.round((Date.now() - w.startedAt) / 60000)) : Number(ST.settings.warmupMin) || 5; w.skipped = false; await store.set('log_workout', date, Object.assign({}, doc, { warmup: w })); },
+  async warmupSkip(date, reason) { const doc = workoutDoc(date); await store.set('log_workout', date, Object.assign({}, doc, { warmup: Object.assign({}, doc.warmup, { skipped: true, completed: false, skipReason: reason, done: '' }) })); await A.setDaily(date, { warmupSkipped: { reason, at: nowHm() } }); },
   async saveCardio(date, type, minutes, note) { if (!minutes || isNaN(Number(minutes))) throw new Error('分数を入力してください'); const doc = Object.assign({ date, entries: [] }, ST.log_cardio[date]); const at = isoNow(); await store.set('log_cardio', date, { date, entries: doc.entries.concat([{ type, minutes: Number(minutes), note: note || '', at: fmtHm(at), loggedAt: at }]) }); },
   async addMedia(m) { const id = (m.date + '_' + Date.now().toString(36)).replace(/[^A-Za-z0-9_\-.~:@+]/g, '_'); await store.set('log_media', id, Object.assign({ id, loggedAt: isoNow() }, m)); return id; },
   async saveSettings(patch) { await store.set('settings', 'main', Object.assign({}, ST.settings, patch)); }
@@ -1193,7 +1217,7 @@ function openMealSheet(mealNo, sub) {
   const t = todayModel(date), step = t.timeline.find(x => x.id === 'meal:' + mealNo) || {}, hist = mealHist(date, mealNo);
   let h = '<h3>' + esc(m.label) + ' <span class="mute num" style="font-weight:500;font-size:14px">・ 予定 ' + esc(step.planned || '—') + (m.logged && m.loggedAt ? ' ・ 記録 <b' + (isLate(m.loggedAt, step.planned) ? ' style="color:var(--yellow)"' : '') + '>' + esc(fmtHm(m.loggedAt)) + '</b> <u id="mTime" style="cursor:pointer">修正</u>' : '') + '</span></h3>';
   h += '<div class="btns" style="margin-bottom:10px"><button class="b-ghost" id="mUndo"' + (hist.length ? '' : ' disabled') + '>↩ 1つ戻す' + (hist.length ? '（' + hist.length + '）' : '') + '</button><button class="b-ghost" id="mReset">プランの内容に戻す</button>' + (m.logged ? '<button class="b-ghost" id="mCancel" style="color:var(--warn)">記録を取り消す</button>' : '') + '</div>';
-  h += '<div class="ttl">プランの内容</div><div class="items">' + m.planItems.map(p => esc(p.name)).join(' ・ ') + '<br><span class="num" style="font-size:14px">' + esc(macroLine(m.planMac)) + '</span></div>';
+  h += '<div class="ttl">プランの内容' + (m.note ? ' <span class="mute small" style="font-weight:400">' + esc(m.note) + '</span>' : '') + '</div><div class="items">' + m.planItems.map(p => esc(p.name)).join(' ・ ') + '<br><span class="num" style="font-size:14px">' + esc(macroLine(m.planMac)) + '</span></div>';
   if (m.logged) h += '<div class="badge ' + (m.status === 'plan' ? 'ok' : m.status === 'sub' ? 'warn' : 'bad') + '" style="margin-bottom:6px">' + (m.status === 'plan' ? (m.variant === 'alt' ? '代替案で記録済み' : 'プラン通り 記録済み') : m.status === 'sub' ? '変更して記録済み' : 'スキップ（食べなかった）') + ' ・ ' + esc(macroLine(m.mac)) + '</div>';
   // 品目一覧: プラン由来はチェック、追加・差替えは × でソフト削除
   h += '<div class="list">' + m.items.map(it => { const f = ST.foods[it.foodId];
@@ -1400,7 +1424,7 @@ function bindWorkout(d, ex, st, allDone) {
     const wv = $('#wv').dataset.v, rv = $('#rv').dataset.v; if (wv === '' && rv === '') return toast('重量を入力', true);
     vibrate(80); A.saveSet(d.date, ex.id, st.setNo, st.setType, wv, rv).catch(fail);
     const nxt = nextSet(workoutModel(d.date)); if (!nxt) return render();
-    UI.rest = { endAt: Date.now() + (st.setType === 'TOP' ? d.restTopSec : d.restOtherSec) * 1000, next: nxt }; render();
+    UI.rest = { endAt: Date.now() + restSecFor(d, st.setType) * 1000, next: nxt }; render();
   };
   $('#subBtn').onclick = () => { askText('代替種目で実施', '代替種目名（空欄で解除）。マスタは変更しません。', ex.subName || '', { placeholder: '例: フロアプレス', okLabel: '保存' }).then(name => { if (name === null) return; act(A.saveMeta(d.date, ex.id, { subName: name.trim() })); }); };
   $('#noteBtn').onclick = () => openNoteSheet(d, ex);
@@ -1412,7 +1436,7 @@ function restoreRest(d) {
   let skipped = UI.restSkipped; try { skipped = skipped || localStorage.getItem('tl.restSkip'); } catch (e) { /* ignore */ }
   if (skipped === UI.date + '#' + lastSetKey(d)) return;
   const last = lastLoggedSet(d); if (!last) return;
-  const sec = last.setType === 'TOP' ? d.restTopSec : d.restOtherSec, endAt = new Date(last.loggedAt).getTime() + sec * 1000;
+  const sec = restSecFor(d, last.setType), endAt = new Date(last.loggedAt).getTime() + sec * 1000;
   if (isNaN(endAt) || endAt <= Date.now()) return;
   // 次は「最後に完了したセットの続き」（同じ種目の次の未完了 → なければ最初の未完了）
   const ei = d.exercises.findIndex(e => e.id === Number(last.exerciseId)); let nxt = null;
@@ -1421,6 +1445,8 @@ function restoreRest(d) {
   if (ei >= 0) UI.wk = { ex: ei, set: Math.max(0, d.exercises[ei].sets.findIndex(x => x.setNo === Number(last.setNo))) };
   UI.rest = { endAt, next: nxt };
 }
+/** 休憩秒: ウォームアップ 90 秒、それ以外（メイン・最終・トップ）はコーチ指定の 2〜3 分（既定 150 秒） */
+function restSecFor(d, setType) { return setType === 'WU' ? d.restOtherSec : setType === 'TOP' ? d.restTopSec : d.restMainSec; }
 function lastLoggedSet(d) { let best = null; Object.values(workoutDoc(d.date).sets || {}).forEach(x => { if (x.loggedAt && (!best || x.loggedAt > best.loggedAt)) best = x; }); return best; }
 function lastSetKey(d) { const l = lastLoggedSet(d); return l ? l.exerciseId + '_' + l.setNo : ''; }
 function runRest(d) {
@@ -1455,7 +1481,7 @@ function renderSummary() {
     (d.days.length ? '<details style="margin-top:8px"><summary class="mute small" style="cursor:pointer">予定と実績の時刻（日別）</summary><div style="overflow-x:auto"><table class="hist"><tr><th>日</th><th>項目</th><th>予定</th><th>実績</th></tr>' + d.days.flatMap(x => x.times.map(tm => '<tr><td>' + md(x.date) + '</td><td>' + esc(tm.title) + '</td><td>' + esc(tm.planned) + '</td><td class="' + (tm.logged && !tm.late ? 'ok' : 'ng') + '" style="color:' + (tm.late ? 'var(--yellow)' : '') + '">' + esc(tm.logged || '—') + '</td></tr>')).join('') + '</table></div></details>' : '') + '</div>';
   h += '<div class="spark"><div class="h"><span>体重（30日 ・ 点線は7日平均 ・ 欠測日は線をつながない）</span></div>' + spark(d.weights.slice(-30), d.weightsMa7.slice(-30)) + '</div>';
   h += '<div class="card" id="missedBlock"><div class="ttl small mute">できなかった項目とその理由</div>' + (d.missed.length ? '<div class="list">' + d.missed.map(m => '<div class="it"><span><span class="num mute">' + md(m.date) + '</span> ' + esc(m.item) + '</span><span class="m">' + esc(m.reason) + '</span></div>').join('') + '</div>' : '<div class="mute small" style="margin-top:6px">なし</div>') + '</div>';
-  h += '<div class="spark"><div class="h"><span>トップセット重量（種目別）</span></div>' + (d.topSets.length ? d.topSets.map(t => { const pts = t.points, last = pts[pts.length - 1], prev = pts.length > 1 ? pts[pts.length - 2] : null; return '<div class="r' + (prev && last.value > prev.value ? ' up' : '') + '"><span>' + esc(t.name) + '</span><span>' + (prev ? disp(prev.value) + ' → ' : '') + disp(last.value) + ' ' + unit() + ' × ' + last.reps + '</span></div>'; }).join('') : '<div class="r mute"><span>まだ記録なし</span><span>—</span></div>') + '</div>';
+  h += '<div class="spark"><div class="h"><span>いちばん重かった重量（種目別・日ごと）</span></div>' + (d.topSets.length ? d.topSets.map(t => { const pts = t.points, last = pts[pts.length - 1], prev = pts.length > 1 ? pts[pts.length - 2] : null; return '<div class="r' + (prev && last.value > prev.value ? ' up' : '') + '"><span>' + esc(t.name) + '</span><span>' + (prev ? disp(prev.value) + ' → ' : '') + disp(last.value) + ' ' + unit() + ' × ' + last.reps + '</span></div>'; }).join('') : '<div class="r mute"><span>まだ記録なし</span><span>—</span></div>') + '</div>';
   h += '<div class="card"><div class="ttl" style="margin-bottom:8px">コーチに送る</div><div class="report" id="repText"></div><label class="opt"><input type="checkbox" id="optMsgr"> フォーム動画は Messenger で送った（sent via Messenger）</label><div class="btns" style="margin-top:10px"><button class="b-yel" id="copyRep">レポートをコピー</button><button class="b-sub" id="addMedia"' + (CAP.assets ? '' : ' hidden') + '>体の写真を追加</button></div>' +
     (d.media.length ? '<div class="gallery">' + d.media.map(m => { const src = m.url || ('/_blob/' + m.assetId); return '<a class="thumb" href="' + esc(src) + '" target="_blank" rel="noopener">' + (m.type === 'video' ? '<video src="' + esc(src) + '" muted playsinline preload="metadata"></video>' : '<img src="' + esc(src) + '" loading="lazy" alt="' + esc(m.category) + '">') + '<div class="cap">' + esc(m.date.slice(5)) + ' ' + esc(m.category) + (m.type === 'video' ? ' ▶' : '') + '</div></a>'; }).join('') + '</div>' : '') + '</div>';
   h += '<div class="card"><div class="ttl small mute">設定</div><div class="btns" style="margin-top:8px"><button class="b-sub" id="unitBtn">単位: ' + unit() + ' → ' + (unit() === 'kg' ? 'lb' : 'kg') + '</button><button class="b-sub" id="riceBtn">白米: ' + (ST.settings.riceBasis === 'raw' ? '生米基準' : '炊飯後基準') + ' → 切替</button></div><div class="btns" style="margin-top:8px"><button class="b-sub" id="csvBtn"' + (CAP.downloads ? '' : ' hidden') + '>CSV 書き出し</button></div><div class="mute small" style="margin-top:6px">保存は常に kg。開始日 ' + esc(ST.settings.startDate) + ' ・ 休憩 トップセット ' + ST.settings.restTopSec + '秒 / 他 ' + ST.settings.restOtherSec + '秒' + (ST.mode === 'mock' ? ' ・ モックモード' : '') + '</div></div>';
