@@ -27,7 +27,7 @@
 |---|---|---|
 | `settings` | `main` | startDate, unit(kg/lb), tz, waterGoalMl, restMainSec(150), restTopSec, restOtherSec(90), incDbKg(1), incBarKg(2), weeklyGainPct(5), timerMorningMin, timerAfterMealMin, riceBasis("raw"/"cooked"), workoutMin, warmupMin, cardioLabel, times{weight,morning,meal1..5,after_meal,warmup,workout,cardio,night}, seedVersion |
 | `plan_days` | dayNo | name, isRest, cardioRequired, notes |
-| `plan_exercises` | id | dayNo, order, nameJa, nameEn, isPreexhaust, supersetGroup, setScheme（例 `WU10-12,MAIN10-12x2,FINAL16-20`）, howTo, videoQuery, active, **sets[]**（set_scheme を展開済み） |
+| `plan_exercises` | id | dayNo, order, nameJa, nameEn, isPreexhaust, supersetGroup（"SS" = 1 種目内で 2 動作のスーパーセット）, progressive（セットごとに回数を増やす）, setScheme（例 `WU10-12,TOP6-8,BO10-12` / `MAIN8,MAIN10,MAIN12` / `MAIN10-12x3,DROP10-12`）, howTo, videoQuery, active, **sets[]**（set_scheme を展開済み） |
 | `plan_warmup` | id | name, nameEn, anim(swing/alt/cross/circle/hips/toe), reps, targetSets(3), minSets(2), steps[3]（コーチ指定 6 種、毎回必須） |
 | `plan_meals` | mealNo | label, note, items[{foodId, grams, label?, short?, choices?}], alt?{label, items}（4食目の代替案）。foodId `rice` は settings.riceBasis で rice_raw / rice_cooked に解決 |
 | `plan_supplements` | id | name, dose, timing(after_meal/night), order, active, pending（量がコーチ確認中なら true） |
@@ -43,7 +43,7 @@
 | `log_daily` | YYYY-MM-DD | dayNo(手動上書き), dayName, notes, skippedItems[{item, itemJa, reason, reasonJa}]（できなかった項目の自動集計）, isRestOverride, comment, warmupSkipped{reason, at}, workoutMissed{reason, reasonText, shift, loggedAt}, cardioMissed{reason, reasonText, loggedAt} |
 
 重量は常に kg で保存。表示時のみ lb 換算（1 lb = 0.45359237 kg、小数 1 桁）。
-初回起動時に `plan_days` が空、または `settings.seedVersion` が `SEED_VERSION`（現在 4 = コーチ回答 2026-09-16 反映）より古ければ、`SEED` 定数（[training-log-spec.md](training-log-spec.md)）で `plan_*` と `foods`(source=plan) を投入し直す。ログは触らない。プランを変えたら `SEED_VERSION` を上げて再公開する。
+初回起動時に `plan_days` が空、または `settings.seedVersion` が `SEED_VERSION`（現在 5 = Day 1 Push 確定版。Day 2〜7 は暫定）より古ければ、`SEED` 定数（[training-log-spec.md](training-log-spec.md)）で `plan_*` と `foods`(source=plan) を投入し直す。ログは触らない。プランを変えたら `SEED_VERSION` を上げて再公開する。
 
 ### 食事プラン（コーチ指定）
 1. 全卵4個(約200g)・卵白150g・ヒマラヤ塩1g
@@ -57,6 +57,7 @@
 
 ### 筋トレの決まり（コーチ回答）
 全セット 10〜12 回・限界 1 回手前（RIR 1）。最終セットはその日いちばん重かった重さの −30% で 16〜20 回（`suggestSets` が最重量 ×0.7 を提案）。休憩はメイン／最終 2:30、ウォームアップ後 1:30。前回 12 回できたら +1kg（ダンベル）/ +2kg（バーベル）、週 +5% 目安。腹筋は毎日（ルーティン id 4）。有酸素は 35〜40 分 Zone2。
+Day 1 Push 確定版: 事前疲労 2 セット → インクライン DB プレス（WU/トップ 6〜8/バックオフ）→ マシンインクラインプレス → スクープフライ → ペックデッキ＋プレートフロントレイズ（スーパーセット）→ サイドレイズ（3 セット＋ドロップ、休憩なしで即開始）→ オーバーヘッド ロープ → アンダーハンド トライセップ。プログレッシブ（セットごとに回数を増やす）はタグで表示。
 
 ## 画面
 
@@ -98,7 +99,7 @@ claude.ai のアーティファクトは sandbox iframe のため `confirm()` / 
 
 ## テスト
 
-`npm run e2e:artifact` で mock / db（疑似ランタイム）両モードの 52 項目を実行し、結果を [TEST.md](TEST.md) に書き出す。
+`npm run e2e:artifact` で mock / db（疑似ランタイム）両モードの 53 項目を実行し、結果を [TEST.md](TEST.md) に書き出す。
 
 ## モックモード
 
