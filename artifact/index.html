@@ -1359,7 +1359,7 @@ function photoPanelHtml(ph) {
   else {
     h += '<img class="thumb" src="' + esc(ph.dataUrl) + '" alt="食事の写真" style="margin-top:6px">' + (ph.width ? '<div class="mute small num">' + ph.width + '×' + ph.height + ' ・ ' + Math.round(ph.blob.size / 1024) + 'KB</div>' : '');
     h += '<label class="lbl" for="phNote">補足（任意）</label><input type="text" class="txt" id="phNote" placeholder="例: ご飯は半分残した ／ これは2人分" value="' + esc(ph.note || '') + '">';
-    if (ph.status === 'ready') h += CAP.images ? '<div class="btns" style="margin-top:10px"><button class="b-yel" id="phEst">AIで推定</button><button class="b-sub" id="phManual">手入力に切替</button><button class="b-ghost" id="phAgain" style="flex:0 0 auto">別の写真</button></div>' : '<div class="mute small" style="margin-top:8px">この環境は写真からの自動計算に対応していません。「手入力に切替」で品目を入力してください（写真はメモとして残せます）</div><div class="btns" style="margin-top:10px"><button class="b-yel" id="phManual">手入力に切替</button><button class="b-ghost" id="phAgain" style="flex:0 0 auto">別の写真</button></div>';
+    if (ph.status === 'ready') h += '<div class="btns" style="margin-top:10px"><button class="b-yel" id="phEst">AIで推定</button><button class="b-sub" id="phManual">手入力に切替</button><button class="b-ghost" id="phAgain" style="flex:0 0 auto">別の写真</button></div>';
     if (ph.status === 'analyzing') h += '<div class="pending" style="text-align:center">解析中… <span class="mute small">5〜60 秒かかることがあります</span><div class="btns"><button class="b-sub" id="phStop">中止</button></div></div>';
     if (ph.status === 'error') h += '<div class="pending" style="border-color:var(--warn)">' + esc(ph.err) + '<div class="btns"><button class="b-yel" id="phEst">もう一度推定</button><button class="b-sub" id="phManual">手入力に切替</button></div></div>';
     if (ph.status === 'done') {
