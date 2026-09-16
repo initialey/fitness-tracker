@@ -72,6 +72,10 @@ h1.tap{cursor:pointer}
 .chk.on{background:var(--done);border-color:var(--done);color:#10281A}
 .chk.sub{background:var(--yellow);border-color:var(--yellow);color:var(--yellow-ink)}
 .chk.skip{background:transparent;border-color:var(--warn);color:var(--warn);font-weight:700}
+.chk.na{background:transparent;border-color:var(--line);color:var(--mute);font-weight:700}
+.lbl-sub.na{background:var(--card2);color:var(--mute)}
+.b.small{font-size:13px;padding:8px 10px;color:var(--mute);background:transparent;border:1px solid var(--line)}
+.step.handled .row{opacity:.75}
 .step .tm{text-align:right;line-height:1.2}
 .step .tm b{font-size:15px;color:var(--ink)}
 .step .tm b.late{color:var(--yellow)}
@@ -287,6 +291,15 @@ const SET_TYPES = {
   DROP: { name: 'ドロップ', purpose: '休まず重さを落として {reps}回、上がらなくなるまで' },
   PRE: { name: '事前疲労', purpose: '軽〜中くらいで {reps}回。狙う筋肉を先に疲れさせる' }
 };
+// 「できなかった」理由（タップ選択）。en はコーチ向けレポート用
+const REASONS = {
+  weight: [['体重計がない', 'no scale'], ['外泊・旅行', 'travel'], ['忘れた', 'forgot'], ['体調不良', 'sick'], ['その他', 'other']],
+  meal: [['外食', 'eating out'], ['時間なし', 'no time'], ['食欲なし', 'no appetite'], ['体調不良', 'sick'], ['その他', 'other']],
+  supp: [['切れていた', 'ran out'], ['持っていない', 'not on hand'], ['忘れた', 'forgot'], ['体調不良', 'sick']],
+  workout: [['仕事', 'work'], ['体調不良', 'sick'], ['旅行', 'travel'], ['その他', 'other']]
+};
+const reasonEn = (kind, ja, text) => { const hit = (REASONS[kind] || []).find(r => r[0] === ja); return hit && hit[1] !== 'other' ? hit[1] : (text || ja || 'other'); };
+const reasonJa = r => r ? (r.reason === 'その他' && r.reasonText ? r.reasonText : r.reason) : '';
 const GLOSSARY = [
   ['ウォームアップ', '軽い重さでフォームを確かめる準備のセット。限界まで追い込まない'],
   ['メイン', 'その種目の中心になるセット。目標回数を中くらい〜やや重めで'],
@@ -535,7 +548,8 @@ const sortedVals = (coll, key) => Object.values(ST[coll]).sort((a, b) => Number(
    4. 派生モデル
    ===================================================================== */
 function dayDoc(date) { return ST.log_daily[date] || {}; }
-function dayNoFor(date) { const d = dayDoc(date); return d.dayNo ? Number(d.dayNo) : calcDayNo(ST.settings.startDate, date); }
+/** Day 判定。手動上書き > 「できなかった→Day をずらす」の累積 > 開始日からの 7 日周期 */
+function dayNoFor(date) { const d = dayDoc(date); if (d.dayNo) return Number(d.dayNo); const shifts = Object.values(ST.log_daily).filter(x => x.date < date && x.workoutMissed && x.workoutMissed.shift).length; return ((((diffDays(ST.settings.startDate, date) - shifts) % 7) + 7) % 7) + 1; }
 function planDay(date) { const n = dayNoFor(date); return ST.plan_days[String(n)] || { dayNo: n, name: 'Day ' + n, isRest: false }; }
 function isRestDay(date) { const d = dayDoc(date); return d.isRestOverride != null ? !!d.isRestOverride : !!planDay(date).isRest; }
 /** 'rice' は settings.riceBasis で解決 */
@@ -554,7 +568,7 @@ function itemLabel(it, full) {
 }
 function macrosOfItems(items) { const t = { kcal: 0, p: 0, f: 0, c: 0 }; items.forEach(i => ['kcal', 'p', 'f', 'c'].forEach(k => { t[k] += Number(i[k]) || 0; })); ['kcal', 'p', 'f', 'c'].forEach(k => { t[k] = r1(t[k]); }); return t; }
 const macroLine = m => '約' + Math.round(m.kcal) + 'kcal ・ P' + Math.round(m.p) + ' F' + Math.round(m.f) + ' C' + Math.round(m.c);
-function latestWeightBefore(date) { const ds = Object.keys(ST.log_weight).filter(d => d < date).sort(); return ds.length ? ST.log_weight[ds[ds.length - 1]] : null; }
+function latestWeightBefore(date) { const ds = Object.keys(ST.log_weight).filter(d => d < date && !ST.log_weight[d].skipped).sort(); return ds.length ? ST.log_weight[ds[ds.length - 1]] : null; }
 function waterItem() { return Object.values(ST.plan_routine).find(r => r.isWater || /^水/.test(r.name)); }
 function waterMl(date) { const w = waterItem(), l = ST.log_routine[date]; return w && l && l.items && l.items[w.id] ? Number(l.items[w.id].value) || 0 : 0; }
 
@@ -584,7 +598,7 @@ function mealModel(date, mealNo) {
   const raw = log ? (log.items || []) : planToItems(plan.items).map(i => Object.assign(i, { origin: 'plan', eaten: false, planGrams: i.grams }));
   const items = raw.map((it, i) => Object.assign({ idx: i, name: (ST.foods[it.foodId] || {}).nameJa || it.foodId, short: itemShort(it), per: (ST.foods[it.foodId] || {}).per || '100g', origin: it.origin || 'add', eaten: it.eaten !== false, deleted: !!it.deleted }, it));
   const eaten = items.filter(i => !i.deleted && i.eaten);
-  return { mealNo, label: plan.label, logged: !!log, status: log ? deriveStatus(items) : '', variant: log ? log.variant || '' : '', loggedAt: log ? log.loggedAt || '' : '', planItems, planMac, planKcal: planMac.kcal, alt: plan.alt || null,
+  return { mealNo, label: plan.label, logged: !!log, status: log ? deriveStatus(items) : '', variant: log ? log.variant || '' : '', loggedAt: log ? log.loggedAt || '' : '', skipReason: log ? reasonJa(log.skip) : '', planItems, planMac, planKcal: planMac.kcal, alt: plan.alt || null,
     items, eaten, mac: macrosOfItems(eaten), kcal: macrosOfItems(eaten).kcal, choices: plan.items.filter(i => i.choices) };
 }
 function mealsModel(date) {
@@ -599,8 +613,8 @@ function quickSubs() {
   if (!out.some(o => o.foodId === 'salmon')) out.push({ foodId: 'salmon', grams: 150, label: 'サーモン 150g' });
   return out;
 }
-function suppsModel(date) { const log = (ST.log_supplements[date] || {}).items || {}; return sortedVals('plan_supplements', 'order').filter(s => s.active !== false).map(s => { const l = log[s.id] || {}; const at = l.loggedAt || legacyIso(date, l.time); return { id: s.id, name: s.name, dose: s.dose || '', timing: s.timing, done: !!l.done, loggedAt: l.done ? at : '', time: l.done ? fmtHm(at) : '' }; }); }
-function routineModel(date) { const log = (ST.log_routine[date] || {}).items || {}; return sortedVals('plan_routine', 'order').filter(r => r.active !== false).map(r => { const l = log[r.id] || {}, isWater = !!(r.isWater || /^水/.test(r.name)); const at = l.loggedAt || (isWater ? '' : legacyIso(date, l.time)); return { id: r.id, name: r.name, timing: r.timing, isWater, done: !!l.done, loggedAt: at, time: fmtHm(at), value: l.value }; }); }
+function suppsModel(date) { const log = (ST.log_supplements[date] || {}).items || {}; return sortedVals('plan_supplements', 'order').filter(s => s.active !== false).map(s => { const l = log[s.id] || {}; const at = l.loggedAt || legacyIso(date, l.time); return { id: s.id, name: s.name, dose: s.dose || '', timing: s.timing, done: !!l.done, na: !!l.na && !l.done, reason: l.na ? reasonJa(l) : '', loggedAt: l.done || l.na ? at : '', time: l.done ? fmtHm(at) : '' }; }); }
+function routineModel(date) { const log = (ST.log_routine[date] || {}).items || {}; return sortedVals('plan_routine', 'order').filter(r => r.active !== false).map(r => { const l = log[r.id] || {}, isWater = !!(r.isWater || /^水/.test(r.name)); const at = l.loggedAt || (isWater ? '' : legacyIso(date, l.time)); return { id: r.id, name: r.name, timing: r.timing, isWater, done: !!l.done, na: !!l.na && !l.done, reason: l.na ? reasonJa(l) : '', loggedAt: at, time: fmtHm(at), value: l.value }; }); }
 function workoutDoc(date) { return ST.log_workout[date] || { date, sets: {}, meta: {}, warmup: {} }; }
 function warmupModel(date) {
   const w = workoutDoc(date).warmup || {}, sets = w.sets || {}, checked = w.checked || {};
@@ -615,7 +629,8 @@ function exercisesFor(date) { const n = dayNoFor(date); return Object.values(ST.
 function todayModel(date) {
   const s = ST.settings, pd = planDay(date), wo = workoutDoc(date), exs = exercisesFor(date);
   const t = { date, dayNo: pd.dayNo, dayName: pd.name, dayNotes: pd.notes || '', isRest: isRestDay(date), dayOverride: !!dayDoc(date).dayNo,
-    weekNo: calcWeekNo(s.startDate, date), comment: dayDoc(date).comment || '', weight: ST.log_weight[date] || null, prevWeight: latestWeightBefore(date),
+    weekNo: calcWeekNo(s.startDate, date), comment: dayDoc(date).comment || '', weight: ST.log_weight[date] && !ST.log_weight[date].skipped ? ST.log_weight[date] : null, weightSkipped: ST.log_weight[date] && ST.log_weight[date].skipped ? ST.log_weight[date] : null, prevWeight: latestWeightBefore(date),
+    workoutMissed: dayDoc(date).workoutMissed || null, cardioMissed: dayDoc(date).cardioMissed || null,
     supplements: suppsModel(date), routine: routineModel(date), waterMl: waterMl(date), waterGoalMl: Number(s.waterGoalMl) || 5000,
     meals: sortedVals('plan_meals', 'mealNo').map(m => mealModel(date, m.mealNo)), warmup: warmupModel(date),
     workoutFinished: !!wo.finished, workoutFinishedAt: wo.finished ? (wo.finishedAt || legacyIso(date, wo.finished)) : '', setsDone: Object.keys(wo.sets || {}).length, exercises: exs,
@@ -631,16 +646,16 @@ function buildTimeline(t) {
   const s = ST.settings, T = s.times, steps = [];
   const latestAt = items => items.reduce((a, x) => x.loggedAt > a ? x.loggedAt : a, '');
   const suppNames = items => items.map(x => x.name + (x.dose ? ' ' + x.dose : '')).join('・');
-  const suppGroup = (timing, planned) => { const items = t.supplements.filter(x => x.timing === timing); if (!items.length) return null; const done = items.every(x => x.done);
-    return { id: 'supp:' + timing, kind: 'supp_group', timing, title: 'サプリ（' + ({ after_meal: '食後', pre: 'トレ前', intra: 'トレ中', post: 'トレ後', night: '夜', morning: '朝' }[timing] || timing) + '）', lines: [suppNames(items)], planned, done, loggedAt: done ? latestAt(items) : '', items }; };
-  const routineSteps = timing => t.routine.filter(x => x.timing === timing && !x.isWater).map(x => ({ id: 'routine:' + x.id, kind: 'routine', itemId: x.id, title: x.name, lines: [], planned: T[timing], done: x.done, loggedAt: x.done ? x.loggedAt : '' }));
+  const suppGroup = (timing, planned) => { const items = t.supplements.filter(x => x.timing === timing); if (!items.length) return null; const done = items.every(x => x.done), na = !done && items.every(x => x.na || x.done) && items.some(x => x.na);
+    return { id: 'supp:' + timing, kind: 'supp_group', timing, title: 'サプリ（' + ({ after_meal: '食後', pre: 'トレ前', intra: 'トレ中', post: 'トレ後', night: '夜', morning: '朝' }[timing] || timing) + '）', lines: [suppNames(items)].concat(na ? ['今日はなし（' + (items.find(x => x.na) || {}).reason + '）'] : []), planned, done, handled: done || na, mark: done ? 'ok' : na ? 'na' : '', loggedAt: done || na ? latestAt(items) : '', items, na }; };
+  const routineSteps = timing => t.routine.filter(x => x.timing === timing && !x.isWater).map(x => ({ id: 'routine:' + x.id, kind: 'routine', itemId: x.id, title: x.name, lines: x.na ? ['今日はなし（' + x.reason + '）'] : [], planned: T[timing], done: x.done, handled: x.done || x.na, mark: x.done ? 'ok' : x.na ? 'na' : '', loggedAt: x.done || x.na ? x.loggedAt : '', na: x.na }));
   const mealStep = n => { const m = t.meals.find(x => x.mealNo === n); if (!m) return null;
     const lines = [m.status && m.status !== 'skip' && m.status !== 'plan' ? m.eaten.map(i => i.short).join('・') : m.planItems.map(p => p.short).join('・')];
-    if (m.status === 'skip') lines.push('スキップ（食べなかった）'); else if (m.status) lines.push((m.status === 'plan' ? (m.variant === 'alt' ? '代替案で記録 ・ ' : 'プラン通り ・ ') : '変更して記録 ・ ') + macroLine(m.mac)); else lines.push(macroLine(m.planMac));
+    if (m.status === 'skip') lines.push('スキップ（' + (m.skipReason || '食べなかった') + '）'); else if (m.status) lines.push((m.status === 'plan' ? (m.variant === 'alt' ? '代替案で記録 ・ ' : 'プラン通り ・ ') : '変更して記録 ・ ') + macroLine(m.mac)); else lines.push(macroLine(m.planMac));
     return { id: 'meal:' + n, kind: 'meal', mealNo: n, title: m.label, lines, planned: T['meal' + n] || '', done: m.status === 'plan', mark: m.status === 'plan' ? 'ok' : m.status === 'sub' ? 'sub' : m.status === 'skip' ? 'skip' : '', handled: !!m.status, loggedAt: m.status ? m.loggedAt : '', status: m.status }; };
   const warmupStep = planned => ({ id: 'warmup', kind: 'warmup', title: 'ウォームアップ ' + t.warmup.items.length + '種 ・ 約' + s.warmupMin + '分', lines: [t.warmup.items.map(x => x.name).join('・') + ' ／ 各10回×2〜3セット'].concat(t.warmup.done ? ['完了 ' + t.warmup.minutes + '分'] : t.warmup.doneCount ? [t.warmup.doneCount + '/' + t.warmup.items.length + '種 完了'] : []), planned, done: t.warmup.done, loggedAt: t.warmup.loggedAt, skipped: t.warmup.skipped });
-  const wAt = t.weight ? (t.weight.loggedAt || legacyIso(t.date, t.weight.time)) : '';
-  steps.push({ id: 'weight', kind: 'weight', title: '体重', lines: [t.weight ? disp(t.weight.weightKg) + unit() + (t.prevWeight ? ' ' + deltaArrow(t.weight.weightKg - t.prevWeight.weightKg) + '（前回 ' + disp(t.prevWeight.weightKg) + unit() + '）' : '') + (t.weight.bodyFatPct !== '' ? ' ・ 体脂肪 ' + t.weight.bodyFatPct + '%' : '') : (t.prevWeight ? '前回 ' + disp(t.prevWeight.weightKg) + unit() + '（' + t.prevWeight.date.slice(5) + '）' : '起床後・トイレ後に')], planned: T.weight, done: !!t.weight, loggedAt: wAt });
+  const wAt = t.weight ? (t.weight.loggedAt || legacyIso(t.date, t.weight.time)) : (t.weightSkipped ? t.weightSkipped.loggedAt : '');
+  steps.push({ id: 'weight', kind: 'weight', title: '体重', lines: [t.weight ? disp(t.weight.weightKg) + unit() + (t.prevWeight ? ' ' + deltaArrow(t.weight.weightKg - t.prevWeight.weightKg) + '（前回 ' + disp(t.prevWeight.weightKg) + unit() + '）' : '') + (t.weight.bodyFatPct !== '' ? ' ・ 体脂肪 ' + t.weight.bodyFatPct + '%' : '') : t.weightSkipped ? '測れなかった（' + reasonJa(t.weightSkipped) + '）' : (t.prevWeight ? '前回 ' + disp(t.prevWeight.weightKg) + unit() + '（' + t.prevWeight.date.slice(5) + '）' : '起床後・トイレ後に')], planned: T.weight, done: !!t.weight, handled: !!t.weight || !!t.weightSkipped, mark: t.weight ? 'ok' : t.weightSkipped ? 'na' : '', loggedAt: wAt, na: !!t.weightSkipped });
   const morning = routineSteps('morning'); morning.forEach(x => steps.push(x));
   const m1 = mealStep(1); if (m1) { if (morning.length) m1.after = { step: morning[morning.length - 1].id, waitMin: Number(s.timerMorningMin) || 0 }; steps.push(m1); }
   const sg = suppGroup('after_meal', T.after_meal); if (sg) steps.push(sg);
@@ -648,13 +663,14 @@ function buildTimeline(t) {
   if (!t.isRest) {
     const pre = suppGroup('pre', T.warmup); if (pre) steps.push(pre);
     steps.push(warmupStep(T.warmup));
-    steps.push({ id: 'workout', kind: 'workout', title: '筋トレ Day' + t.dayNo + ' ' + t.dayName + ' ・ ' + t.exercises.length + '種目 ・ 約' + s.workoutMin + '分', lines: [t.exercises.map(e => e.nameJa).join('・')].concat(t.setsDone ? [t.setsDone + 'セット記録済み'] : []), planned: T.workout, done: t.workoutFinished, loggedAt: t.workoutFinishedAt });
+    const wm = t.workoutMissed;
+    steps.push({ id: 'workout', kind: 'workout', title: '筋トレ Day' + t.dayNo + ' ' + t.dayName + ' ・ ' + t.exercises.length + '種目 ・ 約' + s.workoutMin + '分', lines: [t.exercises.map(e => e.nameJa).join('・')].concat(wm ? ['できなかった（' + reasonJa(wm) + '）・ ' + (wm.shift ? 'Day をずらす（明日 Day' + t.dayNo + ' をやり直す）' : 'そのまま進む')] : t.setsDone ? [t.setsDone + 'セット記録済み'] : []), planned: T.workout, done: t.workoutFinished, handled: t.workoutFinished || !!wm, mark: t.workoutFinished ? 'ok' : wm ? 'na' : '', loggedAt: t.workoutFinishedAt || (wm ? wm.loggedAt : ''), na: !!wm });
     ['intra', 'post'].forEach(tm => { const g = suppGroup(tm, T.workout); if (g) steps.push(g); });
   }
   [2, 3, 4, 5].forEach(n => { const m = mealStep(n); if (m) steps.push(m); });
   if (t.isRest) steps.push(warmupStep(T.cardio));
-  const lastC = t.cardio.length ? t.cardio[t.cardio.length - 1] : null;
-  steps.push({ id: 'cardio', kind: 'cardio', title: '有酸素 ' + s.cardioLabel, lines: t.cardio.length ? [t.cardio.map(c => ({ walk: 'ウォーキング', jog: 'ジョグ', stairs: '階段', other: 'その他' }[c.type] || c.type) + ' ' + c.minutes + '分' + (c.note ? '（' + c.note + '）' : '')).join('・')] : [], planned: T.cardio, done: t.cardio.length > 0, loggedAt: lastC ? (lastC.loggedAt || legacyIso(t.date, lastC.at)) : '' });
+  const lastC = t.cardio.length ? t.cardio[t.cardio.length - 1] : null, cm = t.cardioMissed;
+  steps.push({ id: 'cardio', kind: 'cardio', title: '有酸素 ' + s.cardioLabel, lines: t.cardio.length ? [t.cardio.map(c => ({ walk: 'ウォーキング', jog: 'ジョグ', stairs: '階段', other: 'その他' }[c.type] || c.type) + ' ' + c.minutes + '分' + (c.note ? '（' + c.note + '）' : '')).join('・')] : cm ? ['できなかった（' + reasonJa(cm) + '）'] : [], planned: T.cardio, done: t.cardio.length > 0, handled: t.cardio.length > 0 || !!cm, mark: t.cardio.length ? 'ok' : cm ? 'na' : '', loggedAt: lastC ? (lastC.loggedAt || legacyIso(t.date, lastC.at)) : (cm ? cm.loggedAt : ''), na: !!cm });
   const ng = suppGroup('night', T.night); if (ng) steps.push(ng);
   routineSteps('night').forEach(x => steps.push(x));
   const wl = ((ST.log_routine[t.date] || {}).items || {})[(waterItem() || {}).id] || {};
@@ -714,13 +730,15 @@ function suggestSets(sets, inc) {
 }
 function summaryModel(weekNo) {
   const s = ST.settings, today = todayYmd(), curWeek = calcWeekNo(s.startDate, today), wk = weekNo || curWeek, range = weekRange(s.startDate, wk);
-  const weights = Object.keys(ST.log_weight).sort().map(d => ({ date: d, value: Number(ST.log_weight[d].weightKg) }));
+  const weights = Object.keys(ST.log_weight).filter(d => !ST.log_weight[d].skipped).sort().map(d => ({ date: d, value: Number(ST.log_weight[d].weightKg) }));
   const exNames = {}; Object.values(ST.plan_exercises).forEach(e => { exNames[e.id] = e.nameEn || e.nameJa; });
   const top = {};
   Object.keys(ST.log_workout).sort().forEach(d => Object.values(ST.log_workout[d].sets || {}).forEach(st => { if (st.setType !== 'TOP' || st.weightKg === '') return; const k = exNames[st.exerciseId] || ('#' + st.exerciseId); (top[k] = top[k] || []).push({ date: d, value: Number(st.weightKg), reps: Number(st.reps) || 0 }); }));
   const inRange = d => d >= range.start && d <= range.end;
   const days = []; for (let d = range.start; d <= range.end; d = addDays(d, 1)) { if (d > today) break; days.push(dayHistory(d)); }
-  return { weekNo: wk, currentWeek: curWeek, range, weights, weightsMa7: movingAvg(weights, 7), topSets: Object.keys(top).map(k => ({ name: k, points: top[k] })),
+  const wdays = { measured: 0, skipped: 0, total: days.length, reasons: {} };
+  days.forEach(x => { const w = ST.log_weight[x.date]; if (!w) return; if (w.skipped) { wdays.skipped++; const k = reasonEn('weight', w.reason, w.reasonText); wdays.reasons[k] = (wdays.reasons[k] || 0) + 1; } else wdays.measured++; });
+  return { weekNo: wk, currentWeek: curWeek, range, weights, weightsMa7: movingAvgByDate(weights, 7), weightDays: wdays, missed: missedItems(range), topSets: Object.keys(top).map(k => ({ name: k, points: top[k] })),
     todayWeight: ST.log_weight[today] ? Number(ST.log_weight[today].weightKg) : null, startWeight: weights.length ? weights[0].value : null,
     media: Object.values(ST.log_media).filter(m => inRange(m.date)).sort((a, b) => b.date.localeCompare(a.date)), days, adherence: weekAdherence(range) };
 }
@@ -729,7 +747,23 @@ function dayHistory(d) {
   const ms = mealsModel(d), meals = ms.meals, wo = ST.log_workout[d] || {}, rest = isRestDay(d);
   return { date: d, dayNo: dayNoFor(d), rest, kcal: ms.total.kcal, planKcal: ms.planTotal.kcal, mealsOk: meals.filter(m => m.status === 'plan' || m.status === 'sub').length, mealsN: meals.length,
     workout: rest ? null : Object.keys(wo.sets || {}).length > 0, warmup: !!(wo.warmup || {}).done, cardio: ((ST.log_cardio[d] || {}).entries || []).length > 0, water: waterMl(d) >= (Number(ST.settings.waterGoalMl) || 5000),
-    supps: pct(Object.values((ST.log_supplements[d] || {}).items || {}).filter(x => x.done).length, Object.values(ST.plan_supplements).filter(x => x.active !== false).length), weight: ST.log_weight[d] ? Number(ST.log_weight[d].weightKg) : null, times: dayTimes(d) };
+    supps: pct(Object.values((ST.log_supplements[d] || {}).items || {}).filter(x => x.done).length, Object.values(ST.plan_supplements).filter(x => x.active !== false).length), weight: ST.log_weight[d] && !ST.log_weight[d].skipped ? Number(ST.log_weight[d].weightKg) : null, weightSkipped: !!(ST.log_weight[d] && ST.log_weight[d].skipped), times: dayTimes(d) };
+}
+/** 7 日移動平均: 暦の 7 日窓に入る「実測がある日だけ」の平均（欠測日は除く） */
+function movingAvgByDate(vals, days) { return vals.map(v => { const from = addDays(v.date, -(days - 1)); const inWin = vals.filter(x => x.date >= from && x.date <= v.date); return { date: v.date, value: r1(inWin.reduce((a, x) => a + x.value, 0) / inWin.length) }; }); }
+/** 期間内の「できなかった項目とその理由」（週まとめのブロックとレポートの Notes 用） */
+function missedItems(range) {
+  const today = todayYmd(), out = [];
+  for (let d = range.start; d <= range.end && d <= today; d = addDays(d, 1)) {
+    const w = ST.log_weight[d]; if (w && w.skipped) out.push({ date: d, item: '体重', itemEn: 'weight', reason: reasonJa(w), reasonEn: reasonEn('weight', w.reason, w.reasonText) });
+    Object.entries((ST.log_meals[d] || {}).meals || {}).forEach(([n, m]) => { if (m.status === 'skip') out.push({ date: d, item: n + '食目', itemEn: 'meal ' + n, reason: m.skip ? reasonJa(m.skip) : '食べなかった', reasonEn: m.skip ? reasonEn('meal', m.skip.reason, m.skip.reasonText) : 'skipped' }); });
+    const sup = Object.entries((ST.log_supplements[d] || {}).items || {}).filter(([, v]) => v.na && !v.done); if (sup.length) { const v = sup[0][1]; out.push({ date: d, item: 'サプリ ' + sup.map(([id]) => (ST.plan_supplements[id] || {}).name || id).join('・'), itemEn: 'supplements (' + sup.length + ')', reason: reasonJa(v), reasonEn: reasonEn('supp', v.reason, v.reasonText) }); }
+    Object.entries((ST.log_routine[d] || {}).items || {}).forEach(([id, v]) => { if (v.na && !v.done) out.push({ date: d, item: (ST.plan_routine[id] || {}).name || id, itemEn: ((ST.plan_routine[id] || {}).name || id), reason: reasonJa(v), reasonEn: reasonEn('supp', v.reason, v.reasonText) }); });
+    const dd = ST.log_daily[d] || {};
+    if (dd.workoutMissed) out.push({ date: d, item: '筋トレ Day' + dayNoFor(d), itemEn: 'workout Day' + dayNoFor(d), reason: reasonJa(dd.workoutMissed) + (dd.workoutMissed.shift ? '・Day をずらす' : '・そのまま進む'), reasonEn: reasonEn('workout', dd.workoutMissed.reason, dd.workoutMissed.reasonText) + (dd.workoutMissed.shift ? ', day shifted' : '') });
+    if (dd.cardioMissed) out.push({ date: d, item: '有酸素', itemEn: 'cardio', reason: reasonJa(dd.cardioMissed), reasonEn: reasonEn('workout', dd.cardioMissed.reason, dd.cardioMissed.reasonText) });
+  }
+  return out;
 }
 /** その日の 予定/実績 時刻の一覧（週まとめ・レポート・CSV 用） */
 function dayTimes(d) { const t = todayModel(d); return t.timeline.filter(x => x.planned).map(x => ({ id: x.id, title: x.title.replace(/ ・.*$/, ''), planned: x.planned, logged: x.handled && x.loggedAt ? fmtHm(x.loggedAt) : '', late: x.handled && isLate(x.loggedAt, x.planned) })); }
@@ -752,11 +786,13 @@ function weekAdherence(range) {
 }
 function weeklyReport(weekNo, opts) {
   opts = opts || {}; const sm = summaryModel(weekNo), r = sm.range, a = sm.adherence, u = unit(), inRange = d => d >= r.start && d <= r.end, ws = sm.weights.filter(w => inRange(w.date));
-  let wLine = 'Weight: n/a'; if (ws.length) { const avg = r1(ws.reduce((x, w) => x + w.value, 0) / ws.length); wLine = 'Weight: ' + disp(ws[0].value) + ' → ' + disp(ws[ws.length - 1].value) + ' ' + u + ' (avg ' + disp(avg) + ')'; }
+  const wd = sm.weightDays, wdTxt = wd.measured + '/' + wd.total + ' days measured' + (wd.skipped ? ', skipped: ' + Object.entries(wd.reasons).map(([k, n]) => k + '×' + n).join(', ') : '');
+  let wLine = 'Weight: n/a (' + wdTxt + ')'; if (ws.length) { const avg = r1(ws.reduce((x, w) => x + w.value, 0) / ws.length); wLine = 'Weight: ' + disp(ws[0].value) + ' → ' + disp(ws[ws.length - 1].value) + ' ' + u + ' (avg ' + disp(avg) + ', ' + wdTxt + ')'; }
   const prev = weekRange(ST.settings.startDate, sm.weekNo - 1);
   const topParts = sm.topSets.map(t => { const cur = t.points.filter(p => inRange(p.date)).sort((p, q) => q.value - p.value || q.reps - p.reps)[0]; if (!cur) return null; const pv = t.points.filter(p => p.date >= prev.start && p.date <= prev.end).sort((p, q) => q.value - p.value)[0]; return t.name + ' ' + (pv ? disp(pv.value) + '→' : '') + disp(cur.value) + u + '×' + (cur.reps || '?'); }).filter(Boolean);
   const subList = Object.keys(a.meals.subFoods).map(id => ((ST.foods[id] || {}).nameEn || (ST.foods[id] || {}).nameJa || id) + ' x' + a.meals.subFoods[id]);
   const notes = [];
+  sm.missed.forEach(m => notes.push(m.date.slice(5).replace('-', '/') + ' ' + m.itemEn + ' missed (' + m.reasonEn + ')'));
   Object.keys(ST.log_daily).filter(inRange).sort().forEach(d => { const c = (ST.log_daily[d].comment || '').trim(); if (c) notes.push(c); if (ST.log_daily[d].warmupSkipped) notes.push('warm-up skipped ' + d.slice(5) + ' (' + ST.log_daily[d].warmupSkipped.reason + ')'); });
   Object.keys(ST.log_workout).filter(inRange).sort().forEach(d => Object.entries(ST.log_workout[d].meta || {}).forEach(([id, m]) => { if (m.note) notes.push(((ST.plan_exercises[id] || {}).nameEn || '') + ': ' + m.note); }));
   const form = sm.media.filter(m => m.category === 'form'), body = sm.media.filter(m => m.category === 'body');
@@ -775,7 +811,17 @@ function weeklyReport(weekNo, opts) {
    5. アクション（1 操作 = 1 ドキュメント書込）
    ===================================================================== */
 const A = {
-  async saveWeight(date, v, bf) { const kg = toKg(v); if (kg === '') throw new Error('体重が数値ではありません'); const prev = ST.log_weight[date] || {}; const at = prev.loggedAt || isoNow(); await store.set('log_weight', date, { date, time: fmtHm(at), loggedAt: at, weightKg: kg, bodyFatPct: bf === '' || bf == null ? '' : Number(bf), note: '' }); },
+  async saveWeight(date, v, bf) { const kg = toKg(v); if (kg === '') throw new Error('体重が数値ではありません'); const prev = ST.log_weight[date] || {}; const at = !prev.skipped && prev.loggedAt ? prev.loggedAt : isoNow(); await store.set('log_weight', date, { date, time: fmtHm(at), loggedAt: at, weightKg: kg, bodyFatPct: bf === '' || bf == null ? '' : Number(bf), note: '' }); },
+  /** 体重を測れなかった: 数値なしで理由だけ保存（あとで測れたら saveWeight で上書きされる） */
+  async weightSkip(date, reason, reasonText) { await store.set('log_weight', date, { date, skipped: true, reason, reasonText: reasonText || '', loggedAt: isoNow() }); },
+  async weightCancel(date) { await store.del('log_weight', date); },
+  /** サプリ・ルーティン「今日はなし（理由）」 */
+  async suppNA(date, timing, reason, reasonText) { const doc = Object.assign({ date, items: {} }, ST.log_supplements[date]); doc.items = Object.assign({}, doc.items); const at = isoNow(); Object.values(ST.plan_supplements).filter(s => s.timing === timing && s.active !== false).forEach(s => { doc.items[s.id] = { done: false, na: true, reason, reasonText: reasonText || '', loggedAt: at }; }); await store.set('log_supplements', date, doc); },
+  async routineNA(date, id, reason, reasonText) { const doc = Object.assign({ date, items: {} }, ST.log_routine[date]); doc.items = Object.assign({}, doc.items, { [id]: { done: false, na: true, reason, reasonText: reasonText || '', loggedAt: isoNow() } }); await store.set('log_routine', date, doc); },
+  /** 筋トレ・有酸素「今日はできなかった（理由）」。shift=true で翌日以降の Day を 1 つずらす */
+  async workoutMissed(date, reason, reasonText, shift) { await A.setDaily(date, { workoutMissed: { reason, reasonText: reasonText || '', shift: !!shift, loggedAt: isoNow() } }); },
+  async cardioMissed(date, reason, reasonText) { await A.setDaily(date, { cardioMissed: { reason, reasonText: reasonText || '', loggedAt: isoNow() } }); },
+  async clearDaily(date, key) { const d = Object.assign({}, ST.log_daily[date]); delete d[key]; await store.set('log_daily', date, Object.assign({ date }, d)); },
   async toggleSupp(date, id, done) { const doc = Object.assign({ date, items: {} }, ST.log_supplements[date]); const at = done ? isoNow() : ''; doc.items = Object.assign({}, doc.items, { [id]: { done: !!done, time: fmtHm(at), loggedAt: at } }); await store.set('log_supplements', date, doc); },
   async toggleSuppGroup(date, timing, done) { const doc = Object.assign({ date, items: {} }, ST.log_supplements[date]); doc.items = Object.assign({}, doc.items); const at = done ? isoNow() : ''; Object.values(ST.plan_supplements).filter(s => s.timing === timing && s.active !== false).forEach(s => { doc.items[s.id] = { done: !!done, time: fmtHm(at), loggedAt: at }; }); await store.set('log_supplements', date, doc); },
   async toggleRoutine(date, id, done) { const doc = Object.assign({ date, items: {} }, ST.log_routine[date]); const at = done ? isoNow() : ''; doc.items = Object.assign({}, doc.items, { [id]: { done: !!done, time: fmtHm(at), loggedAt: at } }); await store.set('log_routine', date, doc); },
@@ -800,7 +846,7 @@ const A = {
   /** プラン通り（variant:'alt' で代替案、choices で「または」の選択） */
   mealPlanDone(date, n, opt) { opt = opt || {}; return A.mealCommit(date, n, A.planLogItems(n, opt), { variant: opt.variant || '' }); },
   mealHalf(date, n) { const cur = mealModel(date, n); return A.mealCommit(date, n, cur.items.map(i => { if (i.deleted || i.origin !== 'plan') return i; const g = r1(Number(i.planGrams) / 2), f = ST.foods[i.foodId]; return Object.assign({}, i, { grams: g, eaten: true }, f ? calcMacros(f, g) : {}); })); },
-  mealSkip(date, n) { const cur = mealModel(date, n); return A.mealCommit(date, n, cur.items.filter(i => i.origin === 'plan').map(i => Object.assign({}, i, { eaten: false, deleted: false }))); },
+  mealSkip(date, n, reason, reasonText) { const cur = mealModel(date, n); return A.mealCommit(date, n, cur.items.filter(i => i.origin === 'plan').map(i => Object.assign({}, i, { eaten: false, deleted: false })), { skip: { reason: reason || '食べなかった', reasonText: reasonText || '' } }); },
   /** 記録を取り消す → 未記録（ドキュメントから削除）。履歴に積むので「元に戻す」できる */
   mealCancel(date, n) { const cur = (ST.log_meals[date] && ST.log_meals[date].meals || {})[n] || null; mealHistPush(date, n, cur); return A.setMeal(date, n, null); },
   /** プランの内容に戻す（今日の変更を破棄してプラン通りに） */
@@ -867,9 +913,11 @@ async function estimateFoodAi(name) {
   return A.addFood({ nameJa: est.nameJa || name, nameEn: est.nameEn || '', per: '100g', kcal: est.kcal, p: est.p, f: est.f, c: est.c, source: 'ai', note: est.note || '' });
 }
 function buildCsv() {
-  const rows = [['sheet', 'date', 'key', 'plannedAt', 'loggedAt', 'value']], T = ST.settings.times;
-  const push = (sheet, date, key, obj, planned) => rows.push([sheet, date, key, planned || '', obj && obj.loggedAt || '', JSON.stringify(obj)]);
-  Object.keys(ST.log_weight).concat(Object.keys(ST.log_meals), Object.keys(ST.log_workout)).filter((v, i, a) => a.indexOf(v) === i).sort().forEach(d => dayTimes(d).forEach(tm => rows.push(['times', d, tm.id, tm.planned, tm.logged, JSON.stringify({ title: tm.title, late: tm.late })])));
+  const rows = [['sheet', 'date', 'key', 'plannedAt', 'loggedAt', 'skipped', 'reason', 'value']], T = ST.settings.times;
+  const skipOf = obj => { if (!obj) return ['', '']; if (obj.skipped || obj.na) return ['1', reasonJa(obj)]; if (obj.status === 'skip') return ['1', obj.skip ? reasonJa(obj.skip) : '食べなかった']; return ['', '']; };
+  const push = (sheet, date, key, obj, planned) => { const sk = skipOf(obj); rows.push([sheet, date, key, planned || '', obj && obj.loggedAt || '', sk[0], sk[1], JSON.stringify(obj)]); };
+  Object.keys(ST.log_weight).concat(Object.keys(ST.log_meals), Object.keys(ST.log_workout)).filter((v, i, a) => a.indexOf(v) === i).sort().forEach(d => dayTimes(d).forEach(tm => rows.push(['times', d, tm.id, tm.planned, tm.logged, '', '', JSON.stringify({ title: tm.title, late: tm.late })])));
+  Object.values(ST.log_daily).forEach(x => { if (x.workoutMissed) rows.push(['missed', x.date, 'workout', T.workout, x.workoutMissed.loggedAt || '', '1', reasonJa(x.workoutMissed) + (x.workoutMissed.shift ? '・Day をずらす' : ''), JSON.stringify(x.workoutMissed)]); if (x.cardioMissed) rows.push(['missed', x.date, 'cardio', T.cardio, x.cardioMissed.loggedAt || '', '1', reasonJa(x.cardioMissed), JSON.stringify(x.cardioMissed)]); });
   Object.values(ST.log_weight).forEach(w => push('weight', w.date, '', w, T.weight));
   Object.values(ST.log_workout).forEach(w => { Object.entries(w.sets || {}).forEach(([k, v]) => push('workout', w.date, k, v, T.workout)); Object.entries(w.meta || {}).forEach(([k, v]) => push('workout_meta', w.date, k, v)); if (w.warmup) push('warmup', w.date, '', w.warmup, T.warmup); });
   Object.values(ST.log_cardio).forEach(c => (c.entries || []).forEach((e, i) => push('cardio', c.date, String(i), e, T.cardio)));
@@ -898,9 +946,15 @@ function fail(e) { toast((e && (e.message || e.code)) || String(e), true); rende
 function vibrate(p) { try { if (navigator.vibrate) navigator.vibrate(p || 200); } catch (e) { /* ignore */ } }
 /** ページ内ダイアログ（sandbox iframe では confirm()/prompt() が無効なので自前） */
 function openDlg(html) { const d = $('#dlg'); $('.sheet-body', d).innerHTML = html; d.hidden = false; return d; }
-function closeDlg() { $('#dlg').hidden = true; }
+function closeDlg() { const d = $('#dlg'); d.hidden = true; $('.sheet-body', d).innerHTML = ''; }
 function askConfirm(title, msg, okLabel) { return new Promise(res => { const d = openDlg('<h3>' + esc(title) + '</h3><div class="msg">' + esc(msg || '') + '</div><div class="btns"><button class="b-sub" id="dlgNo">やめる</button><button class="b-yel" id="dlgOk">' + esc(okLabel || 'OK') + '</button></div>'); $('#dlgOk', d).onclick = () => { closeDlg(); res(true); }; $('#dlgNo', d).onclick = () => { closeDlg(); res(false); }; }); }
 function askText(title, msg, def, opts) { opts = opts || {}; return new Promise(res => { const d = openDlg('<h3>' + esc(title) + '</h3>' + (msg ? '<div class="msg">' + esc(msg) + '</div>' : '') + '<input class="txt" id="dlgIn" type="' + (opts.type || 'text') + '"' + (opts.inputmode ? ' inputmode="' + opts.inputmode + '"' : '') + ' value="' + esc(def == null ? '' : def) + '" placeholder="' + esc(opts.placeholder || '') + '"><div class="btns" style="margin-top:12px"><button class="b-sub" id="dlgNo">やめる</button><button class="b-yel" id="dlgOk">' + esc(opts.okLabel || 'OK') + '</button></div>'); const inp = $('#dlgIn', d); inp.focus(); inp.select(); const ok = () => { closeDlg(); res(inp.value); }; $('#dlgOk', d).onclick = ok; inp.onkeydown = e => { if (e.key === 'Enter') ok(); }; $('#dlgNo', d).onclick = () => { closeDlg(); res(null); }; }); }
+/** 理由をタップで選ぶ（「その他」だけ 1 行入力）。resolve: {reason, reasonText} | null */
+function askReason(kind, title, msg) { return new Promise(res => { const opts = REASONS[kind] || REASONS.workout; const d = openDlg('<h3>' + esc(title) + '</h3>' + (msg ? '<div class="msg">' + esc(msg) + '</div>' : '') + '<div class="chips" id="dlgReasons">' + opts.map(r => '<button data-reason="' + esc(r[0]) + '">' + esc(r[0]) + '</button>').join('') + '</div><div class="btns" style="margin-top:14px"><button class="b-sub" id="dlgNo">やめる</button></div>');
+  $$('[data-reason]', d).forEach(b => { b.onclick = async () => { const reason = b.dataset.reason; closeDlg(); if (reason === 'その他') { const t = await askText('その他の理由', '1 行で', '', { placeholder: '例: 出張先で測れず' }); if (t === null) return res(null); return res({ reason, reasonText: t.trim() }); } res({ reason, reasonText: '' }); }; });
+  $('#dlgNo', d).onclick = () => { closeDlg(); res(null); }; }); }
+/** 「開始する／できなかった」の小メニュー */
+function askChoice(title, msg, choices) { return new Promise(res => { const d = openDlg('<h3>' + esc(title) + '</h3>' + (msg ? '<div class="msg">' + esc(msg) + '</div>' : '') + choices.map((c, i) => '<button class="b ' + (c.cls || 'b-sub') + '" style="width:100%;margin-top:8px" data-choice="' + i + '">' + esc(c.label) + '</button>').join('') + '<button class="b b-ghost" style="width:100%;margin-top:8px" id="dlgNo">やめる</button>'); $$('[data-choice]', d).forEach(b => { b.onclick = () => { closeDlg(); res(choices[Number(b.dataset.choice)].value); }; }); $('#dlgNo', d).onclick = () => { closeDlg(); res(null); }; }); }
 function askTime(title, msg, def) { return new Promise(res => { const d = openDlg('<h3>' + esc(title) + '</h3><div class="msg">' + esc(msg || '') + '</div><input class="time" id="dlgTime" type="time" value="' + esc(def || '') + '"><div class="btns" style="margin-top:12px"><button class="b-sub" id="dlgNo">やめる</button><button class="b-yel" id="dlgOk">この時刻にする</button></div>'); $('#dlgOk', d).onclick = () => { const v = $('#dlgTime', d).value; closeDlg(); res(/^\d{2}:\d{2}$/.test(v) ? v : null); }; $('#dlgNo', d).onclick = () => { closeDlg(); res(null); }; }); }
 function openSheet(html) { const s = $('#sheet'); $('.sheet-body', s).innerHTML = html; s.hidden = false; return s; }
 function closeSheet() { $('#sheet').hidden = true; const sm = UI.sheetMeal; UI.sheetMeal = null; if (sm) A.mealPurge(UI.date, sm.mealNo).then(() => render()).catch(fail); }
@@ -938,9 +992,9 @@ function renderToday(t) {
   h += '<div class="now' + (t.now.kind === 'done' ? ' done' : '') + '" id="now"></div><div class="tl">';
   t.timeline.forEach(st => {
     const tm = st.handled && st.loggedAt ? '<span class="tm edit" data-time="' + esc(st.id) + '" title="時刻を修正"><b' + (st.late ? ' class="late"' : '') + '>' + esc(fmtHm(st.loggedAt)) + '</b><small>予定 ' + esc(st.planned || '—') + '</small></span>' : '<span class="tm">' + (st.timerUntil ? '<b>' + esc(fmtHm(st.timerUntil)) + '</b><small>タイマー</small>' : esc(st.planned || '') + ' <small style="display:inline">予定</small>') + '</span>';
-    const lbl = st.mark === 'sub' ? '<span class="lbl-sub sub">変更あり</span>' : st.mark === 'skip' ? '<span class="lbl-sub skip">スキップ</span>' : st.skipped ? '<span class="lbl-sub skip">飛ばした</span>' : '';
-    const chk = st.mark === 'ok' ? 'chk on' : st.mark === 'sub' ? 'chk sub' : st.mark === 'skip' ? 'chk skip' : 'chk';
-    h += '<div class="step ' + st.state + '" data-step="' + esc(st.id) + '" data-mark="' + esc(st.mark) + '"><div class="row" data-open="' + esc(st.id) + '"><div class="body"><div class="t1"><span class="nm">' + esc(st.title) + lbl + '</span>' + tm + '</div>' + st.lines.map((l, i) => '<div class="' + (i === st.lines.length - 1 && st.lines.length > 1 ? 'l3' : 'l2') + '">' + esc(l) + '</div>').join('') + '</div><button class="' + chk + '" data-chk="' + esc(st.id) + '" aria-label="' + (st.handled ? '記録を取り消す' : '完了') + '">' + (st.mark === 'skip' ? '−' : st.mark ? '✓' : '') + '</button></div></div>';
+    const lbl = st.mark === 'sub' ? '<span class="lbl-sub sub">変更あり</span>' : st.mark === 'skip' ? '<span class="lbl-sub skip">スキップ</span>' : st.mark === 'na' ? '<span class="lbl-sub na">' + (st.kind === 'weight' ? '測れなかった' : st.kind === 'workout' || st.kind === 'cardio' ? 'できなかった' : '今日はなし') + '</span>' : st.skipped ? '<span class="lbl-sub skip">飛ばした</span>' : '';
+    const chk = st.mark === 'ok' ? 'chk on' : st.mark === 'sub' ? 'chk sub' : st.mark === 'skip' ? 'chk skip' : st.mark === 'na' ? 'chk na' : 'chk';
+    h += '<div class="step ' + st.state + '" data-step="' + esc(st.id) + '" data-mark="' + esc(st.mark) + '"><div class="row" data-open="' + esc(st.id) + '"><div class="body"><div class="t1"><span class="nm">' + esc(st.title) + lbl + '</span>' + tm + '</div>' + st.lines.map((l, i) => '<div class="' + (i === st.lines.length - 1 && st.lines.length > 1 ? 'l3' : 'l2') + '">' + esc(l) + '</div>').join('') + '</div><button class="' + chk + '" data-chk="' + esc(st.id) + '" aria-label="' + (st.handled ? '記録を取り消す' : '完了') + '">' + (st.mark === 'skip' || st.mark === 'na' ? '−' : st.mark ? '✓' : '') + '</button></div></div>';
   });
   h += '</div>' + totalsBlock(t);
   h += '<div class="card"><div class="ttl small mute">今日のメモ（週次レポートに載ります）</div><textarea class="txt" id="dayComment" placeholder="体調、違和感など">' + esc(t.comment) + '</textarea></div>';
@@ -950,6 +1004,7 @@ function renderToday(t) {
   renderNow(t);
   $$('[data-chk]').forEach(b => { b.onclick = e => { e.stopPropagation(); stepAction(t, b.dataset.chk, true); }; });
   $$('[data-time]').forEach(el => { el.onclick = e => { e.stopPropagation(); openTimeSheet(t, el.dataset.time); }; });
+  $$('[data-chk^="supp:"], [data-chk^="routine:"]').forEach(b => { const st = t.timeline.find(x => x.id === b.dataset.chk); if (!st || st.handled) return; bindLongPress(b, () => { if (st.kind === 'supp_group') askReason('supp', st.title + ' 今日はなし').then(r => { if (r) act(A.suppNA(t.date, st.timing, r.reason, r.reasonText), '記録しました'); }); else askReason('supp', st.title + ' 今日はなし').then(r => { if (r) act(A.routineNA(t.date, st.itemId, r.reason, r.reasonText), '記録しました'); }); }); });
   $$('[data-open]').forEach(el => { el.onclick = () => stepAction(t, el.dataset.open, false); });
   every(() => { const c = $('#nowClock'); if (c) c.textContent = nowHm(); }, 60000);
   const ta = $('#dayComment'); ta.onblur = () => { if (ta.value !== t.comment) act(A.setDaily(t.date, { comment: ta.value }), 'メモを保存'); };
@@ -962,18 +1017,39 @@ function totalsBlock(t) {
 }
 function stepAction(t, id, chk) {
   const st = t.timeline.find(s => s.id === id); if (!st) return;
+  const undo = (msg, restore) => toastAction(msg, '元に戻す', () => act(restore()));
   switch (st.kind) {
-    case 'weight': return openWeightSheet(t);
-    case 'routine': return act(A.toggleRoutine(t.date, st.itemId, !st.done));
-    case 'supp_group': return chk ? act(A.toggleSuppGroup(t.date, st.timing, !st.done)) : openSuppSheet(t, st);
+    case 'weight': {
+      if (chk && st.handled) { const prev = ST.log_weight[t.date]; return act(A.weightCancel(t.date)).then(() => undo('体重の記録を取り消しました', () => store.set('log_weight', t.date, prev))); }
+      return openWeightSheet(t); }
+    case 'routine': {
+      if (st.na) { const prev = ST.log_routine[t.date]; return act(A.toggleRoutine(t.date, st.itemId, false)).then(() => undo(st.title + 'の「今日はなし」を取り消しました', () => store.set('log_routine', t.date, prev))); }
+      return act(A.toggleRoutine(t.date, st.itemId, !st.done)); }
+    case 'supp_group': {
+      if (st.na && chk) { const prev = ST.log_supplements[t.date]; return act(A.toggleSuppGroup(t.date, st.timing, false)).then(() => undo('サプリの「今日はなし」を取り消しました', () => store.set('log_supplements', t.date, prev))); }
+      return chk ? act(A.toggleSuppGroup(t.date, st.timing, !st.done)) : openSuppSheet(t, st); }
     case 'meal': if (chk && !st.handled) return act(A.mealPlanDone(t.date, st.mealNo), st.mealNo + '食目 プラン通り');
       if (chk && st.handled) return act(A.mealCancel(t.date, st.mealNo)).then(() => toastAction(st.mealNo + '食目の記録を取り消しました', '元に戻す', () => act(A.mealUndo(t.date, st.mealNo))));
       return openMealSheet(st.mealNo, false);
-    case 'warmup': case 'workout': return go('workout');
-    case 'cardio': return openCardioSheet();
+    case 'warmup': return go('workout');
+    case 'workout': {
+      if (chk && st.na) { const prev = t.workoutMissed; return act(A.clearDaily(t.date, 'workoutMissed')).then(() => undo('「できなかった」を取り消しました', () => A.setDaily(t.date, { workoutMissed: prev }))); }
+      if (chk && !st.handled) return askChoice('筋トレ', st.title, [{ label: '筋トレを開始', value: 'go', cls: 'b-yel' }, { label: '今日はできなかった（理由を選ぶ）', value: 'miss' }]).then(v => { if (v === 'go') go('workout'); if (v === 'miss') missWorkout(t); });
+      return go('workout'); }
+    case 'cardio': {
+      if (chk && st.na) { const prev = t.cardioMissed; return act(A.clearDaily(t.date, 'cardioMissed')).then(() => undo('「できなかった」を取り消しました', () => A.setDaily(t.date, { cardioMissed: prev }))); }
+      if (chk && !st.handled) return askChoice('有酸素', st.title, [{ label: '記録する', value: 'go', cls: 'b-yel' }, { label: '今日はできなかった（理由を選ぶ）', value: 'miss' }]).then(v => { if (v === 'go') openCardioSheet(); if (v === 'miss') askReason('workout', '有酸素ができなかった理由').then(r => { if (r) act(A.cardioMissed(t.date, r.reason, r.reasonText), '記録しました'); }); });
+      return openCardioSheet(); }
     case 'water': return openWaterSheet(t);
   }
 }
+/** 筋トレできなかった: 理由 → Day をずらすか選ぶ → log_daily に保存 */
+function missWorkout(t) {
+  askReason('workout', '筋トレができなかった理由').then(r => { if (!r) return;
+    askChoice('Day はどうする？', '今日は Day' + t.dayNo + ' ' + t.dayName + ' でした', [{ label: 'Day をずらす（明日 Day' + t.dayNo + ' をやり直す）', value: true, cls: 'b-yel' }, { label: 'そのまま進む（明日は次の Day）', value: false }]).then(shift => { if (shift === null) return; act(A.workoutMissed(t.date, r.reason, r.reasonText, shift), '記録しました'); }); });
+}
+/** サプリ・ルーティンの長押し → 「今日はなし（理由）」 */
+function bindLongPress(el, fn) { let tm = null, fired = false; const start = e => { fired = false; tm = setTimeout(() => { fired = true; vibrate(30); fn(); }, 550); }; const stop = () => { clearTimeout(tm); }; el.addEventListener('pointerdown', start); ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => el.addEventListener(ev, stop)); el.addEventListener('click', e => { if (fired) { e.stopImmediatePropagation(); e.preventDefault(); fired = false; } }, true); el.addEventListener('contextmenu', e => e.preventDefault()); }
 function renderNow(t) {
   const n = t.now, el = $('#now'); if (!el) return;
   let left = null; if (n.timerUntil) { left = (new Date(n.timerUntil).getTime() - Date.now()) / 1000; if (left <= 0) left = null; }
@@ -1005,8 +1081,11 @@ function openTimeSheet(t, stepId) {
 function openWeightSheet(t) {
   const wst = t.timeline.find(x => x.id === 'weight') || {};
   const s = openSheet('<h3>体重 <span class="mute num" style="font-weight:500;font-size:14px">・ 予定 ' + esc(wst.planned || '—') + (wst.loggedAt ? ' ・ 記録 <b>' + esc(fmtHm(wst.loggedAt)) + '</b>' : '') + '</span></h3><div class="w-in"><input type="number" step="0.1" inputmode="decimal" id="shW" value="' + (t.weight ? disp(t.weight.weightKg) : '') + '" placeholder="' + (t.prevWeight ? disp(t.prevWeight.weightKg) : '0.0') + '"><span class="u">' + unit() + '</span><input type="number" step="0.1" inputmode="decimal" id="shBf" class="bf" value="' + (t.weight ? t.weight.bodyFatPct : '') + '" placeholder="体脂肪"><span class="u">%</span></div>' + (t.prevWeight ? '<div class="mute small" style="margin-top:6px">前回 ' + disp(t.prevWeight.weightKg) + unit() + '（' + t.prevWeight.date.slice(5) + '）</div>' : '') + '<button class="b b-yel" style="width:100%;margin-top:12px" id="shSave">保存</button>');
+  $('.sheet-body', s).insertAdjacentHTML('beforeend', (t.weightSkipped ? '<div class="badge na" style="margin-top:10px;background:var(--card2);color:var(--mute)">測れなかった（' + esc(reasonJa(t.weightSkipped)) + '）・ 数値を入れて保存すると解除</div>' : '') + '<div class="btns" style="margin-top:10px"><button class="b small" id="shNA">今日は測れなかった</button>' + (t.weight || t.weightSkipped ? '<button class="b small" id="shCancel" style="color:var(--warn)">記録を取り消す</button>' : '') + '</div>');
   $('#shW', s).focus();
   $('#shSave', s).onclick = () => { const v = $('#shW', s).value; if (!v) return toast('体重を入力', true); closeSheet(); act(A.saveWeight(t.date, v, $('#shBf', s).value), '体重を保存'); };
+  $('#shNA', s).onclick = () => { closeSheet(); askReason('weight', '今日は測れなかった', '理由を 1 つ選ぶ').then(r => { if (!r) return; const prev = ST.log_weight[t.date]; act(A.weightSkip(t.date, r.reason, r.reasonText), '測れなかった（' + (r.reasonText || r.reason) + '）').then(() => toastAction('体重: 測れなかったと記録', '元に戻す', () => act(prev ? store.set('log_weight', t.date, prev) : A.weightCancel(t.date)))); }); };
+  const sc = $('#shCancel', s); if (sc) sc.onclick = () => { askConfirm('記録を取り消す', '体重を「未記録」に戻します。', '取り消す').then(ok => { if (!ok) return; const prev = ST.log_weight[t.date]; closeSheet(); act(A.weightCancel(t.date)).then(() => toastAction('体重の記録を取り消しました', '元に戻す', () => act(store.set('log_weight', t.date, prev)))); }); };
 }
 function openWaterSheet(t) {
   const s = openSheet('<h3>水</h3><div class="date" style="margin:0 0 10px"><span id="waterTxt">' + (t.waterMl / 1000).toFixed(2) + ' / ' + (t.waterGoalMl / 1000) + ' L</span></div><div class="btns"><button class="b-yel" data-w="250">+250ml</button><button class="b-yel" data-w="500">+500ml</button><button class="b-ghost" data-w="1000">+1L</button><button class="b-ghost" data-w="-250">−250</button></div><button class="b b-sub" style="width:100%;margin-top:10px" id="wClose">閉じる</button>');
@@ -1014,7 +1093,8 @@ function openWaterSheet(t) {
   $('#wClose', s).onclick = () => { closeSheet(); render(); };
 }
 function openSuppSheet(t, st) {
-  const s = openSheet('<h3>' + esc(st.title) + '</h3><div class="list">' + st.items.map(it => '<div class="it"><span>' + esc(it.name) + (it.dose ? ' <span class="mute small">' + esc(it.dose) + '</span>' : ' <span class="mute small">量はコーチ確認中</span>') + '</span><button class="chk' + (it.done ? ' on' : '') + '" data-sid="' + it.id + '">' + (it.done ? '✓' : '') + '</button></div>').join('') + '</div><div class="btns" style="margin-top:12px"><button class="b-main" id="suppAll">全部飲んだ</button><button class="b-sub" id="suppClose">閉じる</button></div>');
+  const s = openSheet('<h3>' + esc(st.title) + '</h3><div class="list">' + st.items.map(it => '<div class="it"><span>' + esc(it.name) + (it.dose ? ' <span class="mute small">' + esc(it.dose) + '</span>' : ' <span class="mute small">量はコーチ確認中</span>') + '</span><button class="chk' + (it.done ? ' on' : '') + '" data-sid="' + it.id + '">' + (it.done ? '✓' : '') + '</button></div>').join('') + '</div><div class="btns" style="margin-top:12px"><button class="b-main" id="suppAll">全部飲んだ</button><button class="b-sub" id="suppClose">閉じる</button></div><button class="b small" style="width:100%;margin-top:8px" id="suppNA">今日はなし（理由を選ぶ）</button>');
+  $('#suppNA', s).onclick = () => { closeSheet(); askReason('supp', st.title + ' 今日はなし').then(r => { if (r) act(A.suppNA(t.date, st.timing, r.reason, r.reasonText), '記録しました'); }); };
   $$('[data-sid]', s).forEach(b => { b.onclick = () => { const it = st.items.find(x => x.id === Number(b.dataset.sid)); it.done = !it.done; b.classList.toggle('on', it.done); b.textContent = it.done ? '✓' : ''; A.toggleSupp(t.date, it.id, it.done).catch(fail); }; });
   $('#suppAll', s).onclick = () => { closeSheet(); act(A.toggleSuppGroup(t.date, st.timing, true)); };
   $('#suppClose', s).onclick = () => { closeSheet(); render(); };
@@ -1089,7 +1169,7 @@ function bindMealSheet(s, d, m, date, mealNo) {
     const hit = m.items.find(i => !i.deleted && i.foodId === ni.foodId);
     setPending({ msg: hit ? itemShort(hit) + ' → ' + itemShort(ni) + ' に置き換え' : itemShort(ni) + ' を追加', run: () => A.mealApply(date, mealNo, [ni], 'replace') }); }; });
   $('[data-half]', s).onclick = () => setPending({ msg: 'プランの品目をすべて半分の量に置き換え', run: () => A.mealHalf(date, mealNo).then(() => '半分の量に置き換え') });
-  $('[data-skip]', s).onclick = () => setPending({ msg: mealNo + '食目を「食べなかった」として記録', run: () => A.mealSkip(date, mealNo).then(() => 'スキップとして記録') });
+  $('[data-skip]', s).onclick = () => askReason('meal', mealNo + '食目をスキップ', '理由を 1 つ選ぶ').then(r => { if (!r) return; setPending({ msg: mealNo + '食目を「食べなかった（' + (r.reasonText || r.reason) + '）」として記録', run: () => A.mealSkip(date, mealNo, r.reason, r.reasonText).then(() => 'スキップとして記録') }); });
   const po = $('#pendOk', s); if (po) po.onclick = () => { const pend = UI.sheetMeal.pending; UI.sheetMeal.pending = null; act(pend.run()).then(msg => undoToast((msg || pend.msg) + 'しました')); };
   const pn = $('#pendNo', s); if (pn) pn.onclick = () => { UI.sheetMeal.pending = null; openMealSheet(mealNo, true); };
   const free = $('#freeTxt', s), fb = $('#freeBtn', s);
@@ -1254,14 +1334,15 @@ function renderSummary() {
   const d = summaryModel(UI.summaryWeek), a = d.adherence; if (!UI.summaryWeek) UI.summaryWeek = d.weekNo;
   const wDelta = d.todayWeight != null && d.startWeight != null ? r1(d.todayWeight - d.startWeight) : null;
   let h = '<h1>' + (d.weekNo === d.currentWeek ? '今週' : 'Week ' + d.weekNo) + '</h1><p class="date"><button class="nav" id="wkPrev" aria-label="前の週">‹</button><span>Week <b>' + d.weekNo + '</b> ・ <span style="font-size:22px">' + md(d.range.start) + '–' + md(d.range.end) + '</span></span><button class="nav" id="wkNext" aria-label="次の週">›</button></p>';
-  h += '<div class="stat"><div><div class="n">' + (d.todayWeight != null ? disp(d.todayWeight) : '—') + '<span> ' + unit() + '</span></div><div class="l">今朝' + (wDelta != null ? ' ・ 開始から ' + (wDelta > 0 ? '+' : '') + disp(wDelta) : '') + '</div></div>' +
+  h += '<div class="stat"><div><div class="n">' + (d.todayWeight != null ? disp(d.todayWeight) : '—') + '<span> ' + unit() + '</span></div><div class="l">今朝' + (wDelta != null ? ' ・ 開始から ' + (wDelta > 0 ? '+' : '') + disp(wDelta) : '') + ' ・ 体重 ' + d.weightDays.measured + '/' + d.weightDays.total + ' 日 測定' + '</div></div>' +
     '<div><div class="n">' + a.workouts.done + '<span> / ' + a.workouts.planned + '</span></div><div class="l">筋トレ ・ ウォームアップ ' + a.warmup.done + '/' + a.warmup.planned + '</div></div>' +
     '<div><div class="n">' + a.meals.onPlan + '<span> / ' + a.meals.planned + '</span></div><div class="l">食事 プラン通り' + (a.meals.subs ? '（差替え ' + a.meals.subs + '）' : '') + '</div></div>' +
     '<div><div class="n">' + a.cardio.done + '<span> / ' + a.cardio.planned + '</span></div><div class="l">有酸素 ・ サプリ ' + a.supplements.pct + '% ・ 水 ' + a.water.ok + '/' + a.water.days + '</div></div></div>';
   h += '<div class="spark"><div class="h"><span>日別の合計と遵守</span></div><div style="overflow-x:auto"><table class="hist"><tr><th>日</th><th>kcal</th><th>食事</th><th>ウォームアップ</th><th>筋トレ</th><th>有酸素</th><th>水</th><th>サプリ</th><th>遅れ</th></tr>' +
     (d.days.length ? d.days.map(x => '<tr><td>' + md(x.date) + ' Day' + x.dayNo + '</td><td>' + fmtN(x.kcal) + '<span class="mute">/' + fmtN(x.planKcal) + '</span></td><td class="' + (x.mealsOk === x.mealsN ? 'ok' : 'ng') + '">' + x.mealsOk + '/' + x.mealsN + '</td><td class="' + (x.warmup ? 'ok' : 'ng') + '">' + (x.warmup ? '✓' : '—') + '</td><td class="' + (x.workout === null ? 'ng' : x.workout ? 'ok' : 'ng') + '">' + (x.workout === null ? '休' : x.workout ? '✓' : '—') + '</td><td class="' + (x.cardio ? 'ok' : 'ng') + '">' + (x.cardio ? '✓' : '—') + '</td><td class="' + (x.water ? 'ok' : 'ng') + '">' + (x.water ? '✓' : '—') + '</td><td>' + x.supps + '%</td><td style="color:' + (x.times.some(tm => tm.late) ? 'var(--yellow)' : 'var(--done)') + '">' + x.times.filter(tm => tm.late).length + '</td></tr>').join('') : '<tr><td colspan="9" class="ng">まだ記録なし</td></tr>') + '</table></div>' +
     (d.days.length ? '<details style="margin-top:8px"><summary class="mute small" style="cursor:pointer">予定と実績の時刻（日別）</summary><div style="overflow-x:auto"><table class="hist"><tr><th>日</th><th>項目</th><th>予定</th><th>実績</th></tr>' + d.days.flatMap(x => x.times.map(tm => '<tr><td>' + md(x.date) + '</td><td>' + esc(tm.title) + '</td><td>' + esc(tm.planned) + '</td><td class="' + (tm.logged && !tm.late ? 'ok' : 'ng') + '" style="color:' + (tm.late ? 'var(--yellow)' : '') + '">' + esc(tm.logged || '—') + '</td></tr>')).join('') + '</table></div></details>' : '') + '</div>';
-  h += '<div class="spark"><div class="h"><span>体重（30日 ・ 点線は7日平均）</span></div>' + spark(d.weights.slice(-30), d.weightsMa7.slice(-30)) + '</div>';
+  h += '<div class="spark"><div class="h"><span>体重（30日 ・ 点線は7日平均 ・ 欠測日は線をつながない）</span></div>' + spark(d.weights.slice(-30), d.weightsMa7.slice(-30)) + '</div>';
+  h += '<div class="card" id="missedBlock"><div class="ttl small mute">できなかった項目とその理由</div>' + (d.missed.length ? '<div class="list">' + d.missed.map(m => '<div class="it"><span><span class="num mute">' + md(m.date) + '</span> ' + esc(m.item) + '</span><span class="m">' + esc(m.reason) + '</span></div>').join('') + '</div>' : '<div class="mute small" style="margin-top:6px">なし</div>') + '</div>';
   h += '<div class="spark"><div class="h"><span>トップセット重量（種目別）</span></div>' + (d.topSets.length ? d.topSets.map(t => { const pts = t.points, last = pts[pts.length - 1], prev = pts.length > 1 ? pts[pts.length - 2] : null; return '<div class="r' + (prev && last.value > prev.value ? ' up' : '') + '"><span>' + esc(t.name) + '</span><span>' + (prev ? disp(prev.value) + ' → ' : '') + disp(last.value) + ' ' + unit() + ' × ' + last.reps + '</span></div>'; }).join('') : '<div class="r mute"><span>まだ記録なし</span><span>—</span></div>') + '</div>';
   h += '<div class="card"><div class="ttl" style="margin-bottom:8px">コーチに送る</div><div class="report" id="repText"></div><label class="opt"><input type="checkbox" id="optMsgr"> フォーム動画は Messenger で送った（sent via Messenger）</label><div class="btns" style="margin-top:10px"><button class="b-yel" id="copyRep">レポートをコピー</button><button class="b-sub" id="addMedia"' + (CAP.assets ? '' : ' hidden') + '>体の写真を追加</button></div>' +
     (d.media.length ? '<div class="gallery">' + d.media.map(m => { const src = m.url || ('/_blob/' + m.assetId); return '<a class="thumb" href="' + esc(src) + '" target="_blank" rel="noopener">' + (m.type === 'video' ? '<video src="' + esc(src) + '" muted playsinline preload="metadata"></video>' : '<img src="' + esc(src) + '" loading="lazy" alt="' + esc(m.category) + '">') + '<div class="cap">' + esc(m.date.slice(5)) + ' ' + esc(m.category) + (m.type === 'video' ? ' ▶' : '') + '</div></a>'; }).join('') + '</div>' : '') + '</div>';
@@ -1276,11 +1357,15 @@ function renderSummary() {
   $('#copyRep').onclick = () => { const txt = $('#repText').textContent; (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(() => toast('コピーしました')).catch(() => { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); toast('コピーしました'); } catch (e) { toast('長押しで選択してコピーしてください', true); } ta.remove(); }); };
   $('#csvBtn').onclick = async () => { try { await CAP.downloads.save({ filename: 'training-log-' + todayYmd() + '.csv', data: '﻿' + buildCsv() }); toast('保存しました'); } catch (e) { if (e && e.code !== 'declined') toast('書き出し失敗: ' + (e.code || e.message), true); } };
 }
+/** 体重スパークライン。欠測日は線でつながず点を飛ばす（隣り合う日だけ線で結ぶ）。s2 は 7 日平均（同じ規則） */
 function spark(s1, s2) {
   if (!s1.length) return '<div class="mute small">データなし</div>';
   const W = 300, H = 80, ys = s1.concat(s2 || []).map(p => p.value); let mn = Math.min(...ys), mx = Math.max(...ys); if (mx === mn) { mx += 0.5; mn -= 0.5; }
-  const n = s1.length, X = i => n === 1 ? W / 2 : W * i / (n - 1), Y = v => 6 + (H - 12) * (1 - (v - mn) / (mx - mn)), pts = s => s.map((p, i) => X(i).toFixed(1) + ',' + Y(p.value).toFixed(1)).join(' ');
-  return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-label="体重の推移">' + (s2 && s2.length ? '<polyline fill="none" stroke="#6FCF8A" stroke-width="1.5" stroke-dasharray="3 3" points="' + pts(s2) + '"/>' : '') + '<polyline fill="none" stroke="#F2C300" stroke-width="2" points="' + pts(s1) + '"/><circle cx="' + X(n - 1).toFixed(1) + '" cy="' + Y(s1[n - 1].value).toFixed(1) + '" r="3" fill="#F2C300"/></svg><div class="r mute" style="font-size:12px"><span>' + esc(s1[0].date.slice(5)) + ' ' + disp(s1[0].value) + '</span><span>' + esc(s1[n - 1].date.slice(5)) + ' ' + disp(s1[n - 1].value) + ' ' + unit() + '</span></div>';
+  const d0 = s1[0].date, span = Math.max(1, diffDays(d0, s1[s1.length - 1].date));
+  const X = date => span === 0 ? W / 2 : W * diffDays(d0, date) / span, Y = v => 6 + (H - 12) * (1 - (v - mn) / (mx - mn));
+  const segs = series => { const out = []; let cur = []; series.forEach((p, i) => { if (i > 0 && diffDays(series[i - 1].date, p.date) !== 1) { if (cur.length) out.push(cur); cur = []; } cur.push(p); }); if (cur.length) out.push(cur); return out; };
+  const draw = (series, cls, stroke, dash) => segs(series).map(seg => seg.length === 1 ? '<circle class="' + cls + '" data-date="' + seg[0].date + '" data-v="' + seg[0].value + '" cx="' + X(seg[0].date).toFixed(1) + '" cy="' + Y(seg[0].value).toFixed(1) + '" r="2.5" fill="' + stroke + '"/>' : '<polyline class="' + cls + '" fill="none" stroke="' + stroke + '" stroke-width="' + (dash ? 1.5 : 2) + '"' + (dash ? ' stroke-dasharray="3 3"' : '') + ' points="' + seg.map(p => X(p.date).toFixed(1) + ',' + Y(p.value).toFixed(1)).join(' ') + '"/>').join('');
+  return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-label="体重の推移">' + (s2 && s2.length ? draw(s2, 'ma', '#6FCF8A', true) : '') + draw(s1, 'w', '#F2C300', false) + s1.map(p => '<circle class="pt" data-date="' + p.date + '" data-v="' + p.value + '" cx="' + X(p.date).toFixed(1) + '" cy="' + Y(p.value).toFixed(1) + '" r="2.5" fill="#F2C300"/>').join('') + (s2 || []).map(p => '<circle class="mapt" data-date="' + p.date + '" data-v="' + p.value + '" cx="' + X(p.date).toFixed(1) + '" cy="' + Y(p.value).toFixed(1) + '" r="1.5" fill="#6FCF8A"/>').join('') + '</svg><div class="r mute" style="font-size:12px"><span>' + esc(s1[0].date.slice(5)) + ' ' + disp(s1[0].value) + '</span><span>' + esc(s1[s1.length - 1].date.slice(5)) + ' ' + disp(s1[s1.length - 1].value) + ' ' + unit() + '</span></div>';
 }
 
 /* =====================================================================

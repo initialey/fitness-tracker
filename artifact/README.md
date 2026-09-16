@@ -33,14 +33,14 @@
 | `plan_supplements` | id | name, dose(空欄), timing, order, active |
 | `plan_routine` | id | name, timing, order, active, isWater |
 | `foods` | foodId | nameJa, nameEn, per(100g/1pc/1scoop), kcal, p, f, c, source(plan/user/ai), note |
-| `log_weight` | YYYY-MM-DD | loggedAt(ISO 8601), time, weightKg, bodyFatPct |
+| `log_weight` | YYYY-MM-DD | loggedAt(ISO 8601), time, weightKg, bodyFatPct ／ 測れなかった日は {skipped:true, reason, reasonText, loggedAt} |
 | `log_workout` | YYYY-MM-DD | sets{ "exId_setNo": {exerciseId, setNo, setType, weightKg, reps, at} }, meta{ exId: {note, rpe, subName} }, **warmup{sets{id:n}, startedAt(ms), done(HH:mm), minutes, skipped, skipReason}**, finished(HH:mm) |
 | `log_cardio` | YYYY-MM-DD | entries[{type, minutes, note, at}] |
 | `log_meals` | YYYY-MM-DD | meals{ mealNo: {status(plan/sub/skip: 品目から自動判定), variant(""/"alt"), items[{foodId, grams, kcal, p, f, c, origin(plan/add), eaten, deleted(ソフト削除・シートを閉じると確定), planGrams, choiceOf}]} } |
-| `log_supplements` | YYYY-MM-DD | items{ id: {done, time} } |
-| `log_routine` | YYYY-MM-DD | items{ id: {done, time} }、水は {done, value(ml)} |
+| `log_supplements` | YYYY-MM-DD | items{ id: {done, loggedAt} }、今日はなし: {done:false, na:true, reason, reasonText, loggedAt} |
+| `log_routine` | YYYY-MM-DD | items{ id: {done, loggedAt} }、水は {done, value(ml), loggedAt}、今日はなし: {na, reason} |
 | `log_media` | id | date, type(photo/video), category(body/form/meal), assetId, url, exerciseId, note |
-| `log_daily` | YYYY-MM-DD | dayNo(手動上書き), isRestOverride, comment, warmupSkipped{reason, at} |
+| `log_daily` | YYYY-MM-DD | dayNo(手動上書き), isRestOverride, comment, warmupSkipped{reason, at}, workoutMissed{reason, reasonText, shift, loggedAt}, cardioMissed{reason, reasonText, loggedAt} |
 
 重量は常に kg で保存。表示時のみ lb 換算（1 lb = 0.45359237 kg、小数 1 桁）。
 初回起動時に `plan_days` が空、または `settings.seedVersion` が `SEED_VERSION` より古ければ、`SEED` 定数（spec 第 5 章、ホームジム代替入り、サプリ量は空欄）で `plan_*` と `foods`(source=plan) を投入し直す。ログは触らない。プランを変えたら `SEED_VERSION` を上げて再公開する。
@@ -73,6 +73,13 @@
 ### 食事の 4 状態
 未記録（灰○） / プラン通り（緑✓） / 変更あり（黄✓＋ラベル） / スキップ（赤−＋ラベル）。状態は記録品目から `deriveStatus` で導く。
 シートの「記録を取り消す」（確認あり）と今日画面の ✓/− 再タップは記録を削除して未記録に戻し、「元に戻す」トーストで復元できる。「プランの内容に戻す」は今日の変更を破棄してプラン通りにする。
+
+### できなかった日の扱い
+- 体重: シートの「今日は測れなかった」→ 理由（体重計がない／外泊・旅行／忘れた／体調不良／その他）。行は灰色「−」＋「測れなかった（理由）」、「いま」は次へ進む。あとで数値を保存すると解除。「記録を取り消す」で未記録
+- 食事スキップは理由（外食／時間なし／食欲なし／体調不良／その他）付き
+- サプリ・ルーティン: 行の ○ を長押し、またはサプリシートの「今日はなし」→ 理由（切れていた／持っていない／忘れた／体調不良）
+- 筋トレ・有酸素: 行の ○ → 「今日はできなかった」→ 理由（仕事／体調不良／旅行／その他）。筋トレは「Day をずらす（明日同じ Day をやり直す）／そのまま進む」を選び log_daily に保存。ずらした分だけ以降の Day 判定が繰り下がる
+- 週まとめ: 体重グラフは隣り合う日だけ線で結び欠測日を飛ばす。7 日平均は暦 7 日窓の実測のみ。「体重 N/M 日 測定」、「できなかった項目とその理由」ブロック。レポートは `Weight: … (5/7 days measured, skipped: travel×2)` と Notes に自動集計。CSV に skipped / reason 列
 
 ### ダイアログ
 claude.ai のアーティファクトは sandbox iframe のため `confirm()` / `prompt()` は常に false / null を返す。確認・入力・時刻はすべてページ内ダイアログ（`askConfirm` / `askText` / `askTime`）で行う。
