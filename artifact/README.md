@@ -27,15 +27,15 @@
 |---|---|---|
 | `settings` | `main` | startDate, unit(kg/lb), tz, waterGoalMl, restMainSec(150), restTopSec, restOtherSec(90), incDbKg(1), incBarKg(2), weeklyGainPct(5), timerMorningMin, timerAfterMealMin, riceBasis("raw"/"cooked"), workoutMin, warmupMin, cardioLabel, times{weight,morning,meal1..5,after_meal,warmup,workout,cardio,night}, seedVersion |
 | `plan_days` | dayNo | name, isRest, cardioRequired, notes |
-| `plan_exercises` | id | dayNo, order, nameJa, nameEn, isPreexhaust, supersetGroup("SS"), pair[2 動作名]（スーパーセット: 各セットを 1-1/1-2 に展開、1-1 の後は休憩なし）, progressive, setScheme（例 `WU10-12,TOP6-8,BO10-12` / `MAIN8,MAIN10,MAIN12` / `MAIN10-15x3,DROP*`。`*` = 限界まで）, howTo, videoQuery, active, **sets[]**（展開済み。move/moveName/pairNo） |
+| `plan_exercises` | id | dayNo, order, nameJa, nameEn, isPreexhaust, supersetGroup("SS"), pair[2 動作名]（スーパーセット: 各セットを 1-1/1-2 に展開、1-1 の後は休憩なし）, progressive（セットごとに少しずつ重くする、+5% 提案）, accessory("abs"/"calves": 最終種目のあとの枠、order 99), setScheme（例 `WU10-12,TOP6-8,BO10-12` / `MAIN8-12x3` / `MAIN10-15x3,DROP*`。`*` = 限界まで）, howTo, videoQuery, active, **sets[]**（展開済み。move/moveName/pairNo） |
 | `plan_warmup` | id | name, nameEn, anim(swing/alt/cross/circle/hips/toe), reps, targetSets(3), minSets(2), steps[3]（コーチ指定 6 種、毎回必須） |
 | `plan_meals` | mealNo | label, note, items[{foodId, grams, label?, short?, choices?}], alt?{label, items}（4食目の代替案）。foodId `rice` は settings.riceBasis で rice_raw / rice_cooked に解決 |
-| `plan_supplements` | id | name, dose, timing(after_meal/night), order, active, pending（量がコーチ確認中なら true） |
+| `plan_supplements` | id | name, dose, timing(after_meal/night/pre), order, active, pending（量がコーチ確認中なら true。シートでタップ入力すると解除） |
 | `plan_routine` | id | name, timing(morning/after_meal/anytime), order, active, isWater（水は log_daily.waterMl に保存） |
 | `foods` | foodId | nameJa, nameEn, per(100g/1pc/1scoop), kcal, p, f, c, source(plan/user/ai/ai_photo), note |
 | `log_weight` | YYYY-MM-DD | value, unit("kg"), skipped(bool), skipReason, loggedAt(ISO 8601), bodyFatPct（互換: weightKg, time, reason, reasonText） |
-| `log_workout` | YYYY-MM-DD | sets{ "exId_setNo": {exerciseId, setNo, setType(WU/MAIN/FINAL/PRE/TOP/BO/DROP), weightKg, reps, loggedAt} }, meta{ exId: {note, rpe, subName} }, **warmup{completed, minutes, sets{id:n}, startedAt(ms), done(HH:mm), loggedAt, skipped, skipReason}**, absCalves{abs{done, loggedAt}, calves{done, loggedAt}, doneAt}（ウォームアップ直後の腹筋・カーフ）, finished(HH:mm) |
-| `log_cardio` | YYYY-MM-DD | entries[{type, minutes, note, at}] |
+| `log_workout` | YYYY-MM-DD | sets{ "exId_setNo": {exerciseId, setNo, setType(WU/MAIN/FINAL/PRE/TOP/BO/DROP), weightKg, reps, loggedAt} }, meta{ exId: {note, rpe, subName} }, **warmup{completed, minutes, sets{id:n}, startedAt(ms), done(HH:mm), loggedAt, skipped, skipReason}**, finished(HH:mm), finishedAt(ISO。完了画面の所要時間 = warmup.startedAtIso → finishedAt) |
+| `log_cardio` | YYYY-MM-DD | entries[{type(jog/incline/other。旧 walk/stairs も表示可), minutes, hr, note, at, loggedAt}] |
 | `log_meals` | YYYY-MM-DD | meals{ mealNo: {status(plan / substitute / skip / photo: 品目から自動判定して保存), items[{foodId, grams, kcal, p, f, c, origin(plan/add), eaten, deleted(ソフト削除・シートを閉じると確定), planGrams, estimated}], loggedAt, photoId, reason(スキップ理由), variant(""/"alt"), photo{assetId, confidence, note}, skip{reason, reasonText}} } |
 | `log_supplements` | YYYY-MM-DD | items{ id: {done, loggedAt} }、今日はなし: {done:false, na:true, reason, reasonText, loggedAt} |
 | `log_routine` | YYYY-MM-DD | items{ id: {done, loggedAt} }、水は {done, value(ml), loggedAt}、今日はなし: {na, reason} |
@@ -43,7 +43,7 @@
 | `log_daily` | YYYY-MM-DD | dayNo(手動上書き), dayName, notes, waterMl, waterLoggedAt（水タブ）, skippedItems[{item, itemJa, reason, reasonJa}]（できなかった項目の自動集計）, isRestOverride, comment, warmupSkipped{reason, at}, workoutMissed{reason, reasonText, shift, loggedAt}, cardioMissed{reason, reasonText, loggedAt} |
 
 重量は常に kg で保存。表示時のみ lb 換算（1 lb = 0.45359237 kg、小数 1 桁）。
-初回起動時に `plan_days` が空、または `settings.seedVersion` が `SEED_VERSION`（現在 6 = 全 7 日確定版・スーパーセット・腹筋/カーフ）より古ければ、`SEED` 定数（[training-log-spec.md](training-log-spec.md)）で `plan_*` と `foods`(source=plan) を投入し直す。ログは触らない。プランを変えたら `SEED_VERSION` を上げて再公開する。
+初回起動時に `plan_days` が空、または `settings.seedVersion` が `SEED_VERSION`（現在 7 = 統合版: 腹筋/カーフは最終種目のあと、休憩 180/120 秒、サプリ 8 種、3 食目サーモン置換）より古ければ、`SEED` 定数（[training-log-spec.md](training-log-spec.md)）で `plan_*` と `foods`(source=plan) を投入し直す。ログは触らない。プランを変えたら `SEED_VERSION` を上げて再公開する。
 
 ### 食事プラン（コーチ指定）
 1. 全卵4個(約200g)・卵白150g・ヒマラヤ塩1g
@@ -57,7 +57,7 @@
 
 ### 筋トレの決まり（コーチ回答）
 全セット 10〜12 回・限界 1 回手前（RIR 1）。最終セットはその日いちばん重かった重さの −30% で 16〜20 回（`suggestSets` が最重量 ×0.7 を提案）。休憩はメイン／最終 2:30、ウォームアップ後 1:30。前回 12 回できたら +1kg（ダンベル）/ +2kg（バーベル）、週 +5% 目安。腹筋は毎日（ルーティン id 4）。有酸素は 35〜40 分 Zone2。
-全 7 日確定版は [training-log-spec.md](training-log-spec.md)。スーパーセット（pair）は「1-1 → 1-2」を休憩なし、組が終わって休憩。ドロップセットは休憩なしで即開始。トレーニング日はウォームアップ直後に 腹筋・カーフ 画面（内容・回数はコーチ確認待ち、完了チェックだけ保存）。
+全 7 日確定版は [training-log-spec.md](training-log-spec.md)。スーパーセット（pair）は ① を 1 セット → 休憩なしで ② → 休憩。ドロップセットは休憩なしで即開始（図付き）。腹筋（Day 1・4・6）／カーフ（Day 2・5）は最終種目のあとの枠（accessory、コーチ確認中、自由入力）。最後の種目のあと「筋トレ完了」→ 完了画面（所要時間・やった内容・有酸素・コーチ報告テキスト `dayReport()`＋コピー）。
 
 ## 画面
 
@@ -100,15 +100,27 @@ claude.ai のアーティファクトは sandbox iframe のため `confirm()` / 
 
 ## テスト
 
-`npm run e2e:artifact` で mock / db（疑似ランタイム）両モードの 55 項目を実行し、結果を [TEST.md](TEST.md) に書き出す。
+`npm run e2e:artifact` で mock / db（疑似ランタイム）両モードの 54 項目を実行し、結果を [TEST.md](TEST.md) に書き出す。
 
 ## モックモード
 
 `claude.use("db")` が null（ローカルで開いた、権限なし）のときはメモリ上で動く。画面上部に「モックモード（保存されません）」と出る。
 `node test/artifact-e2e.js` がこのモードで主要フローを実走する。
 
+## コーチ未回答（UI の週タブに「コーチ確認中」として一覧表示）
+
+- [ ] 腹筋の種目・セット数・回数（今は「限界まで × 3」の枠、種目名は自由入力）
+- [ ] カーフ（スミス カーフレイズ）のセット数・回数（今は 10〜15 × 3 の枠）
+- [ ] フィッシュオイル・亜鉛・ベルベリンの用量とタイミング
+- [ ] クレアチン 7g を飲むタイミング
+- [ ] プレワークアウト（Nitric Oxide 系）の銘柄・カフェイン量
+- [ ] リンゴ酢の銘柄と量（大さじ何杯か）
+- [ ] Zone 2 の目標心拍数
+- [ ] 白米の「生／炊飯後」の基準（設定で切替可、既定は炊飯後）
+
 ## 既知の TODO / Phase 2 の残り
 
+- [ ] db パスは指示の `plan/sets/{exerciseId}/{setNo}` や `log/workout/{date}/{exId}_{setNo}` ではなく、偶数セグメント制約と 5,000 ドキュメント上限のため「コレクション/日付」の 1 日 1 ドキュメント構造にしている
 - [ ] `user` capability が使えるようになったら `data/users/<uid>/` へ移行（現在は rules でオーナー専用）
 - [ ] db が 5,000 ドキュメントに近づいたときの古いログの整理（CSV 書き出し→削除）
 - [ ] プラン編集 UI（現在は SEED を直して `SEED_VERSION` を上げ再公開）
