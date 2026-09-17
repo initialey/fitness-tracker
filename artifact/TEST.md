@@ -5,7 +5,7 @@
 - **mock**: `window.claude` なし → メモリ上のモックモード
 - **db**: `claude.use("db"/"assets"/"sample"/"downloads")` を疑似ランタイムで注入（db は Node 側に永続し、再読み込み・二重オープンを再現。実際の claude.ai ランタイムではなく API 形状を模したもの）
 
-合計 58 項目 ／ NG 0 件 ／ ページエラー mock 0 件・db 0 件
+合計 62 項目 ／ NG 0 件 ／ ページエラー mock 0 件・db 0 件
 
 ## 共通
 
@@ -17,7 +17,7 @@
 | db スキーマ: log_weight{value,unit,skipped,skipReason,loggedAt} / warmup{completed,minutes,loggedAt} / meals{status: plan|substitute|skip|photo, photoId, reason} / log_daily{dayNo,dayName,notes,skippedItems[]} | ✓ | ✓ | db のみ / statuses=plan,plan,skip,substitute / 9/16 skippedItems=meal 3 |
 | 英略語（W/MAIN/TOP/BO/DROP/PRE/FINAL）がUIに出ない | ✓ | ✓ |  |
 | 数だけの表示（7種、1種）がない | ✓ | ✓ |  |
-| 同日に2回開いても二重保存されない | ✓ | ✓ | db のみ / docs: {"log_workout":4,"plan_days":7,"plan_exercises":45,"plan_warmup":6,"plan_meals":5,"plan_supplements":8,"plan_routine":3,"foods":21,"settings":1,"log_weight":2,"log_daily":4,"log_routine":2,"log_meals":1,"log_supplements":2,"log_media":2,"log_cardio":1} |
+| 同日に2回開いても二重保存されない | ✓ | ✓ | db のみ / docs: {"log_workout":5,"plan_days":7,"plan_exercises":45,"plan_warmup":6,"plan_meals":5,"plan_supplements":8,"plan_routine":3,"foods":21,"settings":1,"log_weight":2,"log_daily":4,"log_routine":2,"log_meals":1,"log_supplements":2,"log_media":2,"log_cardio":1} |
 
 ## 今日画面
 
@@ -77,6 +77,10 @@
 | 遵守率にウォームアップ・筋トレ・有酸素・食事・サプリ・水が含まれる | ✓ | ✓ |  |
 | コーチ向けレポート生成→コピーが実データと一致 | ✓ | ✓ |  |
 | CSV エクスポート。downloads が null ならボタン非表示 | ✓ | ✓ | downloads null → 非表示 / training-log-2026-09-16.csv (24105 bytes) |
+| 「落ちた脂肪」の計算式: BMR(Mifflin-St Jeor)・脂肪1kg=1.1L・体積相当の直径・500mlボトル換算 | ✓ | ✓ | BMR=1636.5kcal（コーチ資料の「約1,690kcal」は計算し直すと1,636.5kcalが正しい値です）・2.3kg→2.5L・直径169.1mm・ボトル5本分 / BMR=1636.5kcal（コーチ資料の「約1,690kcal」は計算し直すと1,636.5kcalが正しい値です）・2.3kg→2.5L・直径169.1mm・ボトル5本分 |
+| TDEE内訳（BMR×活動レベル＋運動）と収支（摂取−TDEE）が仕様の式どおりに出る | ✓ | ✓ | db のみ（day 単位の状態が要る） / TDEE=2957.4kcal（運動+748.1kcal）・ 収支=-325.4kcal |
+| 「落ちた脂肪」ブロックの表示配線: fatModel() の値がそのまま塊のkg・ボトル本数・実測/予測グラフに使われる。定規スライダーの倍率が保存され、再読み込み後も保持される | ✓ | ✓ | db のみ / fatKg=0.6kg・ボトル1本分・較正スライダーの保存を確認 |
+| データ不足時のフォールバック: 体重0件→非表示メッセージ／食事3日未満→塊なしでグラフだけ／今週プラス→「今週は +Xkg」 | ✓ | ✓ | db のみ / 食事3日未満・累積プラスの2つのフォールバックを確認 |
 
 ## 欠測・できなかった
 
@@ -124,6 +128,7 @@
 | 18 | 写真ボタンに `capture="environment"` が付いていて、カメラに直行しギャラリーから選べない端末がある | capture 属性がカメラ限定になる | 両方の写真入力から `capture` を外し、ネイティブの選択肢（撮影 ／ ギャラリーから選ぶ）を両方出す |
 | 19 | `sample.limits().images` が無いという理由だけで「AIで推定」ボタン自体を隠していたため、実際には画像に対応している環境でも試せず「対応していません」と誤案内していた可能性 | limits() の事前申告だけで判断し、実際に呼んでいなかった | 「AIで推定」は常に表示し、実際に画像付きで呼んで結果で判断する。失敗（images_unavailable 等）した時だけ案内＋手入力に切替を出す |
 | 20 | 最終種目（例: Day2 カーフ）に到達した時点で、その種目の 1 セット目でも「筋トレ完了」ボタンになり、未記録のまま完了画面に飛べてしまう。種目が変わっても画面が最上部にスクロールされず、種目名や進捗が見切れる。「初回なので目安なし」のヒントがクイック選択後も残って前回値と誤解されうる | ボタンの判定が「最終種目かどうか」だけで、`e === ex`（今の種目を見ているだけ）で最終セットかどうかを見ていなかった。遷移時に scrollTo が無かった | 「筋トレ完了」は全種目・全セットが記録済みの時だけ出すよう判定を単純化。種目・セットが変わる遷移（前後の種目、セット完了、休憩明けの自動進行）すべてで最上部へスクロール。クイック重量を選んだらヒント文を「選んだ重さ」に差し替え |
+| 21 | 「落ちた脂肪」の追加で、既存の30日体重グラフと新しい実測/予測グラフの CSS クラスが衝突し点の数が二重にカウントされる。テストが seed した過去の体重/食事/設定（startDate）を後片付けせず、共有 DB を経由して他のテスト（Day 判定・週次レポートなど）まで壊す | 2つの `.spark` をページ全体セレクタで区別できていなかった。DB を直接 seed するテストに後片付けが無かった | 30日グラフに `#weightSpark30`、脂肪の実測/予測グラフに `#fatSpark` の id を付けて区別。DB を直接書き換えるテストはすべて try/finally で seed した日付を削除し settings を元に戻すようにした |
 
 ## 実行方法
 

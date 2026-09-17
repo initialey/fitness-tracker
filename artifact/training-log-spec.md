@@ -132,7 +132,22 @@ Day1 Push → Day2 Pull → Day3 休み（有酸素のみ） → Day4 Legs → D
 
 クレアチン 7g は朝の経口サプリには入れず「サプリ トレ前（クレアチンはタイミング確認中）」の行。タイマーは loggedAt からの時刻差。水 5L は水タブ。
 
-## 4. 画面（4 タブ: 今日・筋トレ・水・週）
+## 4. 落ちた脂肪（週タブの一番上）
+
+モチベーション維持が目的なので正確さより「見て分かる」ことを優先。今日画面には置かない。
+
+- BMR は Mifflin-St Jeor（`10×体重+6.25×身長-5×年齢±5`）。体重は直近の実測値（欠測日は繰り越し）、身長・年齢・性別・活動レベルは編集シートで設定（既定 170cm/31歳/男性/活動レベル1.35）
+- その日の消費 = BMR×活動レベル ＋ 運動（筋トレは所要時間×6 METs、有酸素は種目別 METs：傾斜歩き6.5・ジョグ8）。食事を記録していない日は収支の計算から除外（0扱いにしない）
+- 収支 = 摂取kcal − 消費kcal。開始日〜今日までの収支を積み上げ、`落ちた脂肪kg = -累積収支÷7200`
+- 脂肪 1kg ≈ 1.1L として体積から球相当の直径を出し、不定形の塊（黄色〜クリームのグラデーション＋粒状テクスチャ、SVG）を実物大（CSS の mm 単位）で描く。画面に収まらなければ縮小して「実寸の 1/N」と注記
+- クレジットカード（85.6mm）を実物に当てて合わせる較正スライダーを用意。倍率は設定に保存し、塊・比較対象・グラフすべてに同じ倍率を掛ける
+- 比較対象として 500ml ペットボトル（同縮尺）を並べ「約N本分」を表示
+- 実測体重（7日平均・欠測日はつながない）と、収支から計算した予測体重（点線・欠測日以外は連続）を同じグラフに重ねる。凡例「実測」「計算上の予測」
+- 実測と予測が直近7日間ズレ続けたら、実測の減り方から活動レベルを逆算して自動更新し「活動レベルを 1.35 → 1.28 に調整しました」と表示
+- 塊の下に「記録した食事と運動からの推定値です。実際の体重と異なることがあります」を常時表示
+- データ不足時: 体重の記録が無い→機能ごと非表示。食事の記録が3日未満→塊は出さずグラフだけ。累積がプラス（増加）→塊の代わりに「今週は +0.4kg」とだけ表示（責めない表現）
+
+## 5. 画面（4 タブ: 今日・筋トレ・水・週）
 
 1. **今日**: 「いま」カード（次にやること＋現在時刻）＋タイムライン。体重 → リンゴ酢 → 1食目 → 経口サプリ → サイリウム（15 分後）→ 2食目… → トレ前サプリ → ウォームアップ → 筋トレ（最初の 3 種目＋「ほか N種目」、全 N セット中 M セット完了。スーパーセットは 1 セットと数える）→ 腹筋 または カーフ → 有酸素 → 就寝前サプリ → 水合計。完了行はグレー地に薄字、✓ だけ緑。実績時刻は太字で右寄せ、その下に小さく「予定」。ウォームアップの所要は 3 時間超なら分を出さない。各行は全文表示、右端 ✓ でその場完了、行タップで詳細シート。記録には必ず実績時刻（loggedAt）を保存し、予定と 60 分以上ズレると黄色
 2. **筋トレ**: ウォームアップ 6 種（棒人間アニメ・3 ステップ・動画リンク・セット 0/2 カウンター、2 セットで完了）→ 1 画面 1 セット（「2セット目 ／ メイン」＋目的の一文、英略語なし）。前回値から提案（トップ 前回トップ・上限到達で +5%／ダンベル +1kg、バックオフ ×0.85、ドロップ 直前 ×0.7 と「30kg×8 →（休まず）→ 21kg×限界まで」の図、最終 最重量 ×0.7）。スーパーセットは ①→②→休憩。腹筋／カーフを終えると完了画面（所要時間・やった内容・有酸素入力・コーチ報告テキスト＋コピー）。未入力は「未記録」「自重×N」で 0kg×0 は出さない。休憩タイマーは閉じても続く
@@ -141,11 +156,11 @@ Day1 Push → Day2 Pull → Day3 休み（有酸素のみ） → Day4 Legs → D
 
 「できなかった」は体重・食事・サプリ・ルーティン・筋トレ（Day をずらす選択）・有酸素すべてに理由付きで記録し、週まとめとレポートに自動集計。
 
-## 5. データ（db、1 日 1 ドキュメント）
+## 6. データ（db、1 日 1 ドキュメント）
 
 | コレクション | 主なフィールド |
 |---|---|
-| `settings/main` | startDate, unit, riceBasis, restTopSec 180, restMainSec 120, restOtherSec 120, incDbKg 1, weeklyGainPct 5, times{…}, seedVersion |
+| `settings/main` | startDate, unit, riceBasis, restTopSec 180, restMainSec 120, restOtherSec 120, incDbKg 1, weeklyGainPct 5, times{…}, seedVersion, bioHeightCm, bioAge, bioSex, activityBase, rulerScale, activityAdjustedWeek, activityBasePrev（落ちた脂肪の計算・較正・自動補正用） |
 | `plan_days` / `plan_exercises` / `plan_warmup` / `plan_meals` / `plan_supplements` / `plan_routine` / `foods` | 上記マスタ（`SEED_VERSION` を上げると plan_* と plan 由来の foods を差し替え。ログは触らない）。`plan_exercises` は setScheme（`WU10-12,TOP6-8,BO10-12` / `MAIN8,MAIN10,MAIN12` / `MAIN10-15x3,DROP*`）, progressive, pair[2 動作], accessory("abs"/"calves") を持つ |
 | `log_weight/{date}` | value, unit "kg", skipped(bool), skipReason, loggedAt（互換: weightKg, reason） |
 | `log_workout/{date}` | sets{"exId_setNo": {exerciseId, setNo, setType, weightKg, reps, loggedAt}}（スーパーセットは 1-1/1-2 が別 setNo）, meta{exId: {note, rpe, subName}}, warmup{completed, minutes, sets, loggedAt, skipped, skipReason}, finished, finishedAt（完了画面はここから所要時間を出す） |
@@ -155,12 +170,12 @@ Day1 Push → Day2 Pull → Day3 休み（有酸素のみ） → Day4 Legs → D
 | `log_daily/{date}` | dayNo（手動上書き）, dayName, notes, waterMl, waterLoggedAt, skippedItems[{item, reason}], workoutMissed{reason, shift}, cardioMissed, warmupSkipped |
 | `log_media/{id}` | date, type, category(body/form/meal), assetId, mealNo, exerciseId |
 
-## 6. 運用
+## 7. 運用
 
 - 公開 capabilities: `db`（オーナーのみ読み書き）, `assets`, `sample`, `downloads`
 - db が無い環境（ローカルで開いた等）はモックモードで動き、保存されない
 - プラン変更は `SEED` を直して `SEED_VERSION` を上げ、同じファイルで再公開（URL は変わらない）
 - テスト: `npm run e2e:artifact`（mock / db 両モード、結果は TEST.md）
 
-## 7. コーチ確認中（UI の週タブに一覧、回答が来たら反映）
+## 8. コーチ確認中（UI の週タブに一覧、回答が来たら反映）
 腹筋の種目・セット数・回数 ／ カーフのセット数・回数 ／ フィッシュオイル・亜鉛・ベルベリンの用量とタイミング ／ クレアチン 7g のタイミング ／ プレワークアウトの銘柄・カフェイン量 ／ リンゴ酢の銘柄と量 ／ Zone 2 の目標心拍数 ／ 白米の「生／炊飯後」の基準

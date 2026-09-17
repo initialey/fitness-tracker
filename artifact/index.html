@@ -254,6 +254,17 @@ textarea.txt{min-height:60px}
 .spark .r{display:flex;justify-content:space-between;font:600 14px var(--num);padding:3px 0}
 .spark .r.up span:last-child{color:var(--done)}
 .spark .r.mute{color:var(--mute)}
+.fat-card{overflow:hidden}
+.fat-real{display:inline-block}
+.fat-row{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;overflow:visible}
+.fat-blob{display:inline-block;min-width:24px;min-height:24px}
+.fat-cmp{display:flex;flex-direction:column;align-items:center;text-align:center}
+.fat-num{font:700 20px var(--jp);margin-top:12px}
+.fat-num b{font:700 26px var(--num);color:var(--yellow)}
+.fat-gain{font:600 16px var(--jp);margin-top:6px;color:var(--mute)}
+.fat-ruler{margin-top:12px}
+.ruler-card{border:1.5px dashed var(--mute);border-radius:6px;background:rgba(255,255,255,.04)}
+
 .report{background:var(--card2);border-radius:10px;padding:12px;font:500 12px/1.6 ui-monospace,Menlo,monospace;color:var(--mute);white-space:pre-wrap;user-select:all}
 .opt{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--mute);margin:6px 0}
 .gallery{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}
@@ -347,7 +358,9 @@ const DEFAULT_SETTINGS = {
   warmupNote: '約5分 ・ 座ったままやらない ・ 痛みが出たら止める',
   // 朝: 体重 → リンゴ酢（食事の15分前）→ 1食目 → 経口サプリ → 15分 → サイリウム
   times: { weight: '06:40', morning: '06:45', meal1: '07:00', after_meal: '07:05', psyllium: '07:20', warmup: '08:30', workout: '08:35',
-    meal2: '10:30', meal3: '13:30', meal4: '16:30', meal5: '19:30', cardio: '21:00', night: '22:30' }
+    meal2: '10:30', meal3: '13:30', meal4: '16:30', meal5: '19:30', cardio: '21:00', night: '22:30' },
+  // 「落ちた脂肪」機能: BMR(Mifflin-St Jeor) の体格情報、活動レベル、実物大表示の較正倍率
+  bioHeightCm: 170, bioAge: 31, bioSex: 'male', activityBase: 1.35, rulerScale: 1, activityAdjustedWeek: 0, activityBasePrev: 0
 };
 const FOOD_ALIASES = {
   '米': 'rice', 'ご飯': 'rice', 'ごはん': 'rice', '白米': 'rice', 'rice': 'rice',
@@ -503,6 +516,7 @@ const r1 = n => Math.round(n * 10) / 10;
 const pad2 = n => ('0' + n).slice(-2);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtN = n => Math.round(n).toLocaleString('ja-JP');
+const disp2 = n => r1(n); // 脂肪kgの表示専用（lb 換算しない。常に kg）
 function ymdLocal(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
 function todayYmd() { return ymdLocal(new Date()); }
 function nowHm() { const d = new Date(); return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
@@ -852,6 +866,52 @@ function summaryModel(weekNo) {
     todayWeight: ST.log_weight[today] ? Number(ST.log_weight[today].weightKg) : null, startWeight: weights.length ? weights[0].value : null,
     media: Object.values(ST.log_media).filter(m => inRange(m.date)).sort((a, b) => b.date.localeCompare(a.date)), days, adherence: weekAdherence(range) };
 }
+/** 「落ちた脂肪」モデル: 開始日〜今日の収支を積み上げて推定体脂肪変化と予測体重を出す */
+function fatModel(weekRangeCur) {
+  const s = ST.settings, today = todayYmd();
+  const weightDates = Object.keys(ST.log_weight).filter(d => !ST.log_weight[d].skipped);
+  if (!weightDates.length) return { available: false, reason: 'no-weight' };
+  const start = s.startDate < today ? s.startDate : today;
+  const allDays = []; for (let d = start; d <= today; d = addDays(d, 1)) allDays.push(d);
+  const balances = allDays.map(dayCalorieBalance).filter(Boolean);
+  const mealDayCount = balances.length;
+  const startWeight = weightOnOrBefore(start) != null ? weightOnOrBefore(start) : (weightDates.sort()[0] != null ? Number(ST.log_weight[weightDates.sort()[0]].weightKg) : null);
+  const cumKcal = balances.reduce((a, b) => a + b.balance, 0);
+  const fatKg = r1(-cumKcal / 7200);
+  // 予測体重（毎日: 食事記録が無い日はその日の収支を0扱いせず、直前の累積のまま据え置く）
+  let cum = 0; const balByDate = {}; balances.forEach(b => { balByDate[b.date] = b.balance; });
+  const predicted = allDays.map(d => { if (balByDate[d] != null) cum += balByDate[d]; return { date: d, value: r1((startWeight != null ? startWeight : 0) - cum / 7200) }; });
+  // 今週だけの収支（累積が増加中のときのフォールバック表示に使う）
+  const wr = weekRangeCur || weekRange(s.startDate, calcWeekNo(s.startDate, today));
+  const weekKcal = balances.filter(b => b.date >= wr.start && b.date <= wr.end).reduce((a, b) => a + b.balance, 0);
+  const weekFatKg = r1(-weekKcal / 7200);
+  return { available: true, mealDayCount, fatKg, cumKcal: r1(cumKcal), predicted, startWeight, balances, weekFatKg, netGain: fatKg < 0 };
+}
+/** 1kg ≈ 1.1L として体積・球相当の直径(mm)を出す。実際の見た目はでこぼこの塊だが、サイズの基準としては球で計算 */
+function fatVisual(fatKg) {
+  const volumeL = Math.abs(fatKg) * 1.1, volumeMm3 = volumeL * 1e6;
+  const diameterMm = 2 * Math.cbrt(3 * volumeMm3 / (4 * Math.PI));
+  return { volumeL: r1(volumeL), diameterMm: r1(diameterMm), bottles: Math.max(1, Math.round(volumeL / 0.5)) };
+}
+/** 実測と予測が7日以上ズレ続けたら activityBase を実測の減り方から逆算して提案する（純粋関数。保存はしない） */
+function suggestActivityBase(fm) {
+  if (!fm.available || fm.balances.length < 10) return null;
+  const s = ST.settings, actual = Object.keys(ST.log_weight).filter(d => !ST.log_weight[d].skipped).sort().map(d => ({ date: d, value: Number(ST.log_weight[d].weightKg) }));
+  if (actual.length < 8) return null;
+  const actualMa = movingAvgByDate(actual, 7), maByDate = {}; actualMa.forEach(p => { maByDate[p.date] = p.value; });
+  const predByDate = {}; fm.predicted.forEach(p => { predByDate[p.date] = p.value; });
+  const both = actualMa.filter(p => predByDate[p.date] != null).slice(-7);
+  if (both.length < 7) return null;
+  const devs = both.map(p => r1(predByDate[p.date] - p.value));
+  const allPos = devs.every(v => v > 0.3), allNeg = devs.every(v => v < -0.3);
+  if (!allPos && !allNeg) return null;
+  const last7 = fm.balances.slice(-7); if (last7.length < 7) return null;
+  const avgIntake = last7.reduce((a, b) => a + b.intake, 0) / 7, avgEx = last7.reduce((a, b) => a + b.exVal, 0) / 7, avgBmr = last7.reduce((a, b) => a + b.bmrVal, 0) / 7;
+  const w0 = maByDate[both[0].date], w1 = maByDate[both[both.length - 1].date], observedDailyDeficit = (w0 - w1) * 7200 / 6;
+  const newBase = r1(Math.min(2.2, Math.max(1.0, (avgIntake - avgEx - observedDailyDeficit) / avgBmr)) * 100) / 100;
+  if (Math.abs(newBase - (Number(s.activityBase) || 1.35)) < 0.02) return null;
+  return { newBase, oldBase: Number(s.activityBase) || 1.35 };
+}
 /** 日別の履歴 1 行 */
 function dayHistory(d) {
   const ms = mealsModel(d), meals = ms.meals, wo = ST.log_workout[d] || {}, rest = isRestDay(d);
@@ -861,6 +921,25 @@ function dayHistory(d) {
 }
 /** 7 日移動平均: 暦の 7 日窓に入る「実測がある日だけ」の平均（欠測日は除く） */
 function movingAvgByDate(vals, days) { return vals.map(v => { const from = addDays(v.date, -(days - 1)); const inWin = vals.filter(x => x.date >= from && x.date <= v.date); return { date: v.date, value: r1(inWin.reduce((a, x) => a + x.value, 0) / inWin.length) }; }); }
+/** BMR（Mifflin-St Jeor）。sex は 'male' | 'female' */
+function bmr(weightKg, heightCm, age, sex) { const b = 10 * Number(weightKg) + 6.25 * Number(heightCm) - 5 * Number(age); return r1(sex === 'female' ? b - 161 : b + 5); }
+/** 指定日以前でいちばん新しい実測体重（欠測日は直近の実測値を使う） */
+function weightOnOrBefore(date) { const ds = Object.keys(ST.log_weight).filter(d => d <= date && !ST.log_weight[d].skipped).sort(); return ds.length ? Number(ST.log_weight[ds[ds.length - 1]].weightKg) : null; }
+/** 運動による追加消費（kcal）: 筋トレ所要時間×6 METs、有酸素は種目ごとの METs（傾斜歩き 6.5 / ジョグ 8 / その他 5、目安） */
+function exerciseKcalFor(date, weightKg) {
+  let kcal = 0; const wo = ST.log_workout[date];
+  if (wo && wo.finished) { const w = wo.warmup || {}, start = w.startedAtIso || '', end = wo.finishedAt || ''; const min = start && end ? (new Date(end) - new Date(start)) / 60000 : 0; if (min > 0 && min <= 240) kcal += 6 * weightKg * (min / 60); }
+  ((ST.log_cardio[date] || {}).entries || []).forEach(c => { const mets = c.type === 'jog' ? 8 : c.type === 'incline' ? 6.5 : 5; kcal += mets * weightKg * (Number(c.minutes) || 0) / 60; });
+  return r1(kcal);
+}
+/** その日の消費・摂取・収支。体重の記録が一度もない、またはその日食事を1件も記録していなければ null（ゼロ扱いにしない） */
+function dayCalorieBalance(date) {
+  const w = weightOnOrBefore(date); if (w == null) return null;
+  const ms = mealsModel(date); if (!ms.meals.some(m => m.logged)) return null;
+  const s = ST.settings, bmrVal = bmr(w, s.bioHeightCm, s.bioAge, s.bioSex), exVal = exerciseKcalFor(date, w);
+  const tdee = r1(bmrVal * (Number(s.activityBase) || 1.35) + exVal), intake = r1(ms.total.kcal);
+  return { date, weightKg: w, bmrVal, exVal, intake, tdee, balance: r1(intake - tdee) };
+}
 /** 期間内の「できなかった項目とその理由」（週まとめのブロックとレポートの Notes 用） */
 function missedItems(range) {
   const today = todayYmd(), out = [];
@@ -1013,7 +1092,8 @@ const A = {
   async saveCardio(date, type, minutes, note, hr) { if (!minutes || isNaN(Number(minutes))) throw new Error('分数を入力してください'); const doc = Object.assign({ date, entries: [] }, ST.log_cardio[date]); const at = isoNow(); await store.set('log_cardio', date, { date, entries: doc.entries.concat([{ type, minutes: Number(minutes), note: note || '', hr: hr ? Number(hr) : '', at: fmtHm(at), loggedAt: at }]) }); },
   async addMedia(m) { const id = (m.date + '_' + Date.now().toString(36)).replace(/[^A-Za-z0-9_\-.~:@+]/g, '_'); await store.set('log_media', id, Object.assign({ id, loggedAt: isoNow() }, m)); return id; },
   async setSuppDose(id, dose) { const cur = ST.plan_supplements[String(id)]; if (!cur) throw new Error('サプリがありません'); await store.set('plan_supplements', String(id), Object.assign({}, cur, { dose, pending: !dose })); },
-  async saveSettings(patch) { await store.set('settings', 'main', Object.assign({}, ST.settings, patch)); }
+  async saveSettings(patch) { await store.set('settings', 'main', Object.assign({}, ST.settings, patch)); },
+  async autoAdjustActivity(newBase, oldBase, week) { await store.set('settings', 'main', Object.assign({}, ST.settings, { activityBase: newBase, activityBasePrev: oldBase, activityAdjustedWeek: week })); }
 };
 /** 食事の操作履歴（画面内、食事ごと最大 20 手） */
 const MEAL_HIST = {};
@@ -1645,8 +1725,12 @@ function openGlossary() { openSheet('<h3>用語</h3><dl class="glossary">' + GLO
    ===================================================================== */
 function renderSummary() {
   const d = summaryModel(UI.summaryWeek), a = d.adherence; if (!UI.summaryWeek) UI.summaryWeek = d.weekNo;
+  const fm = fatModel(d.range);
+  if (fm.available && fm.mealDayCount >= 10) { const sug = suggestActivityBase(fm); const curWeek = calcWeekNo(ST.settings.startDate, todayYmd()); if (sug && Number(ST.settings.activityAdjustedWeek) !== curWeek) { act(A.autoAdjustActivity(sug.newBase, sug.oldBase, curWeek)); }
+  }
   const wDelta = d.todayWeight != null && d.startWeight != null ? r1(d.todayWeight - d.startWeight) : null;
   let h = '<h1>' + (d.weekNo === d.currentWeek ? '今週' : 'Week ' + d.weekNo) + '</h1><p class="date"><button class="nav" id="wkPrev" aria-label="前の週">‹</button><span>Week <b>' + d.weekNo + '</b> ・ <span style="font-size:22px">' + md(d.range.start) + '–' + md(d.range.end) + '</span></span><button class="nav" id="wkNext" aria-label="次の週">›</button></p>';
+  h += renderFatBlock(fm);
   h += '<div class="stat"><div><div class="n">' + (d.todayWeight != null ? disp(d.todayWeight) : '—') + '<span> ' + unit() + '</span></div><div class="l">今朝' + (wDelta != null ? ' ・ 開始から ' + (wDelta > 0 ? '+' : '') + disp(wDelta) : '') + ' ・ 体重 ' + d.weightDays.measured + '/' + d.weightDays.total + ' 日 測定' + '</div></div>' +
     '<div><div class="n">' + a.workouts.done + '<span> / ' + a.workouts.planned + '</span></div><div class="l">筋トレ ・ ウォームアップ ' + a.warmup.done + '/' + a.warmup.planned + '</div></div>' +
     '<div><div class="n">' + a.meals.onPlan + '<span> / ' + a.meals.planned + '</span></div><div class="l">食事 プラン通り' + (a.meals.subs ? '（差替え ' + a.meals.subs + '）' : '') + (d.photoMeals ? ' ・ 写真記録 ' + d.photoMeals + '回（推定値含む）' : '') + '</div></div>' +
@@ -1654,7 +1738,7 @@ function renderSummary() {
   h += '<div class="spark"><div class="h"><span>日別の合計と遵守</span></div><div style="overflow-x:auto"><table class="hist"><tr><th>日</th><th>kcal</th><th>食事</th><th>ウォームアップ</th><th>筋トレ</th><th>有酸素</th><th>水</th><th>サプリ</th><th>遅れ</th></tr>' +
     (d.days.length ? d.days.map(x => '<tr><td>' + md(x.date) + ' Day' + x.dayNo + '</td><td>' + fmtN(x.kcal) + '<span class="mute">/' + fmtN(x.planKcal) + '</span></td><td class="' + (x.mealsOk === x.mealsN ? 'ok' : 'ng') + '">' + x.mealsOk + '/' + x.mealsN + '</td><td class="' + (x.warmup ? 'ok' : 'ng') + '">' + (x.warmup ? '✓' : '—') + '</td><td class="' + (x.workout === null ? 'ng' : x.workout ? 'ok' : 'ng') + '">' + (x.workout === null ? '休' : x.workout ? '✓' : '—') + '</td><td class="' + (x.cardio ? 'ok' : 'ng') + '">' + (x.cardio ? '✓' : '—') + '</td><td class="' + (x.water ? 'ok' : 'ng') + '">' + (x.water ? '✓' : '—') + '</td><td>' + x.supps + '%</td><td style="color:' + (x.times.some(tm => tm.late) ? 'var(--yellow)' : 'var(--done)') + '">' + x.times.filter(tm => tm.late).length + '</td></tr>').join('') : '<tr><td colspan="9" class="ng">まだ記録なし</td></tr>') + '</table></div>' +
     (d.days.length ? '<details style="margin-top:8px"><summary class="mute small" style="cursor:pointer">予定と実績の時刻（日別）</summary><div style="overflow-x:auto"><table class="hist"><tr><th>日</th><th>項目</th><th>予定</th><th>実績</th></tr>' + d.days.flatMap(x => x.times.map(tm => '<tr><td>' + md(x.date) + '</td><td>' + esc(tm.title) + '</td><td>' + esc(tm.planned) + '</td><td class="' + (tm.logged && !tm.late ? 'ok' : 'ng') + '" style="color:' + (tm.late ? 'var(--yellow)' : '') + '">' + esc(tm.logged || '—') + '</td></tr>')).join('') + '</table></div></details>' : '') + '</div>';
-  h += '<div class="spark"><div class="h"><span>体重（30日 ・ 点線は7日平均 ・ 欠測日は線をつながない）</span></div>' + spark(d.weights.slice(-30), d.weightsMa7.slice(-30)) + '</div>';
+  h += '<div class="spark" id="weightSpark30"><div class="h"><span>体重（30日 ・ 点線は7日平均 ・ 欠測日は線をつながない）</span></div>' + spark(d.weights.slice(-30), d.weightsMa7.slice(-30)) + '</div>';
   h += '<div class="card" id="missedBlock"><div class="ttl small mute">できなかった項目とその理由</div>' + (d.missed.length ? '<div class="list">' + d.missed.map(m => '<div class="it"><span><span class="num mute">' + md(m.date) + '</span> ' + esc(m.item) + '</span><span class="m">' + esc(m.reason) + '</span></div>').join('') + '</div>' : '<div class="mute small" style="margin-top:6px">なし</div>') + '</div>';
   h += '<div class="spark"><div class="h"><span>いちばん重かった重量（種目別・日ごと）</span></div>' + (d.topSets.length ? d.topSets.map(t => { const pts = t.points, last = pts[pts.length - 1], prev = pts.length > 1 ? pts[pts.length - 2] : null; return '<div class="r' + (prev && last.value > prev.value ? ' up' : '') + '"><span>' + esc(t.name) + '</span><span>' + (prev ? disp(prev.value) + ' → ' : '') + disp(last.value) + ' ' + unit() + ' × ' + last.reps + '</span></div>'; }).join('') : '<div class="r mute"><span>まだ記録なし</span><span>—</span></div>') + '</div>';
   h += '<div class="card"><div class="ttl" style="margin-bottom:8px">コーチに送る</div><div class="report" id="repText"></div><label class="opt"><input type="checkbox" id="optMsgr"> フォーム動画は Messenger で送った（sent via Messenger）</label><div class="btns" style="margin-top:10px"><button class="b-yel" id="copyRep">レポートをコピー</button><button class="b-sub" id="addMedia"' + (CAP.assets ? '' : ' hidden') + '>体の写真を追加</button></div>' +
@@ -1662,6 +1746,7 @@ function renderSummary() {
   h += '<div class="card"><div class="ttl small mute">コーチ確認中（回答が来たら反映）</div><ul class="small" style="margin:8px 0 0 18px;padding:0;color:var(--mute)">' + PENDING_COACH.map(x => '<li>' + esc(x) + '</li>').join('') + '</ul></div>';
   h += '<div class="card"><div class="ttl small mute">設定</div><div class="btns" style="margin-top:8px"><button class="b-sub" id="unitBtn">単位: ' + unit() + ' → ' + (unit() === 'kg' ? 'lb' : 'kg') + '</button><button class="b-sub" id="riceBtn">白米: ' + (ST.settings.riceBasis === 'raw' ? '生米基準' : '炊飯後基準') + ' → 切替</button></div><div class="btns" style="margin-top:8px"><button class="b-sub" id="csvBtn"' + (CAP.downloads ? '' : ' hidden') + '>CSV 書き出し</button></div><div class="mute small" style="margin-top:6px">保存は常に kg。開始日 ' + esc(ST.settings.startDate) + ' ・ 休憩 トップセット ' + ST.settings.restTopSec + '秒 / 他 ' + ST.settings.restOtherSec + '秒' + (ST.mode === 'mock' ? ' ・ モックモード' : '') + '</div></div>';
   view.innerHTML = h;
+  bindFatBlock(fm);
   $('#wkPrev').onclick = () => { UI.summaryWeek = d.weekNo - 1; render(); };
   $('#wkNext').onclick = () => { UI.summaryWeek = d.weekNo + 1; render(); };
   $('#addMedia').onclick = () => openMediaSheet('body', '');
@@ -1670,6 +1755,86 @@ function renderSummary() {
   const gen = () => { $('#repText').textContent = weeklyReport(d.weekNo, { formViaMessenger: $('#optMsgr').checked }); }; gen(); $('#optMsgr').onchange = gen;
   $('#copyRep').onclick = () => { const txt = $('#repText').textContent; (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(() => toast('コピーしました')).catch(() => { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); toast('コピーしました'); } catch (e) { toast('長押しで選択してコピーしてください', true); } ta.remove(); }); };
   $('#csvBtn').onclick = async () => { try { await CAP.downloads.save({ filename: 'training-log-' + todayYmd() + '.csv', data: '﻿' + buildCsv() }); toast('保存しました'); } catch (e) { if (e && e.code !== 'declined') toast('書き出し失敗: ' + (e.code || e.message), true); } };
+}
+/** 閉じた点列をなめらかな Catmull-Rom スプラインの SVG パスにする */
+function catmullRomPath(pts) {
+  const n = pts.length, get = i => pts[(i % n + n) % n]; let d = 'M' + pts[0][0].toFixed(1) + ',' + pts[0][1].toFixed(1) + ' ';
+  for (let i = 0; i < n; i++) { const p0 = get(i - 1), p1 = get(i), p2 = get(i + 1), p3 = get(i + 2);
+    const c1x = p1[0] + (p2[0] - p0[0]) / 6, c1y = p1[1] + (p2[1] - p0[1]) / 6, c2x = p2[0] - (p3[0] - p1[0]) / 6, c2y = p2[1] - (p3[1] - p1[1]) / 6;
+    d += 'C' + c1x.toFixed(1) + ',' + c1y.toFixed(1) + ' ' + c2x.toFixed(1) + ',' + c2y.toFixed(1) + ' ' + p2[0].toFixed(1) + ',' + p2[1].toFixed(1) + ' '; }
+  return d + 'Z';
+}
+/** 不定形の脂肪の塊（黄色〜クリームのグラデーション＋粒状テクスチャ）。100×100 の正方形ビューポートに収まる */
+function fatBlobSvg(seed) {
+  const N = 14; let rnd = Math.max(1, Math.round(seed) % 9973);
+  const rand = () => { rnd = (rnd * 9301 + 49297) % 233280; return rnd / 233280; };
+  const pts = []; for (let i = 0; i < N; i++) { const a = i / N * Math.PI * 2, r = 34 + rand() * 15; pts.push([50 + r * Math.cos(a), 50 + r * Math.sin(a) * 0.94]); }
+  const path = catmullRomPath(pts);
+  return '<svg viewBox="0 0 100 100" width="100%" height="100%" style="overflow:visible" role="img" aria-label="推定された脂肪の塊">' +
+    '<defs><radialGradient id="fg' + rnd + '" cx="35%" cy="28%" r="80%"><stop offset="0%" stop-color="#F6E7B0"/><stop offset="55%" stop-color="#EFCE66"/><stop offset="100%" stop-color="#C99A2E"/></radialGradient>' +
+    '<filter id="fn' + rnd + '" x="-20%" y="-20%" width="140%" height="140%"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="' + rnd + '" result="n"/><feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.10 0"/></filter></defs>' +
+    '<path d="' + path + '" fill="url(#fg' + rnd + ')"/><path d="' + path + '" fill="#000" filter="url(#fn' + rnd + ')"/>' +
+    '<path d="' + path + '" fill="none" stroke="#8f6a1a" stroke-width="0.6" opacity="0.5"/></svg>';
+}
+/** 500ml ペットボトルの簡易シルエット（実寸 直径62mm・高さ205mm を width/height で渡す前提のビューポート） */
+function bottleSvg() {
+  return '<svg viewBox="0 0 62 205" width="100%" height="100%" role="img" aria-label="500mlペットボトル">' +
+    '<path d="M20,4 h22 v18 c8,6 8,10 8,18 v157 a4,4 0 0 1 -4,4 h-30 a4,4 0 0 1 -4,-4 v-157 c0,-8 0,-12 8,-18 Z" fill="#BFE3F0" stroke="#7FB8CC" stroke-width="1.5" opacity="0.85"/>' +
+    '<rect x="16" y="0" width="30" height="6" rx="2" fill="#7FB8CC"/></svg>';
+}
+const PX_PER_MM = 96 / 25.4; // CSS の 1mm 換算（較正スライダーで実機のズレを補正する）
+const CARD_MM = { w: 85.6, h: 53.98 }; // クレジットカードの実寸
+const BOTTLE_MM = { w: 62, h: 205 }; // 500ml ペットボトルの目安寸法
+const FAT_BUDGET_PX = 260; // 塊が入りきらない時に縮小する基準の幅（カードの横幅に収まる目安）
+/** 「落ちた脂肪」ブロック（週タブの一番上）。今日画面には置かない */
+function renderFatBlock(fm) {
+  if (!fm.available) return '<div class="card fat-card"><div class="ttl">落ちた脂肪</div><div class="mute small" style="margin-top:6px">体重を記録すると表示されます</div></div>';
+  const s = ST.settings, scale = UI.rulerPreview != null ? UI.rulerPreview : (Number(s.rulerScale) || 1);
+  let h = '<div class="card fat-card"><div class="ttl">落ちた脂肪 <u id="bioEdit" class="mute small" style="cursor:pointer;font-weight:400">体格・活動レベルを編集</u></div>';
+  if (fm.mealDayCount < 3) {
+    h += '<div class="mute small" style="margin:6px 0 10px">食事の記録がまだ ' + fm.mealDayCount + ' 日分。3 日分たまるとここに脂肪の塊が出ます</div>';
+  } else if (fm.netGain) {
+    const gained = disp2(-fm.weekFatKg);
+    h += '<div class="fat-gain">今週は <b>' + (gained >= 0 ? '+' : '') + gained + 'kg</b></div>';
+  } else {
+    const fv = fatVisual(fm.fatKg); let dMm = fv.diameterMm, bw = BOTTLE_MM.w, bh = BOTTLE_MM.h, shrink = 1;
+    const rawPx = dMm * PX_PER_MM * scale;
+    if (rawPx > FAT_BUDGET_PX) { while (dMm * PX_PER_MM * scale * shrink > FAT_BUDGET_PX && shrink > 1 / 64) shrink /= 2; }
+    const note = shrink < 1 ? '（実寸の 1/' + Math.round(1 / shrink) + '）' : '';
+    h += '<div class="fat-real" style="transform:scale(' + scale + ');transform-origin:top left">' +
+      '<div class="fat-row">' +
+      '<div class="fat-blob" style="width:' + (dMm * shrink).toFixed(1) + 'mm;height:' + (dMm * shrink).toFixed(1) + 'mm">' + fatBlobSvg(fm.fatKg * 1000) + '</div>' +
+      '<div class="fat-cmp"><div style="width:' + (bw * shrink).toFixed(1) + 'mm;height:' + (bh * shrink).toFixed(1) + 'mm">' + bottleSvg() + '</div><div class="mute small" style="margin-top:4px">500mlボトル ・ 約' + fv.bottles + '本分</div></div>' +
+      '</div></div>' +
+      '<div class="fat-num">これまでに落ちた脂肪 <b>' + disp2(fm.fatKg) + ' kg</b>' + (note ? ' <span class="mute small">' + note + '</span>' : '') + '</div>';
+    h += '<details class="fat-ruler"><summary class="mute small" style="cursor:pointer">実物大がズレている？ 定規で合わせる</summary>' +
+      '<div class="mute small" style="margin:8px 0">下の枠をクレジットカード（85.6mm）に当てて、大きさが合うまでスライダーを動かしてください</div>' +
+      '<div class="fat-real" style="transform:scale(' + scale + ');transform-origin:top left"><div class="ruler-card" style="width:' + CARD_MM.w + 'mm;height:' + CARD_MM.h + 'mm"></div></div>' +
+      '<input type="range" id="rulerSlider" min="0.5" max="1.8" step="0.01" value="' + scale + '" style="width:100%;margin-top:10px"></details>';
+  }
+  h += '<div class="mute small" style="margin-top:10px">記録した食事と運動からの推定値です。実際の体重と異なることがあります</div>';
+  if (Number(s.activityAdjustedWeek) === calcWeekNo(s.startDate, todayYmd())) h += '<div class="badge warn" style="margin-top:8px">活動レベルを ' + s.activityBasePrev + ' → ' + s.activityBase + ' に調整しました</div>';
+  h += '<div class="spark" id="fatSpark" style="margin-top:12px;background:transparent;padding:0"><div class="h"><span>体重の実測と予測（欠測日はつながない）</span></div>' + spark(Object.keys(ST.log_weight).filter(d => !ST.log_weight[d].skipped && d >= fm.predicted[0].date).sort().map(d => ({ date: d, value: Number(ST.log_weight[d].weightKg) })), fm.predicted) + '<div class="mute small" style="margin-top:4px">実線 実測 ・ 点線 計算上の予測</div></div>';
+  h += '</div>';
+  return h;
+}
+function bindFatBlock(fm) {
+  const be = $('#bioEdit'); if (be) be.onclick = openBioSheet;
+  const rs = $('#rulerSlider'); if (rs) { rs.oninput = () => { UI.rulerPreview = Number(rs.value); render(); }; rs.onchange = () => { const v = Number(rs.value); UI.rulerPreview = null; act(A.saveSettings({ rulerScale: v }), '較正を保存しました'); }; }
+}
+/** 体格・活動レベルの編集シート */
+function openBioSheet() {
+  const s = ST.settings;
+  const sh = openSheet('<h3>体格・活動レベル</h3><label class="lbl" for="bioH">身長 (cm)</label><div class="w-in"><input type="number" inputmode="numeric" id="bioH" value="' + s.bioHeightCm + '"><span class="u">cm</span></div>' +
+    '<label class="lbl" for="bioA">年齢</label><div class="w-in"><input type="number" inputmode="numeric" id="bioA" value="' + s.bioAge + '"><span class="u">歳</span></div>' +
+    '<label class="lbl">性別</label><div class="chips" id="bioSex"><button data-sex="male"' + (s.bioSex !== 'female' ? ' class="on"' : '') + '>男性</button><button data-sex="female"' + (s.bioSex === 'female' ? ' class="on"' : '') + '>女性</button></div>' +
+    '<label class="lbl" for="bioAct">活動レベル</label><div class="w-in"><input type="number" inputmode="decimal" id="bioAct" value="' + s.activityBase + '" step="0.01"><span class="u">×BMR</span></div><div class="mute small" style="margin-top:4px">目安: デスクワーク中心 1.2〜1.4 ・ 立ち仕事や運動多め 1.5〜1.7</div>' +
+    '<button class="b b-yel" style="width:100%;margin-top:14px" id="bioSave">保存</button>');
+  let sex = s.bioSex === 'female' ? 'female' : 'male';
+  $$('#bioSex button', sh).forEach(b => { b.onclick = () => { sex = b.dataset.sex; $$('#bioSex button', sh).forEach(x => x.classList.toggle('on', x.dataset.sex === sex)); }; });
+  $('#bioSave', sh).onclick = () => { const h = Number($('#bioH', sh).value), a = Number($('#bioA', sh).value), act_ = Number($('#bioAct', sh).value);
+    if (!h || !a || !act_) return toast('数値を入力してください', true);
+    closeSheet(); act(A.saveSettings({ bioHeightCm: h, bioAge: a, bioSex: sex, activityBase: r1(act_ * 100) / 100 }), '保存しました'); };
 }
 /** 体重スパークライン。欠測日は線でつながず点を飛ばす（隣り合う日だけ線で結ぶ）。s2 は 7 日平均（同じ規則） */
 function spark(s1, s2) {
@@ -1697,7 +1862,7 @@ async function boot() {
   use('downloads').then(dl => { CAP.downloads = dl; scheduleRender(); });
 }
 window.addEventListener('beforeunload', () => { try { localStorage.setItem('tl.tab', UI.tab); } catch (e) { /* ignore */ } });
-window.__tl = { resizeImage, validateEstimate, isSnack, mealLabel, parseSetScheme, expandPairSets, repsText, setLabel, setActual, dayReport, bumpKg, warmupMinutesText, setUnits, shortExerciseList }; // テスト用フック（純粋関数のみ）
+window.__tl = { resizeImage, validateEstimate, isSnack, mealLabel, parseSetScheme, expandPairSets, repsText, setLabel, setActual, dayReport, bumpKg, warmupMinutesText, setUnits, shortExerciseList, bmr, exerciseKcalFor, dayCalorieBalance, fatModel, fatVisual, suggestActivityBase, weightOnOrBefore }; // テスト用フック（純粋関数のみ）
 boot();
 })();
 </script>

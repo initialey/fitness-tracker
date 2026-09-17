@@ -241,17 +241,103 @@ async function run(mode) {
 
   // ============ 週 ============
   await goTab('summary'); await page.waitForSelector('#repText');
-  await T(G.week, '体重グラフ（実測＋7日平均）。データ1日でも壊れない', async () => { assert(await has('.spark svg'), 'svg'); const pt = await page.$$eval('.spark svg .pt', els => els.length), ma = await page.$$eval('.spark svg .mapt', els => els.length); assert(pt === 1 && ma === 1, '1 measured point + 1 ma point: ' + pt + '/' + ma); assert((await page.$$eval('.spark svg polyline', els => els.length)) === 0, 'single day → no line'); assert(!errors.length, 'no errors'); });
+  await T(G.week, '体重グラフ（実測＋7日平均）。データ1日でも壊れない', async () => { assert(await has('#weightSpark30 svg'), 'svg'); const pt = await page.$$eval('#weightSpark30 svg .pt', els => els.length), ma = await page.$$eval('#weightSpark30 svg .mapt', els => els.length); assert(pt === 1 && ma === 1, '1 measured point + 1 ma point: ' + pt + '/' + ma); assert((await page.$$eval('#weightSpark30 svg polyline', els => els.length)) === 0, 'single day → no line'); assert(!errors.length, 'no errors'); });
   await T(G.week, '遵守率にウォームアップ・筋トレ・有酸素・食事・サプリ・水が含まれる', async () => { const st = await page.$eval('.stat', e => e.textContent); assert(st.includes('筋トレ') && st.includes('ウォームアップ 1/1') && st.includes('食事') && st.includes('有酸素') && st.includes('サプリ 50%') && st.includes('水 1/1'), st); const hist = await text('.hist'); assert(hist.includes('Day1') && hist.includes('ウォームアップ') && hist.includes('遅れ'), 'history table with 遅れ'); assert(await has('details .hist'), 'per-day planned/logged table'); });
   await T(G.week, 'コーチ向けレポート生成→コピーが実データと一致', async () => { const rep = await text('#repText'); assert(rep.startsWith('Week 1 (Sep 16–22) Report'), 'header'); assert(rep.includes('Weight: 72.6 → 72.6 kg (avg 72.6, 1/1 days measured)'), 'weight line: ' + rep.split('\n')[1]); assert(rep.includes('Workouts: 1/1 done, Warm-up: 1/1, Cardio: 1/1 (40 min)'), 'workouts line: ' + rep.split('\n')[2]); assert(rep.includes('Machine or Smith incline press: right shoulder slight discomfort') && rep.includes('meal 3 missed (eating out)'), 'notes: ' + rep); assert(rep.includes('Supplements: 50%') && rep.includes('Water: 1/1 days'), 'supp/water: ' + rep); assert(/Timing: \d+\/\d+ logged within 60 min of plan/.test(rep), 'timing line: ' + rep); await page.click('#copyRep'); await page.waitForTimeout(100); assert((await text('#toast')).includes('コピー'), 'copy toast'); });
   await T(G.week, 'CSV エクスポート。downloads が null ならボタン非表示', async () => { if (mode === 'mock') { assert(!(await page.$eval('#csvBtn', e => !e.hidden)), 'hidden'); return 'downloads null → 非表示'; } await page.click('#csvBtn'); await page.waitForTimeout(200); assert(rt.downloads.length === 1 && rt.downloads[0].filename === 'training-log-2026-09-16.csv' && rt.downloads[0].size > 200, 'saved ' + JSON.stringify(rt.downloads[0])); assert(rt.downloads[0].head.includes('"plannedAt","loggedAt"') && rt.downloads[0].head.includes('"times"'), 'csv has planned/logged columns: ' + rt.downloads[0].head.slice(0, 120)); return rt.downloads[0].filename + ' (' + rt.downloads[0].size + ' bytes)'; });
   await shot('05-summary');
 
+  // ============ 落ちた脂肪（週タブの一番上） ============
+  await T(G.week, '「落ちた脂肪」の計算式: BMR(Mifflin-St Jeor)・脂肪1kg=1.1L・体積相当の直径・500mlボトル換算', async () => {
+    const r = await page.evaluate(() => { const t = window.__tl; return { bmrVal: t.bmr(72.4, 170, 31, 'male'), fv: t.fatVisual(2.3), kgFrom16560: Math.round((16560 / 7200) * 10) / 10 }; });
+    assert(r.bmrVal === 1636.5, 'BMR 72.4kg/170cm/31歳/男性 = 10W+6.25H-5A+5: ' + r.bmrVal);
+    assert(r.fv.volumeL === 2.5, '2.3kg×1.1=2.53L → 小数1桁で 2.5L: ' + r.fv.volumeL);
+    assert(r.fv.bottles === 5, '2.53L ÷ 0.5L ≈ 約5本分: ' + r.fv.bottles);
+    assert(r.fv.diameterMm > 160 && r.fv.diameterMm < 175, '2.53L 相当の球の直径 ≈169mm: ' + r.fv.diameterMm);
+    assert(r.kgFrom16560 === 2.3, '累積 −16,560kcal ÷ 7200 = 2.3kg（塊のサイズはこの体積から計算）');
+    return 'BMR=' + r.bmrVal + 'kcal（コーチ資料の「約1,690kcal」は計算し直すと1,636.5kcalが正しい値です）・2.3kg→' + r.fv.volumeL + 'L・直径' + r.fv.diameterMm + 'mm・ボトル' + r.fv.bottles + '本分'; });
+  await T(G.week, 'TDEE内訳（BMR×活動レベル＋運動）と収支（摂取−TDEE）が仕様の式どおりに出る', async () => { if (mode === 'mock') return 'db のみ（day 単位の状態が要る）';
+    const date = '2026-06-08'; // 他のテストと重ならない日付。後片付けして共有 DB を汚さない
+    rt.op('set', { coll: 'log_weight', id: date, data: { date, value: 72.4, unit: 'kg', weightKg: 72.4, skipped: false, loggedAt: date + 'T06:40:00+08:00' } });
+    rt.op('set', { coll: 'log_workout', id: date, data: { date, sets: {}, meta: {}, warmup: { startedAtIso: date + 'T08:00:00+08:00' }, finished: '09:00', finishedAt: date + 'T09:00:00+08:00' } });
+    rt.op('set', { coll: 'log_cardio', id: date, data: { date, entries: [{ type: 'incline', minutes: 40, at: '20:00', loggedAt: date + 'T20:00:00+08:00' }] } });
+    rt.op('set', { coll: 'log_meals', id: date, data: { date, meals: { 1: { status: 'substitute', variant: '', photo: null, items: [{ foodId: 'egg_whole', grams: 0, kcal: 2632, p: 0, f: 0, c: 0, origin: 'add', eaten: true, deleted: false, planGrams: '' }], loggedAt: date + 'T07:00:00+08:00', photoId: '', reason: '' } } } });
+    try {
+      const p2 = await newPage(); await p2.click('.tabs [data-tab="water"]'); // 軽いページ遷移で ST が最新の db 内容を持っていることを保証
+      const r = await p2.evaluate((d) => { const t = window.__tl; const b = t.dayCalorieBalance(d);
+        const expEx = 6 * 72.4 * 1 /* 60分の筋トレ */ + 6.5 * 72.4 * (40 / 60) /* 傾斜歩き40分 */;
+        const expTdee = 1636.5 * 1.35 + expEx; const expBalance = 2632 - expTdee;
+        return { b, expEx: Math.round(expEx * 10) / 10, expTdee: Math.round(expTdee * 10) / 10, expBalance: Math.round(expBalance * 10) / 10 }; }, date);
+      assert(r.b, 'balance computed'); assert(Math.abs(r.b.exVal - r.expEx) < 0.2, '運動消費 = 筋トレ60分×6METs + 有酸素40分×6.5METs: ' + r.b.exVal + ' vs ' + r.expEx);
+      assert(Math.abs(r.b.tdee - r.expTdee) < 0.2, 'TDEE = BMR×活動レベル + 運動: ' + r.b.tdee + ' vs ' + r.expTdee);
+      assert(Math.abs(r.b.balance - r.expBalance) < 0.2, '収支 = 摂取2,632kcal − TDEE: ' + r.b.balance + ' vs ' + r.expBalance);
+      await p2.close(); return 'TDEE=' + r.b.tdee + 'kcal（運動+' + r.b.exVal + 'kcal）・ 収支=' + r.b.balance + 'kcal';
+    } finally { ['log_weight', 'log_workout', 'log_cardio', 'log_meals'].forEach(coll => rt.op('del', { coll, id: date })); } });
+  await T(G.week, '「落ちた脂肪」ブロックの表示配線: fatModel() の値がそのまま塊のkg・ボトル本数・実測/予測グラフに使われる。定規スライダーの倍率が保存され、再読み込み後も保持される', async () => { if (mode === 'mock') return 'db のみ';
+    const dstart = new Date('2026-06-01T00:00:00+08:00'); const dates = []; // 他のテストと重ならない範囲。後片付けして共有 DB を汚さない
+    for (let i = 0; i < 5; i++) { const dt = new Date(dstart.getTime() + i * 86400000); dates.push(dt.toISOString().slice(0, 10)); }
+    const savedSettings = Object.assign({}, rt.DB.settings.main);
+    dates.forEach(date => {
+      rt.op('set', { coll: 'log_weight', id: date, data: { date, value: 72.4, unit: 'kg', weightKg: 72.4, skipped: false, loggedAt: date + 'T06:40:00+08:00' } });
+      rt.op('set', { coll: 'log_meals', id: date, data: { date, meals: { 1: { status: 'substitute', variant: '', photo: null, items: [{ foodId: 'egg_whole', grams: 0, kcal: 1400, p: 0, f: 0, c: 0, origin: 'add', eaten: true, deleted: false, planGrams: '' }], loggedAt: date + 'T07:00:00+08:00', photoId: '', reason: '' } } } });
+    });
+    rt.op('set', { coll: 'settings', id: 'main', data: Object.assign({}, rt.DB.settings.main, { startDate: dates[0] }) });
+    try {
+      const p2 = await newPage(); await p2.clock.setFixedTime(new Date('2026-06-06T06:50:00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading'));
+      const fm = await p2.evaluate(() => window.__tl.fatModel());
+      assert(fm.available && fm.mealDayCount >= 5, '5日分の食事記録を拾えている: ' + fm.mealDayCount);
+      assert(fm.fatKg > 0 && !fm.netGain, '5日連続の赤字 → 塊を表示する側（fatKg>0）: ' + fm.fatKg);
+      const fv = await p2.evaluate(kg => window.__tl.fatVisual(kg), fm.fatKg);
+      await p2.click('.tabs [data-tab="summary"]'); await p2.waitForSelector('.fat-card');
+      assert(await p2.$('.fat-blob svg'), '塊の SVG が描かれる'); const numTxt = await p2.locator('.fat-num').textContent();
+      assert(numTxt.includes(String(fm.fatKg)) && numTxt.includes('kg'), 'これまでに落ちた脂肪の数字が fatModel().fatKg と一致: ' + numTxt + ' vs ' + fm.fatKg);
+      assert((await p2.locator('.fat-cmp').textContent()).includes('約' + fv.bottles + '本分'), 'ボトル換算が fatVisual().bottles と一致: ' + fv.bottles);
+      const legend = await p2.locator('#fatSpark').textContent(); assert(legend.includes('実測') && legend.includes('計算上の予測'), '凡例 実測／計算上の予測: ' + legend);
+      assert(await p2.$('#fatSpark svg .pt'), '実測の点がある'); assert(await p2.$('#fatSpark svg .mapt'), '予測の点（連続線）がある');
+      await p2.click('.fat-ruler summary'); await p2.waitForSelector('#rulerSlider');
+      await p2.$eval('#rulerSlider', e => { e.value = '1.4'; e.dispatchEvent(new Event('input')); }); await p2.waitForTimeout(80);
+      const scaled = await p2.$eval('.fat-real', e => getComputedStyle(e).transform); assert(scaled !== 'none' && scaled !== 'matrix(1, 0, 0, 1, 0, 0)', '倍率が画面に反映される: ' + scaled);
+      await p2.$eval('#rulerSlider', e => { e.value = '1.4'; e.dispatchEvent(new Event('change')); }); await p2.waitForTimeout(200);
+      assert(rt.DB.settings.main.rulerScale === 1.4, '較正倍率が設定に保存される: ' + rt.DB.settings.main.rulerScale);
+      await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading')); await p2.click('.tabs [data-tab="summary"]'); await p2.waitForSelector('.fat-blob');
+      const afterReload = await p2.$eval('.fat-real', e => getComputedStyle(e).transform); assert(afterReload === scaled, '再読み込み後も倍率が保持される');
+      await p2.close(); return 'fatKg=' + fm.fatKg + 'kg・ボトル' + fv.bottles + '本分・較正スライダーの保存を確認';
+    } finally { dates.forEach(date => { rt.op('del', { coll: 'log_weight', id: date }); rt.op('del', { coll: 'log_meals', id: date }); }); rt.op('set', { coll: 'settings', id: 'main', data: savedSettings }); } });
+  await T(G.week, 'データ不足時のフォールバック: 体重0件→非表示メッセージ／食事3日未満→塊なしでグラフだけ／今週プラス→「今週は +Xkg」', async () => { if (mode === 'mock') return 'db のみ';
+    // 体重が1件も無い状態を一時的に作る（既存の log_weight を退避 → 空にして確認 → 元に戻す）
+    const savedWeights = Object.assign({}, rt.DB.log_weight);
+    Object.keys(savedWeights).forEach(id => rt.op('del', { coll: 'log_weight', id }));
+    try { const pw = await newPage(); await pw.click('.tabs [data-tab="summary"]'); await pw.waitForSelector('.fat-card');
+      assert((await pw.locator('.fat-card').textContent()).includes('体重を記録すると表示されます'), '体重0件 → 案内文'); assert(!(await pw.$('.fat-blob')) && !(await pw.$('.fat-card .spark')), '塊もグラフも出さない');
+      await pw.close();
+    } finally { Object.entries(savedWeights).forEach(([id, data]) => rt.op('set', { coll: 'log_weight', id, data })); }
+    // 他のテストと重ならない範囲（6月）。後片付けして共有 DB を汚さない
+    const savedSettings = Object.assign({}, rt.DB.settings.main);
+    const gainDate1 = '2026-06-11', gainDate2 = '2026-06-12', gainDate3 = '2026-06-13';
+    try {
+      [gainDate1, gainDate2, gainDate3].forEach((date, i) => {
+        rt.op('set', { coll: 'log_weight', id: date, data: { date, value: 72.4, unit: 'kg', weightKg: 72.4, skipped: false, loggedAt: date + 'T06:40:00+08:00' } });
+        if (i < 2) rt.op('set', { coll: 'log_meals', id: date, data: { date, meals: { 1: { status: 'substitute', variant: '', photo: null, items: [{ foodId: 'egg_whole', grams: 0, kcal: 1600, p: 0, f: 0, c: 0, origin: 'add', eaten: true, deleted: false, planGrams: '' }], loggedAt: date + 'T07:00:00+08:00', photoId: '', reason: '' } } } });
+      });
+      rt.op('set', { coll: 'settings', id: 'main', data: Object.assign({}, rt.DB.settings.main, { startDate: gainDate1 }) });
+      const p3 = await newPage(); await p3.clock.setFixedTime(new Date('2026-06-14T06:50:00+08:00')); await p3.reload(); await p3.waitForFunction(() => !document.querySelector('#view .loading')); await p3.click('.tabs [data-tab="summary"]'); await p3.waitForSelector('.fat-card');
+      assert((await p3.locator('.fat-card').textContent()).includes('食事の記録がまだ'), '食事2日分（3日未満）→ 塊は出さずメッセージ'); assert(!(await p3.$('.fat-blob')), '塊は出さない'); assert(await p3.$('.fat-card .spark'), 'グラフだけは出す');
+      await p3.close();
+      // 累積がプラス（3日とも記録・大幅な過食）→「今週は +Xkg」
+      const gd = [gainDate1, gainDate2, gainDate3];
+      gd.forEach(date => rt.op('set', { coll: 'log_meals', id: date, data: { date, meals: { 1: { status: 'substitute', variant: '', photo: null, items: [{ foodId: 'egg_whole', grams: 0, kcal: 6000, p: 0, f: 0, c: 0, origin: 'add', eaten: true, deleted: false, planGrams: '' }], loggedAt: date + 'T07:00:00+08:00', photoId: '', reason: '' } } } }));
+      const p4 = await newPage(); await p4.clock.setFixedTime(new Date('2026-06-14T06:50:00+08:00')); await p4.reload(); await p4.waitForFunction(() => !document.querySelector('#view .loading'));
+      const fm4 = await p4.evaluate(() => window.__tl.fatModel()); assert(fm4.netGain, '大幅な過食3日 → 累積プラス（netGain）: ' + JSON.stringify(fm4.fatKg));
+      await p4.click('.tabs [data-tab="summary"]'); await p4.waitForSelector('.fat-card'); const gainTxt = await p4.locator('.fat-gain').textContent(); assert(/^今週は \+/.test(gainTxt.trim()), '「今週は +Xkg」（責めない表現・塊は出さない）: ' + gainTxt); assert(!(await p4.$('.fat-blob')), '増えている週は塊を出さない');
+      await p4.close();
+      return '食事3日未満・累積プラスの2つのフォールバックを確認';
+    } finally { [gainDate1, gainDate2, gainDate3].forEach(date => { rt.op('del', { coll: 'log_weight', id: date }); rt.op('del', { coll: 'log_meals', id: date }); }); rt.op('set', { coll: 'settings', id: 'main', data: savedSettings }); } });
+
   // ============ 欠測・できなかった ============
   await T(G.missed, '体重「測れなかった」→ 灰色「−」・理由表示・「いま」は次へ進む', async () => { await setTime('2026-09-17T06:45:00+08:00'); await goTab('today'); await page.click('[data-shift="1"]'); assert((await text('.date')).includes('9/17'), 'on 9/17'); await page.click('[data-open="weight"]'); await page.waitForSelector('#shNA'); await page.click('#shNA'); await pickReason('外泊・旅行'); await page.waitForTimeout(150);
     const m = await mark('weight'); assert(m.startsWith('na|chk na|−'), 'weight mark: ' + m); assert((await text('[data-step="weight"]')).includes('測れなかった（外泊・旅行）'), 'row text'); assert(!(await page.$('[data-step="weight"] .chk.on')), 'no green'); assert((await text('#now .t')).includes('リンゴ酢'), 'now moved on: ' + (await text('#now .t'))); if (mode === 'db') { await page.waitForTimeout(200); const w = rt.DB.log_weight['2026-09-17']; assert(w.skipped === true && w.reason === '外泊・旅行' && w.loggedAt, 'db ' + JSON.stringify(w)); } });
   await T(G.missed, '測れなかった → 翌日通常記録 → グラフは欠測日をつながず・平均は実測のみ・週まとめ/レポート/CSV が正しい', async () => { await setTime('2026-09-18T06:45:00+08:00'); await goTab('today'); await page.click('[data-shift="1"]'); assert((await text('.date')).includes('9/18'), 'on 9/18'); await page.fill('#nowW', '72.0'); await page.click('#nowBtn'); await page.waitForFunction(() => document.querySelector('[data-step="weight"]').dataset.mark === 'ok');
-    await goTab('summary'); await page.waitForSelector('#repText'); const pts = await page.$$eval('.spark svg .pt', els => els.map(e => e.dataset.date + '=' + e.dataset.v)); assert(pts.join(',') === '2026-09-16=72.6,2026-09-18=72', 'points ' + pts.join(',')); assert((await page.$$eval('.spark svg polyline', els => els.length)) === 0, '2 non-adjacent days → no connecting line'); const ma = await page.$$eval('.spark svg .mapt', els => els.map(e => e.dataset.date + '=' + e.dataset.v)); assert(ma.includes('2026-09-18=72.3'), '7日平均は実測 (72.6+72.0)/2=72.3: ' + ma.join(','));
+    await goTab('summary'); await page.waitForSelector('#repText'); const pts = await page.$$eval('#weightSpark30 svg .pt', els => els.map(e => e.dataset.date + '=' + e.dataset.v)); assert(pts.join(',') === '2026-09-16=72.6,2026-09-18=72', 'points ' + pts.join(',')); assert((await page.$$eval('#weightSpark30 svg polyline', els => els.length)) === 0, '2 non-adjacent days → no connecting line'); const ma = await page.$$eval('#weightSpark30 svg .mapt', els => els.map(e => e.dataset.date + '=' + e.dataset.v)); assert(ma.includes('2026-09-18=72.3'), '7日平均は実測 (72.6+72.0)/2=72.3: ' + ma.join(','));
     assert((await page.$eval('.stat', e => e.textContent)).includes('体重 2/3 日 測定'), 'measured days'); const rep = await text('#repText'); assert(rep.includes('Weight: 72.6 → 72 kg (avg 72.3, 2/3 days measured, skipped: travel×1)'), 'report weight line: ' + rep.split('\n')[1]); assert(rep.includes('09/17 weight missed (travel)'), 'notes auto: ' + rep); assert((await text('#missedBlock')).includes('9/17') && (await text('#missedBlock')).includes('外泊・旅行'), 'missed block');
     if (mode === 'db') { await page.click('#csvBtn'); await page.waitForTimeout(200); const dl = rt.downloads[rt.downloads.length - 1]; assert(dl.head.includes('"skipped","reason"'), 'csv columns: ' + dl.head.slice(0, 100)); assert(dl.size > 0); } return 'points=' + pts.join(',') + ' / ma(9/18)=72.3'; });
   await T(G.missed, 'あとで測れたら数値保存で skipped 解除。「記録を取り消す」で未記録に戻る', async () => { await goTab('today'); await page.click('[data-shift="-1"]'); assert((await text('.date')).includes('9/17'), 'on 9/17'); await page.click('[data-open="weight"]'); await page.waitForSelector('#shSave'); await page.fill('#shW', '72.3'); await page.click('#shSave'); await page.waitForFunction(() => document.querySelector('[data-step="weight"]').dataset.mark === 'ok'); assert((await text('[data-step="weight"]')).includes('72.3kg'), 'measured later'); if (mode === 'db') { await page.waitForTimeout(150); assert(!rt.DB.log_weight['2026-09-17'].skipped, 'skipped cleared'); }
@@ -370,6 +456,7 @@ async function run(mode) {
 | 18 | 写真ボタンに \`capture=\"environment\"\` が付いていて、カメラに直行しギャラリーから選べない端末がある | capture 属性がカメラ限定になる | 両方の写真入力から \`capture\` を外し、ネイティブの選択肢（撮影 ／ ギャラリーから選ぶ）を両方出す |
 | 19 | \`sample.limits().images\` が無いという理由だけで「AIで推定」ボタン自体を隠していたため、実際には画像に対応している環境でも試せず「対応していません」と誤案内していた可能性 | limits() の事前申告だけで判断し、実際に呼んでいなかった | 「AIで推定」は常に表示し、実際に画像付きで呼んで結果で判断する。失敗（images_unavailable 等）した時だけ案内＋手入力に切替を出す |
 | 20 | 最終種目（例: Day2 カーフ）に到達した時点で、その種目の 1 セット目でも「筋トレ完了」ボタンになり、未記録のまま完了画面に飛べてしまう。種目が変わっても画面が最上部にスクロールされず、種目名や進捗が見切れる。「初回なので目安なし」のヒントがクイック選択後も残って前回値と誤解されうる | ボタンの判定が「最終種目かどうか」だけで、\`e === ex\`（今の種目を見ているだけ）で最終セットかどうかを見ていなかった。遷移時に scrollTo が無かった | 「筋トレ完了」は全種目・全セットが記録済みの時だけ出すよう判定を単純化。種目・セットが変わる遷移（前後の種目、セット完了、休憩明けの自動進行）すべてで最上部へスクロール。クイック重量を選んだらヒント文を「選んだ重さ」に差し替え |
+| 21 | 「落ちた脂肪」の追加で、既存の30日体重グラフと新しい実測/予測グラフの CSS クラスが衝突し点の数が二重にカウントされる。テストが seed した過去の体重/食事/設定（startDate）を後片付けせず、共有 DB を経由して他のテスト（Day 判定・週次レポートなど）まで壊す | 2つの \`.spark\` をページ全体セレクタで区別できていなかった。DB を直接 seed するテストに後片付けが無かった | 30日グラフに \`#weightSpark30\`、脂肪の実測/予測グラフに \`#fatSpark\` の id を付けて区別。DB を直接書き換えるテストはすべて try/finally で seed した日付を削除し settings を元に戻すようにした |
 
 ## 実行方法
 

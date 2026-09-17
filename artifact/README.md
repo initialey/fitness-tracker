@@ -99,9 +99,16 @@
 ### ダイアログ
 claude.ai のアーティファクトは sandbox iframe のため `confirm()` / `prompt()` は常に false / null を返す。確認・入力・時刻はすべてページ内ダイアログ（`askConfirm` / `askText` / `askTime`）で行う。
 
+## 落ちた脂肪（週タブ）
+
+BMR（Mifflin-St Jeor）×活動レベル＋運動消費 を TDEE とし、日々の収支（摂取−TDEE、食事未記録日は除外）を開始日から積み上げて `-累積÷7200` を脂肪の増減(kg)として出す。1kg≈1.1L から体積相当の直径を求め、不定形の塊を SVG（Catmull-Rom スプラインの輪郭＋feTurbulence の粒状感）で実物大（CSS mm 単位）に描く。クレジットカード基準の較正スライダー（`settings.rulerScale`）で端末ごとのズレを補正し、同じ倍率を塊・500mlボトル比較・グラフに掛ける。画面に収まらない時は 1/2, 1/4… と縮小して注記。
+実測（7日平均、欠測日はつながない）と予測体重（点線、収支の累積から計算）を同じ `spark()` チャートに重ねる。実測と予測が直近7日ズレ続けたら `suggestActivityBase()` が activityBase を逆算し、`renderSummary()` から `act(A.autoAdjustActivity(...))` を呼んで保存（1週間に1回だけ、`settings.activityAdjustedWeek` で二重発火を防止）。
+体重が1件も無ければ機能ごと非表示、食事の記録が3日未満なら塊を出さずグラフだけ、累積がプラス（増加）なら塊の代わりに「今週は +Xkg」とだけ表示する。
+体格（身長・年齢・性別）と活動レベルは週タブの「体格・活動レベルを編集」から設定（既定値は `bioHeightCm/bioAge/bioSex/activityBase`）。
+
 ## テスト
 
-`npm run e2e:artifact` で mock / db（疑似ランタイム）両モードの 57 項目を実行し、結果を [TEST.md](TEST.md) に書き出す。
+`npm run e2e:artifact` で mock / db（疑似ランタイム）両モードの 62 項目を実行し、結果を [TEST.md](TEST.md) に書き出す。
 
 ## モックモード
 
