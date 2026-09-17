@@ -203,6 +203,41 @@ async function run(mode) {
     } finally { for (let k = 0; k < 8 && !(await text('.date')).includes('9/16'); k++) await page.click('[data-shift="-1"]'); } assert((await text('h1')).startsWith('Day 1'), 'back to Day1');
     const r = await page.evaluate(() => { const t = window.__tl; const d = t.parseSetScheme('MAIN10-15x3,DROP*'); const p = t.expandPairSets(t.parseSetScheme('MAIN8,MAIN10,MAIN12'), ['A動作', 'B動作']); return { n: d.length, last: d[3], lastTxt: t.repsText(d[3]), pn: p.length, labels: p.map(x => t.setLabel(x)), moves: p.map(x => x.move).join('') }; });
     assert(r.n === 4 && r.last.setType === 'DROP' && r.last.min === 0 && r.lastTxt === '限界まで', 'DROP*: ' + JSON.stringify(r)); assert(r.pn === 6 && r.moves === 'ababab' && r.labels[0] === '1セット目 ①A動作' && r.labels[5] === '3セット目 ②B動作', 'pairs: ' + JSON.stringify(r.labels)); return 'Day2/4/5/6 の種目数と代表種目、DROP*=限界まで、スーパーセット 3組→6セット'; });
+  await T(G.workout, '不具合修正: 最終種目（Day2 カーフ）に自然に到達しても、1セット目は「このセット完了」。最終セットまで進んで初めて「筋トレ完了」になる。遷移のたびに最上部へスクロール', async () => {
+    const p2 = await newPage(); await p2.click('.tabs [data-tab="today"]'); await p2.click('[data-shift="1"]'); assert((await p2.locator('.date').textContent()).includes('9/17'), 'on 9/17 = Day2');
+    await p2.click('.tabs [data-tab="workout"]'); await p2.waitForSelector('#wuStart');
+    for (let id = 1; id <= 6; id++) { await p2.click('[data-wuset="' + id + '"]'); await p2.click('[data-wuset="' + id + '"]'); }
+    await p2.click('#wuStart'); await p2.waitForSelector('#setDone');
+    const p2text = async sel => (await p2.locator(sel).first().textContent()).trim();
+    for (let guard = 0; guard < 60; guard++) {
+      if ((await p2text('.ex-head .p')).includes('種目 9/9')) break;
+      if ((await p2text('#wv')) === '—') { const q = await p2.$('[data-qk]'); if (q) await q.click(); else await p2.click('[data-pm="w:1"]'); }
+      await p2.click('#setDone'); if (await p2.$('#rest:not([hidden])')) { await p2.click('#skipRest'); await p2.waitForSelector('#setDone:not([hidden])'); } await p2.waitForTimeout(40);
+    }
+    // ここが今回の不具合の核心: 8種目すべて終えて9種目目（カーフ、1セット目）に自然到達した瞬間
+    assert((await p2text('.ex-head .p')).includes('種目 9/9 ・ セット 1/3'), '9番目のセット1/3に到達: ' + (await p2text('.ex-head .p')));
+    assert((await p2text('.ex-name')).includes('カーフ'), 'exercise name in view: ' + (await p2text('.ex-name')));
+    assert((await p2text('#setDone')) === 'このセット完了', '1セット目はまだ「このセット完了」（筋トレ完了になってはいけない）: ' + (await p2text('#setDone')));
+    assert(await p2.evaluate(() => window.scrollY) === 0, '種目が変わったら最上部へスクロール（種目名が見切れない）');
+    // セット1完了 → まだ「このセット完了」・セット2/3
+    if ((await p2text('#wv')) === '—') { const q = await p2.$('[data-qk]'); if (q) await q.click(); }
+    await p2.click('#setDone'); if (await p2.$('#rest:not([hidden])')) { await p2.click('#skipRest'); await p2.waitForSelector('#setDone:not([hidden])'); }
+    assert((await p2text('.ex-head .p')).includes('セット 2/3'), 'now on set 2/3: ' + (await p2text('.ex-head .p')));
+    assert((await p2text('#setDone')) === 'このセット完了', 'セット2/3でもまだ「このセット完了」: ' + (await p2text('#setDone')));
+    // セット2完了 → まだ「このセット完了」・セット3/3
+    if ((await p2text('#wv')) === '—') { const q = await p2.$('[data-qk]'); if (q) await q.click(); }
+    await p2.click('#setDone'); if (await p2.$('#rest:not([hidden])')) { await p2.click('#skipRest'); await p2.waitForSelector('#setDone:not([hidden])'); }
+    assert((await p2text('.ex-head .p')).includes('セット 3/3'), 'now on set 3/3: ' + (await p2text('.ex-head .p')));
+    assert((await p2text('#setDone')) === 'このセット完了', 'セット3/3（最終セット）に入った直後はまだ「このセット完了」（未記録のまま完了画面に飛ばない）: ' + (await p2text('#setDone')));
+    // 最終セットを完了して初めて「筋トレ完了」
+    if ((await p2text('#wv')) === '—') { const q = await p2.$('[data-qk]'); if (q) await q.click(); }
+    await p2.click('#setDone'); if (await p2.$('#rest:not([hidden])')) { await p2.click('#skipRest'); await p2.waitForSelector('#setDone:not([hidden])'); }
+    assert((await p2text('#setDone')).includes('筋トレ完了'), '最終種目・最終セットを終えて初めて「筋トレ完了」: ' + (await p2text('#setDone')));
+    const rv = await p2.$$eval('.setrows .sr .rv', els => els.map(e => e.textContent)); assert(rv.length === 3 && rv.every(t => t !== '未記録' && t !== ''), '3セットとも記録済み: ' + rv.join(','));
+    await p2.click('#setDone'); await p2.waitForSelector('#repDay'); const body = await p2.locator('#view').innerText(); assert(!/未記録|0kg×0/.test(body.split('コーチ報告用テキスト')[0]), '完了画面のやった内容に未記録が残っていない');
+    await p2.close();
+  });
+
 
   // ============ 週 ============
   await goTab('summary'); await page.waitForSelector('#repText');
@@ -334,6 +369,7 @@ async function run(mode) {
 | 17 | 写真ボタンが \`sample.limits().images\` に依存し、この環境（sample は使えるが images 非対応）で完全に隠れて見つからない | 画像非対応を「機能ごと隠す」にしていた | ボタンは \`sample\` があれば常に表示。images 非対応の環境では「AIで推定」だけ出さず「この環境は写真からの自動計算に対応していません」と案内して手入力に切替（写真はメモとして残せる） |
 | 18 | 写真ボタンに \`capture=\"environment\"\` が付いていて、カメラに直行しギャラリーから選べない端末がある | capture 属性がカメラ限定になる | 両方の写真入力から \`capture\` を外し、ネイティブの選択肢（撮影 ／ ギャラリーから選ぶ）を両方出す |
 | 19 | \`sample.limits().images\` が無いという理由だけで「AIで推定」ボタン自体を隠していたため、実際には画像に対応している環境でも試せず「対応していません」と誤案内していた可能性 | limits() の事前申告だけで判断し、実際に呼んでいなかった | 「AIで推定」は常に表示し、実際に画像付きで呼んで結果で判断する。失敗（images_unavailable 等）した時だけ案内＋手入力に切替を出す |
+| 20 | 最終種目（例: Day2 カーフ）に到達した時点で、その種目の 1 セット目でも「筋トレ完了」ボタンになり、未記録のまま完了画面に飛べてしまう。種目が変わっても画面が最上部にスクロールされず、種目名や進捗が見切れる。「初回なので目安なし」のヒントがクイック選択後も残って前回値と誤解されうる | ボタンの判定が「最終種目かどうか」だけで、\`e === ex\`（今の種目を見ているだけ）で最終セットかどうかを見ていなかった。遷移時に scrollTo が無かった | 「筋トレ完了」は全種目・全セットが記録済みの時だけ出すよう判定を単純化。種目・セットが変わる遷移（前後の種目、セット完了、休憩明けの自動進行）すべてで最上部へスクロール。クイック重量を選んだらヒント文を「選んだ重さ」に差し替え |
 
 ## 実行方法
 

@@ -1454,7 +1454,7 @@ function renderWorkout() {
   UI.wk.ex = Math.min(UI.wk.ex, d.exercises.length - 1);
   saveCursor(d.date, UI.wk);
   const ex = d.exercises[UI.wk.ex]; UI.wk.set = Math.min(UI.wk.set, ex.sets.length - 1);
-  const st = ex.sets[UI.wk.set], coreDone = d.exercises.filter(e => !e.accessory).every(e => e.sets.every(x => x.done)), allDone = coreDone && d.exercises.every(e => !e.accessory || e.sets.every(x => x.done) || e === ex);
+  const st = ex.sets[UI.wk.set], allDone = d.exercises.every(e => e.sets.every(x => x.done));
   restoreRest(d);
   let h = '<div class="ex-head"><h1>Day ' + d.dayNo + ' ・ ' + esc(d.dayName) + '</h1><span class="p"><button data-ex="-1" aria-label="前の種目">‹</button>種目 ' + (UI.wk.ex + 1) + '/' + d.exercises.length + ' ・ セット ' + (UI.wk.set + 1) + '/' + ex.sets.length + '<button data-ex="1" aria-label="次の種目">›</button></span></div>';
   if (ex.isPreexhaust) h += '<span class="tag">事前疲労</span>'; else if (UI.wk.ex > 0 && d.exercises[UI.wk.ex - 1].isPreexhaust) h += '<span class="tag">事前疲労のあと</span>';
@@ -1475,7 +1475,7 @@ function renderWorkout() {
   if (st.done) h += '<div class="ghost">記録済み <b>' + esc(setActual(st)) + '</b>（変えて完了で上書き）</div>';
   else if (st.prevWeightKg !== '') h += '<div class="ghost">前回 ' + esc(ex.prevDate.slice(5)) + ' <b>' + disp(st.prevWeightKg) + unit() + '×' + esc(st.prevReps) + '</b> → 今日は <b>' + (st.suggestWeightKg !== '' ? disp(st.suggestWeightKg) + unit() : '同じ') + '</b> を提案' + (st.suggestReason ? '（' + esc(st.suggestReason) + '）' : '') + '</div>';
   else if (st.suggestWeightKg !== '') h += '<div class="ghost">目安 <b>' + disp(st.suggestWeightKg) + unit() + '</b>（' + esc(st.suggestReason) + '）</div>';
-  else h += '<div class="ghost">初回なので目安なし。軽めから始めて次回の基準にする</div><div class="quick">' + (ex.isDb ? [4, 8, 12, 16, 20, 24] : [5, 10, 15, 20]).map(k => '<button data-qk="' + k + '">' + disp(k) + '</button>').join('') + '<span class="mute small" style="align-self:center">' + unit() + '</span></div>';
+  else h += '<div class="ghost" id="noHint">初回なので目安なし。軽めから始めて次回の基準にする</div><div class="quick">' + (ex.isDb ? [4, 8, 12, 16, 20, 24] : [5, 10, 15, 20]).map(k => '<button data-qk="' + k + '">' + disp(k) + '</button>').join('') + '<span class="mute small" style="align-self:center">' + unit() + '</span></div>';
   h += '<button class="done-btn' + (allDone ? ' green' : '') + '" id="setDone"' + (UI.rest ? ' hidden' : '') + '>' + (allDone ? '筋トレ完了 → 完了画面へ' : 'このセット完了') + '</button>';
   h += '<div class="rest" id="rest"' + (UI.rest ? '' : ' hidden') + '><div class="l">休憩</div><div class="n" id="rn">0:00</div><div class="l" id="rnext"></div><button id="skipRest">休憩を飛ばす</button></div>';
   h += '<div class="mini"><button id="subBtn">代替種目で実施</button><button id="noteBtn">違和感メモ' + (ex.note ? ' ●' : '') + '</button><button id="formBtn"' + (CAP.assets ? '' : ' hidden') + '>フォーム動画</button></div>';
@@ -1527,11 +1527,11 @@ function renderRestDay(d) {
   $('#rcardio').onclick = () => openCardioSheet();
 }
 function bindWorkout(d, ex, st, allDone) {
-  $$('[data-ex]').forEach(b => { b.onclick = () => { const n = UI.wk.ex + Number(b.dataset.ex); if (n < 0 || n >= d.exercises.length) return; UI.wk = { ex: n, set: firstUndoneIn(d.exercises[n]) }; UI.rest = null; UI.howto = false; render(); }; });
-  $$('[data-set]').forEach(el => { el.onclick = () => { UI.wk.set = Number(el.dataset.set); UI.rest = null; render(); }; });
+  $$('[data-ex]').forEach(b => { b.onclick = () => { const n = UI.wk.ex + Number(b.dataset.ex); if (n < 0 || n >= d.exercises.length) return; UI.wk = { ex: n, set: firstUndoneIn(d.exercises[n]) }; UI.rest = null; UI.howto = false; render(); window.scrollTo(0, 0); }; });
+  $$('[data-set]').forEach(el => { el.onclick = () => { UI.wk.set = Number(el.dataset.set); UI.rest = null; render(); window.scrollTo(0, 0); }; });
   const hb = $('#howtoBtn'); if (hb) hb.onclick = () => { UI.howto = !UI.howto; $('#howto').hidden = !UI.howto; };
   $('#glossBtn').onclick = openGlossary;
-  const setW = v => { const el = $('#wv'); el.dataset.v = v; el.textContent = v; el.classList.remove('empty'); };
+  const setW = v => { const el = $('#wv'); el.dataset.v = v; el.textContent = v; el.classList.remove('empty'); const nh = $('#noHint'); if (nh) nh.textContent = '選んだ重さ ' + v + ' ' + unit() + '（変えたい時はもう一度タップ）'; };
   const stepW = unit() === 'kg' ? 1 : 2.5;
   $$('[data-pm]').forEach(b => { b.onclick = () => { const [k, dir] = b.dataset.pm.split(':'), el = $(k === 'w' ? '#wv' : '#rv'); const cur = el.dataset.v === '' ? 0 : Number(el.dataset.v); const next = Math.max(0, r1(cur + Number(dir) * (k === 'w' ? stepW : 1))); if (k === 'w') setW(next); else { el.dataset.v = next; el.textContent = next; } }; });
   $$('[data-qk]').forEach(b => { b.onclick = () => setW(disp(Number(b.dataset.qk))); });
@@ -1542,7 +1542,7 @@ function bindWorkout(d, ex, st, allDone) {
     const wv = $('#wv').dataset.v, rv = $('#rv').dataset.v; if (wv === '' && rv === '') return toast('重量を入力', true);
     vibrate(80); A.saveSet(d.date, ex.id, st.setNo, st.setType, wv, rv).catch(fail);
     const nxt = nextSet(workoutModel(d.date)); if (!nxt) return render();
-    if (noRestBefore(d, nxt)) { UI.wk = { ex: nxt.ex, set: nxt.set }; UI.rest = null; const ns = d.exercises[nxt.ex].sets[nxt.set]; toast(ns.setType === 'DROP' ? 'ドロップセット: 重さを −30% に落として休まずすぐ開始' : 'スーパーセット: 休まずすぐ「' + ns.moveName + '」へ'); return render(); }
+    if (noRestBefore(d, nxt)) { UI.wk = { ex: nxt.ex, set: nxt.set }; UI.rest = null; const ns = d.exercises[nxt.ex].sets[nxt.set]; toast(ns.setType === 'DROP' ? 'ドロップセット: 重さを −30% に落として休まずすぐ開始' : 'スーパーセット: 休まずすぐ「' + ns.moveName + '」へ'); render(); return window.scrollTo(0, 0); }
     UI.rest = { endAt: Date.now() + restSecFor(d, st.setType) * 1000, next: nxt }; render();
   };
   $('#subBtn').onclick = () => { askText('代替種目で実施', '代替種目名（空欄で解除）。マスタは変更しません。', ex.subName || '', { placeholder: '例: フロアプレス', okLabel: '保存' }).then(name => { if (name === null) return; act(A.saveMeta(d.date, ex.id, { subName: name.trim() })); }); };
@@ -1628,7 +1628,7 @@ function runRest(d) {
   const nxt = UI.rest.next, nex = d.exercises[nxt.ex], nst = nex.sets[nxt.set];
   const sw = nst.suggestWeightKg !== '' ? disp(nst.suggestWeightKg) : (nst.prevWeightKg !== '' ? disp(nst.prevWeightKg) : '');
   $('#rnext').textContent = '次：' + (nxt.ex !== UI.wk.ex ? nex.nameJa + ' ' : '') + nst.label + ' ' + nst.typeName + ' ' + nst.target + (sw ? ' ・ 提案 ' + sw + ' ' + unit() : '');
-  const advance = () => { UI.restSkipped = UI.date + '#' + lastSetKey(d); try { localStorage.setItem('tl.restSkip', UI.restSkipped); } catch (e) { /* ignore */ } UI.wk = { ex: nxt.ex, set: nxt.set }; UI.rest = null; UI.howto = false; render(); };
+  const advance = () => { UI.restSkipped = UI.date + '#' + lastSetKey(d); try { localStorage.setItem('tl.restSkip', UI.restSkipped); } catch (e) { /* ignore */ } UI.wk = { ex: nxt.ex, set: nxt.set }; UI.rest = null; UI.howto = false; render(); window.scrollTo(0, 0); };
   every(() => { const left = (UI.rest.endAt - Date.now()) / 1000; if (left <= 0) { vibrate([300, 100, 300]); advance(); } else $('#rn').textContent = mmss(left); }, 250);
   $('#skipRest').onclick = advance;
 }
