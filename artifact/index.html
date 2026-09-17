@@ -264,6 +264,10 @@ textarea.txt{min-height:60px}
 .fat-gain{font:600 16px var(--jp);margin-top:6px;color:var(--mute)}
 .fat-ruler{margin-top:12px}
 .ruler-card{border:1.5px dashed var(--mute);border-radius:6px;background:rgba(255,255,255,.04)}
+.fat-mini-row{display:flex;align-items:center;gap:14px;margin-top:6px}
+.fat-blob-mini{width:100px;height:100px;flex:0 0 auto}
+.fat-mini-num{font:700 17px var(--jp);color:var(--ink)}
+
 
 .report{background:var(--card2);border-radius:10px;padding:12px;font:500 12px/1.6 ui-monospace,Menlo,monospace;color:var(--mute);white-space:pre-wrap;user-select:all}
 .opt{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--mute);margin:6px 0}
@@ -1235,7 +1239,7 @@ function renderToday(t) {
     const cam = st.kind === 'meal' && st.photo ? '<span class="cam" data-photo="' + st.mealNo + '" title="写真を見る">📷</span>' : '';
     h += '<div class="step ' + st.state + '" data-step="' + esc(st.id) + '" data-mark="' + esc(st.mark) + '"><div class="row" data-open="' + esc(st.id) + '"><div class="body"><div class="t1"><span class="nm">' + esc(st.title) + cam + lbl + '</span>' + tm + '</div>' + st.lines.map((l, i) => '<div class="' + (i === st.lines.length - 1 && st.lines.length > 1 ? 'l3' : 'l2') + '">' + esc(l) + '</div>').join('') + '</div><button class="' + chk + '" data-chk="' + esc(st.id) + '" aria-label="' + (st.handled ? '記録を取り消す' : '完了') + '">' + (st.mark === 'skip' || st.mark === 'na' ? '−' : st.mark ? '✓' : '') + '</button></div></div>';
   });
-  h += '</div>' + totalsBlock(t);
+  h += '</div>' + totalsBlock(t) + renderFatMini(t.date);
   h += '<div class="card"><div class="ttl small mute">今日のメモ（週次レポートに載ります）</div><textarea class="txt" id="dayComment" placeholder="体調、違和感など">' + esc(t.comment) + '</textarea></div>';
   view.innerHTML = h;
   $$('[data-shift]').forEach(b => { b.onclick = () => { UI.date = addDays(UI.date, Number(b.dataset.shift)); UI.wk = null; UI.rest = null; UI.reviewDate = null; render(); }; });
@@ -1786,13 +1790,30 @@ const PX_PER_MM = 96 / 25.4; // CSS の 1mm 換算（較正スライダーで実
 const CARD_MM = { w: 85.6, h: 53.98 }; // クレジットカードの実寸
 const BOTTLE_MM = { w: 62, h: 205 }; // 500ml ペットボトルの目安寸法
 const FAT_BUDGET_PX = 260; // 塊が入りきらない時に縮小する基準の幅（カードの横幅に収まる目安）
-/** 「落ちた脂肪」ブロック（週タブの一番上）。今日画面には置かない */
+/** 今日画面の下部に置く小さい版。今日の記録だけで、1日目から毎日リアルタイムに出す（実物大ではない） */
+function renderFatMini(date) {
+  const fm = fatModel();
+  if (!fm.available) return '<div class="card fat-card fat-mini"><div class="ttl small mute">落ちた脂肪</div><div class="mute small" style="margin-top:6px">体重を記録すると表示されます</div></div>';
+  const b = dayCalorieBalance(date);
+  if (!b) return '<div class="card fat-card fat-mini"><div class="ttl small mute">落ちた脂肪</div><div class="mute small" style="margin-top:6px">まだ記録がありません</div></div>';
+  const todayG = Math.round(-b.balance / 7.2); // kcal ÷ 7200 × 1000 = kcal ÷ 7.2 g
+  const cumTxt = fm.netGain ? 'これまで <b>+' + disp2(-fm.fatKg) + ' kg</b>' : 'これまで合計 <b>' + disp2(fm.fatKg) + ' kg</b>';
+  let h = '<div class="card fat-card fat-mini"><div class="ttl small mute">落ちた脂肪</div>';
+  if (b.balance <= 0) {
+    h += '<div class="fat-mini-row"><div class="fat-blob-mini">' + fatBlobSvg(Math.max(1, todayG)) + '</div>' +
+      '<div><div class="fat-mini-num">今日 −' + fmtN(-b.balance) + ' kcal → 脂肪 ' + todayG + 'g</div><div class="mute small" style="margin-top:2px">' + cumTxt + '</div></div></div>';
+  } else {
+    h += '<div class="fat-mini-num">今日 +' + fmtN(b.balance) + ' kcal</div><div class="mute small" style="margin-top:4px">' + cumTxt + '</div>';
+  }
+  return h + '</div>';
+}
+/** 「落ちた脂肪」ブロック（週タブの一番上、実物大）。今日画面には小さい版（renderFatMini）を置く */
 function renderFatBlock(fm) {
   if (!fm.available) return '<div class="card fat-card"><div class="ttl">落ちた脂肪</div><div class="mute small" style="margin-top:6px">体重を記録すると表示されます</div></div>';
   const s = ST.settings, scale = UI.rulerPreview != null ? UI.rulerPreview : (Number(s.rulerScale) || 1);
   let h = '<div class="card fat-card"><div class="ttl">落ちた脂肪 <u id="bioEdit" class="mute small" style="cursor:pointer;font-weight:400">体格・活動レベルを編集</u></div>';
-  if (fm.mealDayCount < 3) {
-    h += '<div class="mute small" style="margin:6px 0 10px">食事の記録がまだ ' + fm.mealDayCount + ' 日分。3 日分たまるとここに脂肪の塊が出ます</div>';
+  if (fm.mealDayCount < 1) {
+    h += '<div class="mute small" style="margin:6px 0 10px">まだ記録がありません</div>';
   } else if (fm.netGain) {
     const gained = disp2(-fm.weekFatKg);
     h += '<div class="fat-gain">今週は <b>' + (gained >= 0 ? '+' : '') + gained + 'kg</b></div>';

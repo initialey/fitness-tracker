@@ -303,34 +303,57 @@ async function run(mode) {
       const afterReload = await p2.$eval('.fat-real', e => getComputedStyle(e).transform); assert(afterReload === scaled, '再読み込み後も倍率が保持される');
       await p2.close(); return 'fatKg=' + fm.fatKg + 'kg・ボトル' + fv.bottles + '本分・較正スライダーの保存を確認';
     } finally { dates.forEach(date => { rt.op('del', { coll: 'log_weight', id: date }); rt.op('del', { coll: 'log_meals', id: date }); }); rt.op('set', { coll: 'settings', id: 'main', data: savedSettings }); } });
-  await T(G.week, 'データ不足時のフォールバック: 体重0件→非表示メッセージ／食事3日未満→塊なしでグラフだけ／今週プラス→「今週は +Xkg」', async () => { if (mode === 'mock') return 'db のみ';
+  await T(G.today, '今日画面の下部の小さい版: 記録0件は「まだ記録がありません」→ 食事を1つ記録した時点で塊と数字が出る → 追加のたびに数字が更新される', async () => {
+    const date2 = '2026-04-10';
+    // db モードは log_weight がグローバルなので、他テストが記録済みの体重を一時退避して「体重0件」の状態を作る
+    const savedWeights = mode === 'db' ? Object.assign({}, rt.DB.log_weight) : {};
+    if (mode === 'db') Object.keys(savedWeights).forEach(id => rt.op('del', { coll: 'log_weight', id }));
+    try {
+      const p2 = await newPage(); await p2.clock.setFixedTime(new Date(date2 + 'T06:50:00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading'));
+      await p2.click('.tabs [data-tab="today"]'); await p2.waitForSelector('.fat-mini');
+      const t2 = async () => (await p2.locator('.fat-mini').textContent()).trim();
+      assert((await t2()).includes('体重を記録すると表示されます'), '体重も食事も無い → 体重の案内');
+      await p2.fill('#nowW', '72.4'); await p2.click('#nowBtn'); await p2.waitForFunction(() => document.querySelector('[data-step="weight"]').classList.contains('done'));
+      assert((await t2()).includes('まだ記録がありません'), '体重はあるが食事が無い → まだ記録がありません（1日目でも「データが足りません」ではない）');
+      await p2.click('[data-open="meal:1"]'); await p2.waitForSelector('#mPlan'); await p2.click('#mPlan'); await p2.waitForSelector('#sheet', { state: 'hidden' });
+      assert(await p2.$('.fat-mini .fat-blob-mini svg'), '食事を1つ記録した時点で小さい塊が出る（待たせない）');
+      const after1 = await t2(); assert(/今日 −[\d,]+ kcal → 脂肪 \d+g/.test(after1), '「今日 −N kcal → 脂肪 Ng」の書式: ' + after1); assert(after1.includes('これまで合計'), 'これまでの合計kgも出る: ' + after1);
+      await p2.click('[data-open="meal:2"]'); await p2.waitForSelector('#mPlan'); await p2.click('#mPlan'); await p2.waitForSelector('#sheet', { state: 'hidden' });
+      const after2 = await t2(); assert(after2 !== after1, '食事を追加するたびに今日の数字が更新される: ' + after1 + ' → ' + after2);
+      await p2.click('.tabs [data-tab="summary"]'); await p2.waitForSelector('.fat-card'); assert(await p2.$('.fat-blob svg'), '週タブにも同じ日の塊が出る（今日画面と週タブの両方）');
+      await p2.close(); return '記録0件→まだ記録がありません、1食目でただちに塊表示、2食目で数字が更新、今日画面と週タブ両方に表示';
+    } finally { rt.op('del', { coll: 'log_weight', id: date2 }); rt.op('del', { coll: 'log_meals', id: date2 }); Object.entries(savedWeights).forEach(([id, data]) => rt.op('set', { coll: 'log_weight', id, data })); } });
+  await T(G.week, 'データ不足時のフォールバック: 体重0件→非表示メッセージ／記録0件→「まだ記録がありません」／1日でもあれば塊を表示／今週プラス→「今週は +Xkg」', async () => { if (mode === 'mock') return 'db のみ';
     // 体重が1件も無い状態を一時的に作る（既存の log_weight を退避 → 空にして確認 → 元に戻す）
     const savedWeights = Object.assign({}, rt.DB.log_weight);
     Object.keys(savedWeights).forEach(id => rt.op('del', { coll: 'log_weight', id }));
-    try { const pw = await newPage(); await pw.click('.tabs [data-tab="summary"]'); await pw.waitForSelector('.fat-card');
-      assert((await pw.locator('.fat-card').textContent()).includes('体重を記録すると表示されます'), '体重0件 → 案内文'); assert(!(await pw.$('.fat-blob')) && !(await pw.$('.fat-card .spark')), '塊もグラフも出さない');
+    try { const pw = await newPage(); await pw.click('.tabs [data-tab="today"]'); await pw.waitForSelector('.fat-mini');
+      assert((await pw.locator('.fat-mini').textContent()).includes('体重を記録すると表示されます'), '今日画面の小さい版: 体重0件 → 案内文');
+      await pw.click('.tabs [data-tab="summary"]'); await pw.waitForSelector('.fat-card');
+      assert((await pw.locator('.fat-card').textContent()).includes('体重を記録すると表示されます'), '週タブ: 体重0件 → 案内文'); assert(!(await pw.$('.fat-blob')) && !(await pw.$('.fat-card .spark')), '塊もグラフも出さない');
       await pw.close();
     } finally { Object.entries(savedWeights).forEach(([id, data]) => rt.op('set', { coll: 'log_weight', id, data })); }
     // 他のテストと重ならない範囲（6月）。後片付けして共有 DB を汚さない
     const savedSettings = Object.assign({}, rt.DB.settings.main);
     const gainDate1 = '2026-06-11', gainDate2 = '2026-06-12', gainDate3 = '2026-06-13';
     try {
-      [gainDate1, gainDate2, gainDate3].forEach((date, i) => {
-        rt.op('set', { coll: 'log_weight', id: date, data: { date, value: 72.4, unit: 'kg', weightKg: 72.4, skipped: false, loggedAt: date + 'T06:40:00+08:00' } });
-        if (i < 2) rt.op('set', { coll: 'log_meals', id: date, data: { date, meals: { 1: { status: 'substitute', variant: '', photo: null, items: [{ foodId: 'egg_whole', grams: 0, kcal: 1600, p: 0, f: 0, c: 0, origin: 'add', eaten: true, deleted: false, planGrams: '' }], loggedAt: date + 'T07:00:00+08:00', photoId: '', reason: '' } } } });
-      });
+      rt.op('set', { coll: 'log_weight', id: gainDate1, data: { date: gainDate1, value: 72.4, unit: 'kg', weightKg: 72.4, skipped: false, loggedAt: gainDate1 + 'T06:40:00+08:00' } });
       rt.op('set', { coll: 'settings', id: 'main', data: Object.assign({}, rt.DB.settings.main, { startDate: gainDate1 }) });
-      const p3 = await newPage(); await p3.clock.setFixedTime(new Date('2026-06-14T06:50:00+08:00')); await p3.reload(); await p3.waitForFunction(() => !document.querySelector('#view .loading')); await p3.click('.tabs [data-tab="summary"]'); await p3.waitForSelector('.fat-card');
-      assert((await p3.locator('.fat-card').textContent()).includes('食事の記録がまだ'), '食事2日分（3日未満）→ 塊は出さずメッセージ'); assert(!(await p3.$('.fat-blob')), '塊は出さない'); assert(await p3.$('.fat-card .spark'), 'グラフだけは出す');
+      const p3a = await newPage(); await p3a.clock.setFixedTime(new Date(gainDate1 + 'T20:00:00+08:00')); await p3a.reload(); await p3a.waitForFunction(() => !document.querySelector('#view .loading')); await p3a.click('.tabs [data-tab="summary"]'); await p3a.waitForSelector('.fat-card');
+      assert((await p3a.locator('.fat-card').textContent()).includes('まだ記録がありません'), '体重はあるが食事0件 → まだ記録がありません'); await p3a.close();
+      rt.op('set', { coll: 'log_meals', id: gainDate1, data: { date: gainDate1, meals: { 1: { status: 'substitute', variant: '', photo: null, items: [{ foodId: 'egg_whole', grams: 0, kcal: 1600, p: 0, f: 0, c: 0, origin: 'add', eaten: true, deleted: false, planGrams: '' }], loggedAt: gainDate1 + 'T07:00:00+08:00', photoId: '', reason: '' } } } });
+      const p3 = await newPage(); await p3.clock.setFixedTime(new Date(gainDate1 + 'T20:00:00+08:00')); await p3.reload(); await p3.waitForFunction(() => !document.querySelector('#view .loading')); await p3.click('.tabs [data-tab="summary"]'); await p3.waitForSelector('.fat-card');
+      assert(await p3.$('.fat-blob svg'), '1日目・食事1件だけでも塊を表示する（待たせない）');
       await p3.close();
       // 累積がプラス（3日とも記録・大幅な過食）→「今週は +Xkg」
+      [gainDate2, gainDate3].forEach(date => rt.op('set', { coll: 'log_weight', id: date, data: { date, value: 72.4, unit: 'kg', weightKg: 72.4, skipped: false, loggedAt: date + 'T06:40:00+08:00' } }));
       const gd = [gainDate1, gainDate2, gainDate3];
       gd.forEach(date => rt.op('set', { coll: 'log_meals', id: date, data: { date, meals: { 1: { status: 'substitute', variant: '', photo: null, items: [{ foodId: 'egg_whole', grams: 0, kcal: 6000, p: 0, f: 0, c: 0, origin: 'add', eaten: true, deleted: false, planGrams: '' }], loggedAt: date + 'T07:00:00+08:00', photoId: '', reason: '' } } } }));
       const p4 = await newPage(); await p4.clock.setFixedTime(new Date('2026-06-14T06:50:00+08:00')); await p4.reload(); await p4.waitForFunction(() => !document.querySelector('#view .loading'));
       const fm4 = await p4.evaluate(() => window.__tl.fatModel()); assert(fm4.netGain, '大幅な過食3日 → 累積プラス（netGain）: ' + JSON.stringify(fm4.fatKg));
       await p4.click('.tabs [data-tab="summary"]'); await p4.waitForSelector('.fat-card'); const gainTxt = await p4.locator('.fat-gain').textContent(); assert(/^今週は \+/.test(gainTxt.trim()), '「今週は +Xkg」（責めない表現・塊は出さない）: ' + gainTxt); assert(!(await p4.$('.fat-blob')), '増えている週は塊を出さない');
       await p4.close();
-      return '食事3日未満・累積プラスの2つのフォールバックを確認';
+      return '体重のみ→記録なしメッセージ・食事1件で即塊表示・累積プラスの3つのフォールバックを確認';
     } finally { [gainDate1, gainDate2, gainDate3].forEach(date => { rt.op('del', { coll: 'log_weight', id: date }); rt.op('del', { coll: 'log_meals', id: date }); }); rt.op('set', { coll: 'settings', id: 'main', data: savedSettings }); } });
 
   // ============ 欠測・できなかった ============
@@ -457,6 +480,7 @@ async function run(mode) {
 | 19 | \`sample.limits().images\` が無いという理由だけで「AIで推定」ボタン自体を隠していたため、実際には画像に対応している環境でも試せず「対応していません」と誤案内していた可能性 | limits() の事前申告だけで判断し、実際に呼んでいなかった | 「AIで推定」は常に表示し、実際に画像付きで呼んで結果で判断する。失敗（images_unavailable 等）した時だけ案内＋手入力に切替を出す |
 | 20 | 最終種目（例: Day2 カーフ）に到達した時点で、その種目の 1 セット目でも「筋トレ完了」ボタンになり、未記録のまま完了画面に飛べてしまう。種目が変わっても画面が最上部にスクロールされず、種目名や進捗が見切れる。「初回なので目安なし」のヒントがクイック選択後も残って前回値と誤解されうる | ボタンの判定が「最終種目かどうか」だけで、\`e === ex\`（今の種目を見ているだけ）で最終セットかどうかを見ていなかった。遷移時に scrollTo が無かった | 「筋トレ完了」は全種目・全セットが記録済みの時だけ出すよう判定を単純化。種目・セットが変わる遷移（前後の種目、セット完了、休憩明けの自動進行）すべてで最上部へスクロール。クイック重量を選んだらヒント文を「選んだ重さ」に差し替え |
 | 21 | 「落ちた脂肪」の追加で、既存の30日体重グラフと新しい実測/予測グラフの CSS クラスが衝突し点の数が二重にカウントされる。テストが seed した過去の体重/食事/設定（startDate）を後片付けせず、共有 DB を経由して他のテスト（Day 判定・週次レポートなど）まで壊す | 2つの \`.spark\` をページ全体セレクタで区別できていなかった。DB を直接 seed するテストに後片付けが無かった | 30日グラフに \`#weightSpark30\`、脂肪の実測/予測グラフに \`#fatSpark\` の id を付けて区別。DB を直接書き換えるテストはすべて try/finally で seed した日付を削除し settings を元に戻すようにした |
+| 22 | 「食事の記録が3日未満なら塊を出さない」設計が、モチベーション維持という目的に反して「待たせる」ことになっていた | 塊を出す条件が mealDayCount>=3 のゲートになっていた | 1日でも記録があれば初日から塊と数字を表示するよう変更。今日画面にも小さい版（高さ約100px）を追加し「今日 −Nkcal → 脂肪 Ng」「これまで合計 Xkg」を食事記録のたびにリアルタイム更新。累積がプラスの日は塊を出さず「今日 +Nkcal」とだけ表示 |
 
 ## 実行方法
 
