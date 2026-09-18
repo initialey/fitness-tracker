@@ -160,6 +160,44 @@ async function run(mode) {
   await T(G.today, '記録済み時刻をタップして手修正できる（時刻ピッカー）', async () => { await page.click('[data-time="meal:2"]'); await page.waitForSelector('#dlgTime'); await page.fill('#dlgTime', '10:40'); await page.click('#dlgOk'); await page.waitForSelector('#dlg', { state: 'hidden' }); await page.waitForTimeout(150); const m2 = await page.$eval('[data-step="meal:2"] .tm', e => ({ b: e.querySelector('b').textContent, late: !!e.querySelector('b.late') })); assert(m2.b === '10:40' && !m2.late, 'edited: ' + JSON.stringify(m2)); if (mode === 'db') { await page.waitForTimeout(200); assert(/T10:40/.test(rt.DB.log_meals['2026-09-16'].meals[2].loggedAt), 'loggedAt saved ' + rt.DB.log_meals['2026-09-16'].meals[2].loggedAt); } await page.click('[data-open="meal:2"]'); await page.waitForSelector('#mTime'); assert((await text('.sheet-body h3')).includes('予定 10:30') && (await text('.sheet-body h3')).includes('記録 10:40'), 'sheet header: ' + (await text('.sheet-body h3'))); await closeSheet(); });
   await T(G.today, '「いま」カード右上は現在時刻（1分ごと更新）、予定時刻は別表示', async () => { assert((await text('#nowClock')) === '07:36', 'clock ' + (await text('#nowClock'))); await setTime('2026-09-16T07:41:00+08:00'); await page.waitForFunction(() => document.querySelector('#nowClock').textContent === '07:41', null, { timeout: 70000 }); assert((await text('#now .k')).includes('予定'), 'planned shown separately'); });
   await shot('02-meal');
+  // 5食目は直前のテストで毎回「未記録」に戻して終わっている。共有 page（9/16・体重記録済み）上で
+  // そのまま検証する（新しい日付・別ページを使うと clock.setFixedTime がブラウザコンテキスト全体
+  // ＝共有 page にも効いてしまい、後続テストを壊すため使わない）
+  await T(G.meal, 'カロリーを手で入力: kcalだけで記録→PFCから計算→合計と脂肪の塊に反映→食事シートにも同じ入口→取り消しで合計から消える', async () => {
+    const total = async () => Number((await page.$eval('.card', e => e.textContent)).match(/カロリー ([\d,]+)/)[1].replace(/,/g, ''));
+    const base = await total();
+    // 食事シートの「変更・追加」欄にも同じ入口があることを確認（存在チェックのみ。実際の記録は今日画面のボタンから行う）
+    await page.click('[data-open="meal:5"]'); await page.waitForSelector('#mChange'); await page.click('#mChange'); await page.waitForSelector('#mcBtn');
+    assert(await page.$('#mcBtn'), '食事シートの「変更・追加」欄に「カロリーを手で入力」の入口がある');
+    await closeSheet();
+    // kcal だけで記録（今日画面のボタンから）。5食目は未記録なのでデフォルトで選ばれる
+    await page.click('#manualCalBtn'); await page.waitForSelector('#mcMeal');
+    assert(await page.$('#mcMeal button[data-meal="5"].on'), '未記録の5食目がデフォルトで選ばれている');
+    await page.fill('#mcK', '450'); await page.click('#mcSave'); await page.waitForSelector('#sheet', { state: 'hidden' });
+    await page.waitForFunction((t) => { const m = document.querySelector('.card').textContent.match(/カロリー (\d[\d,]*)/); return m && Number(m[1].replace(/,/g, '')) === t; }, base + 450, { timeout: 20000 });
+    assert((await text('[data-step="meal:5"]')).includes('✏️'), '手入力のラベル（✏️）が今日画面に出る');
+    assert((await total()) === base + 450, 'kcalだけで記録できる: +450: ' + (await total()) + ' (base ' + base + ')');
+    // PFC から kcal を計算（同じ今日画面のボタンから、2件目として追加）
+    await page.click('#manualCalBtn'); await page.waitForSelector('#mcMeal'); await page.click('#mcMeal button[data-meal="5"]');
+    await page.fill('#mcName', 'コンビニ弁当'); await page.fill('#mcP', '20'); await page.fill('#mcF', '15'); await page.fill('#mcC', '60'); await page.click('#mcCalc');
+    assert((await page.$eval('#mcK', e => e.value)) === '455', 'PFCから計算(20×4+15×9+60×4=455): ' + (await page.$eval('#mcK', e => e.value)));
+    await page.click('#mcSave'); await page.waitForSelector('#sheet', { state: 'hidden' });
+    await page.waitForFunction((t) => { const m = document.querySelector('.card').textContent.match(/カロリー (\d[\d,]*)/); return m && Number(m[1].replace(/,/g, '')) === t; }, base + 905, { timeout: 20000 });
+    assert((await total()) === base + 905, '1日合計に反映(+450+455=+905): ' + (await total()) + ' (base ' + base + ')');
+    const bal = await page.evaluate(() => window.__tl.dayCalorieBalance('2026-09-16'));
+    assert(bal && Math.round(bal.intake) === (await total()), '脂肪の塊の計算(dayCalorieBalance)にも反映: intake=' + (bal && bal.intake) + ' / 合計=' + (await total()));
+    // 名前を付けた食品が foods に入り、次回検索（同じ名前）で呼び出せる
+    const matched = await page.evaluate(() => { const f = window.__tl.matchFood('コンビニ弁当'); return f && { nameJa: f.nameJa, source: f.source, kcal: f.kcal, p: f.p }; });
+    assert(matched && matched.source === 'manual' && matched.kcal === 455 && matched.p === 20, '名前を付けた食品が foods に入り、次回検索で呼び出せる: ' + JSON.stringify(matched));
+    // 取り消しで合計から消える（他の記録と同じ × ソフト削除）
+    await page.click('[data-open="meal:5"]'); await page.waitForSelector('.list .it .x'); await page.click('.list .it .x'); await page.waitForTimeout(200);
+    assert((await total()) === base + 455, '取り消しで合計から消える(+905-450=+455): ' + (await total()) + ' (base ' + base + ')');
+    await closeSheet();
+    // 5食目を未記録に戻して後続テストに影響しないようにする
+    await page.click('[data-open="meal:5"]'); await page.waitForSelector('#mCancel'); await page.click('#mCancel'); await dlgOk(); await page.waitForSelector('#sheet', { state: 'hidden' }); await page.waitForTimeout(150);
+    assert((await total()) === base, '後片付け: 5食目を未記録に戻し合計を base に戻す: ' + (await total()));
+    return 'kcalだけで記録・PFCから計算・合計と脂肪の塊への反映・食事シートの入口・食品の再利用・取り消しを確認';
+  });
 
   // ============ 筋トレ ============
   await T(G.workout, '必ずウォームアップから始まり、6種が完了扱いになるまで「筋トレを始める」が押せない', async () => { await goTab('workout'); await page.waitForSelector('#wuStart'); assert((await text('.cur-set .n')).includes('ウォームアップ 6種'), 'warmup first'); assert((await text('#wuProg')).includes('6種中 0種 完了'), 'progress'); await page.click('#wuStart'); await page.waitForTimeout(100); assert(await has('#wuStart'), 'still warmup'); assert((await text('#toast')).includes('ウォームアップがまだです'), 'blocked toast'); });
@@ -520,6 +558,7 @@ async function run(mode) {
 | 21 | 「落ちた脂肪」の追加で、既存の30日体重グラフと新しい実測/予測グラフの CSS クラスが衝突し点の数が二重にカウントされる。テストが seed した過去の体重/食事/設定（startDate）を後片付けせず、共有 DB を経由して他のテスト（Day 判定・週次レポートなど）まで壊す | 2つの \`.spark\` をページ全体セレクタで区別できていなかった。DB を直接 seed するテストに後片付けが無かった | 30日グラフに \`#weightSpark30\`、脂肪の実測/予測グラフに \`#fatSpark\` の id を付けて区別。DB を直接書き換えるテストはすべて try/finally で seed した日付を削除し settings を元に戻すようにした |
 | 22 | 「食事の記録が3日未満なら塊を出さない」設計が、モチベーション維持という目的に反して「待たせる」ことになっていた | 塊を出す条件が mealDayCount>=3 のゲートになっていた | 1日でも記録があれば初日から塊と数字を表示するよう変更。今日画面にも小さい版（高さ約100px）を追加し「今日 −Nkcal → 脂肪 Ng」「これまで合計 Xkg」を食事記録のたびにリアルタイム更新。累積がプラスの日は塊を出さず「今日 +Nkcal」とだけ表示 |
 | 23 | 休みの日（Day 3・7）でも、有酸素だけの日にウォームアップ6種の画面が必須表示され、待たされる。今日画面にもウォームアップ行が出る。遵守率のウォームアップ分母が休みの日も含めて7になっていた | ウォームアップ画面の判定が isRest を見ていなかった。今日画面のタイムラインと週まとめの分母が休みの日を筋トレの日と同列に数えていた | 休みの日はウォームアップを出さず、筋トレタブを開いたらいきなり有酸素の記録画面（種類・時間・心拍数・記録する／今日はやらない）にした。記録（または「今日はやらない」）で完了画面に進む。今日画面のタイムラインからウォームアップ行を削除。遵守率のウォームアップ分母は筋トレの日（Day1・2・4・5・6）だけを数え「5回中」になる |
+| 24 | 「カロリーを手で入力」テストが mock/db 両方で断続的にタイムアウトし、後片付け前に落ちて次の食事系テストを巻き込んで壊す | (1) 新しい newPage に clock.setFixedTime を使うと、ブラウザコンテキスト全体（共有 page 含む）の時計が変わってしまう。(2) 特定の行のテキスト更新を待つ waitForFunction が、テスト後半（状態が積み上がった時点）でデフォルト8秒に収まらないことがあった。(3) dayCalorieBalance() は r1（小数1桁）、画面表示は Math.round の整数なので、端数のある日は intake と表示値が一致しないことがある | 日付をまたぐ検証はせず、共有 page 上の未記録の食事（5食目）で完結させるよう作り直し。行のテキストではなく合計カードの数値を待つ waitForFunction に変え、タイムアウトを20秒に緩和。dayCalorieBalance との比較は Math.round で揃える |
 
 ## 実行方法
 

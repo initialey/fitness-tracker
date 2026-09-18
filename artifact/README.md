@@ -95,6 +95,7 @@
 - 「この内容で記録」→ 食材を foods に `source:"ai_photo"` で登録（100g 換算）、品目を `estimated:true` で log_meals に追加、写真は assets に保存して log_media（category:"meal", mealNo）に紐付け、meal.photo に assetId／確度／note。assets が無ければ写真はこのセッションのメモリだけに保持して推定・記録は行う
 - 今日画面の「いま」カード直下に「📷 食べたものを写真で記録」を常設。撮影 → どの食事か選ぶ（記録済みなら 追加／置き換え）→ 間食（プラン外）は `log_meals.meals.snack_N` に保存して合計に加算、タイムラインは実績時刻の位置に挿入
 - 今日画面の食事行に 📷（タップでサムネイル）、推定値を含む食事は kcal に「※」。週まとめ「写真記録 N回（推定値含む）」、レポート `(photo-logged: N, estimated values marked ※)`
+- `openManualCalSheet()`: 今日画面の写真ボタン直下の「✏️ カロリーを手で入力」と、食事シート「変更・追加」欄の同名リンクの両方から開く。どの食事か（1〜5食目／間食）のチップ、名前（任意）、kcal（必須）、P/F/C（任意）の入力欄と「PFC から計算」（`P×4+F×9+C×4`）ボタンを持つ。名前を付けると `foods` に `per:'manual'・source:'manual'` で追加し（`grams:1` の等倍換算で kcal/PFC をそのまま保持）、同じ名前を再入力すると `matchFood()` で呼び出せる。保存は他の追加品目と同じ `A.mealApply(...,'add')` を通るため、削除・取り消しも既存の仕組みがそのまま使え、1 日合計・脂肪の塊の計算にも自動で反映される。今日画面の行には手入力を示す「✏️」を付ける（写真の 📷・AI推定の ※ と同じ並びの表記）
 
 ### ダイアログ
 claude.ai のアーティファクトは sandbox iframe のため `confirm()` / `prompt()` は常に false / null を返す。確認・入力・時刻はすべてページ内ダイアログ（`askConfirm` / `askText` / `askTime`）で行う。
@@ -109,7 +110,7 @@ BMR（Mifflin-St Jeor）×活動レベル＋運動消費 を TDEE とし、日�
 
 ## テスト
 
-`npm run e2e:artifact` で mock / db（疑似ランタイム）両モードの 64 項目を実行し、結果を [TEST.md](TEST.md) に書き出す。
+`npm run e2e:artifact` で mock / db（疑似ランタイム）両モードの 65 項目を実行し、結果を [TEST.md](TEST.md) に書き出す。
 
 ## モックモード
 

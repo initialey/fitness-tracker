@@ -5,7 +5,7 @@
 - **mock**: `window.claude` なし → メモリ上のモックモード
 - **db**: `claude.use("db"/"assets"/"sample"/"downloads")` を疑似ランタイムで注入（db は Node 側に永続し、再読み込み・二重オープンを再現。実際の claude.ai ランタイムではなく API 形状を模したもの）
 
-合計 64 項目 ／ NG 0 件 ／ ページエラー mock 0 件・db 0 件
+合計 65 項目 ／ NG 0 件 ／ ページエラー mock 0 件・db 0 件
 
 ## 共通
 
@@ -17,7 +17,7 @@
 | db スキーマ: log_weight{value,unit,skipped,skipReason,loggedAt} / warmup{completed,minutes,loggedAt} / meals{status: plan|substitute|skip|photo, photoId, reason} / log_daily{dayNo,dayName,notes,skippedItems[]} | ✓ | ✓ | db のみ / statuses=plan,plan,skip,substitute / 9/16 skippedItems=meal 3 |
 | 英略語（W/MAIN/TOP/BO/DROP/PRE/FINAL）がUIに出ない | ✓ | ✓ |  |
 | 数だけの表示（7種、1種）がない | ✓ | ✓ |  |
-| 同日に2回開いても二重保存されない | ✓ | ✓ | db のみ / docs: {"log_workout":4,"plan_days":7,"plan_exercises":45,"plan_warmup":6,"plan_meals":5,"plan_supplements":8,"plan_routine":3,"foods":21,"settings":1,"log_weight":2,"log_daily":5,"log_routine":2,"log_meals":1,"log_supplements":2,"log_media":2,"log_cardio":2} |
+| 同日に2回開いても二重保存されない | ✓ | ✓ | db のみ / docs: {"log_workout":4,"plan_days":7,"plan_exercises":45,"plan_warmup":6,"plan_meals":5,"plan_supplements":8,"plan_routine":3,"foods":23,"settings":1,"log_weight":2,"log_daily":5,"log_routine":2,"log_meals":1,"log_supplements":2,"log_media":2,"log_cardio":2} |
 
 ## 今日画面
 
@@ -50,6 +50,7 @@
 | 米の基準（生/炊飯後）表示が settings に連動 | ✓ | ✓ |  |
 | 状態4種の表示: 未記録○ / プラン通り緑✓ / 変更あり黄✓ / スキップ赤− | ✓ | ✓ |  |
 | スキップ→取り消し→プラン通り→取り消し→変更→取り消し: 毎回 未記録に戻り合計が0 | ✓ | ✓ | base=1751 kcal に毎回戻る / base=1524 kcal に毎回戻る |
+| カロリーを手で入力: kcalだけで記録→PFCから計算→合計と脂肪の塊に反映→食事シートにも同じ入口→取り消しで合計から消える | ✓ | ✓ | kcalだけで記録・PFCから計算・合計と脂肪の塊への反映・食事シートの入口・食品の再利用・取り消しを確認 / kcalだけで記録・PFCから計算・合計と脂肪の塊への反映・食事シートの入口・食品の再利用・取り消しを確認 |
 
 ## 筋トレ画面
 
@@ -104,7 +105,7 @@
 | 推定 JSON の parse 失敗時にアプリが落ちず、手入力に切替できる | ✓ | ✓ | 写真ボタン非表示のため対象外 |
 | 画像非対応（limits.images 無し）でも写真ボタンと「AIで推定」は出る（sample があれば、limits() を信じず実際に呼んで判断）。失敗したら案内→手入力に切替、写真はメモとして残る | ✓ | ✓ | sample null で非表示（上で確認） |
 | assets null で推定だけ動く（写真はメモリ保持、記録は保存） | ✓ | ✓ | db のみ |
-| 縦長・横長・大きい写真（10MB超）で送信前にリサイズ（長辺1280px、JPEG 0.8）して成功する | ✓ | ✓ | 25.2MB PNG → 607KB JPEG 1280×960 / 25.2MB PNG → 608KB JPEG 1280×960 |
+| 縦長・横長・大きい写真（10MB超）で送信前にリサイズ（長辺1280px、JPEG 0.8）して成功する | ✓ | ✓ | 25.2MB PNG → 608KB JPEG 1280×960 / 25.2MB PNG → 607KB JPEG 1280×960 |
 
 ## テスト中に見つけて修正した内容
 
@@ -133,6 +134,7 @@
 | 21 | 「落ちた脂肪」の追加で、既存の30日体重グラフと新しい実測/予測グラフの CSS クラスが衝突し点の数が二重にカウントされる。テストが seed した過去の体重/食事/設定（startDate）を後片付けせず、共有 DB を経由して他のテスト（Day 判定・週次レポートなど）まで壊す | 2つの `.spark` をページ全体セレクタで区別できていなかった。DB を直接 seed するテストに後片付けが無かった | 30日グラフに `#weightSpark30`、脂肪の実測/予測グラフに `#fatSpark` の id を付けて区別。DB を直接書き換えるテストはすべて try/finally で seed した日付を削除し settings を元に戻すようにした |
 | 22 | 「食事の記録が3日未満なら塊を出さない」設計が、モチベーション維持という目的に反して「待たせる」ことになっていた | 塊を出す条件が mealDayCount>=3 のゲートになっていた | 1日でも記録があれば初日から塊と数字を表示するよう変更。今日画面にも小さい版（高さ約100px）を追加し「今日 −Nkcal → 脂肪 Ng」「これまで合計 Xkg」を食事記録のたびにリアルタイム更新。累積がプラスの日は塊を出さず「今日 +Nkcal」とだけ表示 |
 | 23 | 休みの日（Day 3・7）でも、有酸素だけの日にウォームアップ6種の画面が必須表示され、待たされる。今日画面にもウォームアップ行が出る。遵守率のウォームアップ分母が休みの日も含めて7になっていた | ウォームアップ画面の判定が isRest を見ていなかった。今日画面のタイムラインと週まとめの分母が休みの日を筋トレの日と同列に数えていた | 休みの日はウォームアップを出さず、筋トレタブを開いたらいきなり有酸素の記録画面（種類・時間・心拍数・記録する／今日はやらない）にした。記録（または「今日はやらない」）で完了画面に進む。今日画面のタイムラインからウォームアップ行を削除。遵守率のウォームアップ分母は筋トレの日（Day1・2・4・5・6）だけを数え「5回中」になる |
+| 24 | 「カロリーを手で入力」テストが mock/db 両方で断続的にタイムアウトし、後片付け前に落ちて次の食事系テストを巻き込んで壊す | (1) 新しい newPage に clock.setFixedTime を使うと、ブラウザコンテキスト全体（共有 page 含む）の時計が変わってしまう。(2) 特定の行のテキスト更新を待つ waitForFunction が、テスト後半（状態が積み上がった時点）でデフォルト8秒に収まらないことがあった。(3) dayCalorieBalance() は r1（小数1桁）、画面表示は Math.round の整数なので、端数のある日は intake と表示値が一致しないことがある | 日付をまたぐ検証はせず、共有 page 上の未記録の食事（5食目）で完結させるよう作り直し。行のテキストではなく合計カードの数値を待つ waitForFunction に変え、タイムアウトを20秒に緩和。dayCalorieBalance との比較は Math.round で揃える |
 
 ## 実行方法
 
