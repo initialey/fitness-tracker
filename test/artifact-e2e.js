@@ -194,7 +194,45 @@ async function run(mode) {
     const rep = await page.$eval('#repDay', e => e.value); assert(rep.startsWith('Day 1 Push — Sep 16 (Wed)') && rep.includes('Duration:') && rep.includes('Warm-up: done (6 moves x 2 sets') && rep.includes('Pre-exhaust: Cable fly') && /1\. Incline DB press — .*\(top\).*\(back-off\)/.test(rep) && /4\. Pec deck \+ plate shoulder front raise \(superset\) — [\d.]+x\d+\/[\d.]+x\d+/.test(rep) && /5\. DB lateral raise.* \+ drop [\d.]+x\d+/.test(rep) && rep.includes('Abs: bodyweight x2, bodyweight x2, bodyweight x2') && rep.includes('Cardio: incline walk 40 min @ 128 bpm') && rep.includes('Notes:'), 'report: ' + rep); assert(!/\b0x0\b|0kg/.test(rep), 'report has no 0x0');
     await page.fill('#repDay', rep + '\nextra'); await page.click('#repCopy'); await page.waitForFunction(() => /コピー/.test(document.querySelector('#toast').textContent), null, { timeout: 5000 }); assert((await text('#toast')).includes('コピー'), 'copy toast'); await page.click('#cmpBack'); await page.waitForTimeout(150); assert((await page.$eval('.tabs .on', e => e.dataset.tab)) === 'today', 'back to today'); assert((await page.$eval('[data-step="workout"]', e => e.className)).includes('done'), 'workout done'); assert((await text('[data-step="workout"]')).includes('全22セット中 22セット完了'), 'set count with denominator (superset = 1): ' + (await text('[data-step="workout"]'))); assert((await text('[data-step="cardio"]')).includes('傾斜歩き 40分'), 'cardio row'); { const bg = await page.$eval('.step.done .row', e => getComputedStyle(e).backgroundColor); assert(bg !== 'rgba(0, 0, 0, 0)' && bg !== 'rgb(0, 0, 0)', 'done row not black: ' + bg); const tmCss = await page.$eval('.step.done .tm', e => [getComputedStyle(e).display, getComputedStyle(e).alignItems, !!e.querySelector('small')]); assert(tmCss[0] === 'flex' && tmCss[1] === 'flex-end' && tmCss[2], 'time column right-aligned with planned below: ' + tmCss.join(',')); } assert((await mark('accessory')).startsWith('ok|') && (await text('[data-step="accessory"]')).includes('自重×2'), 'abs row done: ' + (await text('[data-step="accessory"]'))); await goTab('workout'); await page.waitForSelector('#repDay'); assert((await page.$eval('#repDay', e => e.value)).endsWith('extra'), 'edited report kept while open'); await page.click('#cmpReview'); await page.waitForSelector('#setDone'); await goTab('today'); });
   await shot('04-workout-done');
-  await T(G.workout, 'Day3・Day7 はウォームアップ→有酸素のみ（筋トレ・腹筋/カーフなし）', async () => { await goTab('today'); await page.click('[data-shift="1"]'); await page.click('[data-shift="1"]'); assert((await text('h1')).startsWith('Day 3'), 'day3'); const rows = await page.$$eval('.step', els => els.map(e => e.dataset.step)); assert(!rows.includes('workout') && !rows.includes('accessory') && rows.indexOf('warmup') === rows.indexOf('cardio') - 1, 'warmup → cardio, no abs/calves: ' + rows.join(',')); await goTab('workout'); await page.waitForSelector('#wuStart'); assert((await text('#wuStart')) === '有酸素を始める', 'button text'); for (let id = 1; id <= 6; id++) { await page.click('[data-wuset="' + id + '"]'); await page.click('[data-wuset="' + id + '"]'); } await page.waitForFunction(() => document.querySelector('#wuProg').textContent.includes('6種 完了')); await page.click('#wuStart'); await page.waitForSelector('#rcardio'); assert((await text('.now .t')).includes('休み ・ 有酸素のみ'), 'rest card'); await goTab('today'); await page.click('[data-shift="-1"]'); await page.click('[data-shift="-1"]'); });
+  await T(G.workout, 'Day3・Day7 は休み（有酸素のみ）: ウォームアップ画面を出さず有酸素の記録画面へ直行。記録すると完了画面に進む', async () => {
+    await goTab('today'); await page.click('[data-shift="1"]'); await page.click('[data-shift="1"]'); assert((await text('h1')).startsWith('Day 3'), 'day3');
+    const rows = await page.$$eval('.step', els => els.map(e => e.dataset.step));
+    assert(!rows.includes('workout') && !rows.includes('accessory') && !rows.includes('warmup') && rows.includes('cardio'), '今日画面: 筋トレ・腹筋/カーフ・ウォームアップの行が無く、有酸素の行だけある: ' + rows.join(','));
+    assert((await text('#tabWorkoutIc')) === '有酸素', '下部タブのアイコンが「有酸素」に変わる: ' + (await text('#tabWorkoutIc')));
+    assert((await text('#tabWorkout')) === 'Day 3 休み', '下部タブのサブテキスト: ' + (await text('#tabWorkout')));
+    await goTab('workout'); await page.waitForSelector('#rcType');
+    assert(!(await page.$('#wuStart')), 'ウォームアップ画面が出ない（#wuStart が無い）');
+    assert((await text('h1')) === 'Day 3 ・ 休み（有酸素のみ）', 'title: ' + (await text('h1')));
+    await page.fill('#rcMin', '38'); await page.click('#rcSave');
+    await page.waitForSelector('.ex-head h1');
+    assert((await text('.ex-head h1')).includes('完了'), '有酸素の記録だけで完了画面に進める: ' + (await text('.ex-head h1')));
+    const viewTxt = await page.locator('#view').textContent();
+    assert(viewTxt.includes('傾斜歩き') && viewTxt.includes('38分'), '記録した有酸素の内容が完了画面に出る: ' + viewTxt);
+    assert(!(await page.$('#cmpReview')), '休みの日は「セットを見直す」を出さない');
+    await page.click('#cmpBack'); await page.waitForTimeout(150);
+    assert((await page.$eval('.tabs .on', e => e.dataset.tab)) === 'today', 'back to today');
+    assert(!(await page.$('[data-step="warmup"]')), '今日画面にウォームアップ行が出ない');
+    assert((await text('[data-step="cardio"]')).includes('傾斜歩き 38分'), '今日画面の有酸素行に反映: ' + (await text('[data-step="cardio"]')));
+    await page.click('[data-shift="-1"]'); await page.click('[data-shift="-1"]');
+  });
+  await T(G.week, '週まとめの遵守率: ウォームアップの分母は筋トレの日（Day1・2・4・5・6）だけ。休みの日（Day3・7）は対象外', async () => { if (mode === 'mock') return 'db のみ（weekAdherence は window.__tl 経由）';
+    const days = { day1: '2026-12-02', day2: '2026-12-03', day4: '2026-12-05', day5: '2026-12-06', day6: '2026-12-07', day7end: '2026-12-08' };
+    const range = { start: days.day1, end: days.day7end };
+    const targets = [days.day1, days.day2, days.day4, days.day5, days.day6];
+    const saved = {}; targets.forEach(d => { if (rt.DB.log_workout[d]) saved[d] = rt.DB.log_workout[d]; });
+    try {
+      [days.day1, days.day2, days.day4].forEach(d => rt.op('set', { coll: 'log_workout', id: d, data: { date: d, sets: {}, warmup: { done: '08:00', completed: true } } }));
+      const p = await newPage(); await p.clock.setFixedTime(new Date(days.day7end + 'T20:00:00+08:00')); await p.reload(); await p.waitForFunction(() => !document.querySelector('#view .loading'));
+      const a = await p.evaluate((r) => window.__tl.weekAdherence(r), range);
+      assert(a.warmup.planned === 5, 'ウォームアップの分母は筋トレの日5日だけ（休みの日2日は含めない）: ' + a.warmup.planned);
+      assert(a.warmup.done === 3, 'ウォームアップ完了は3/5: ' + a.warmup.done);
+      await p.click('.tabs [data-tab="summary"]'); await p.waitForSelector('.stat');
+      const statTxt = await p.locator('.stat').textContent();
+      assert(/ウォームアップ 3\/5/.test(statTxt), '週まとめに「ウォームアップ 3/5」と出る: ' + statTxt);
+      await p.close();
+      return 'ウォームアップの分母が筋トレの日5日のみになり「3/5」と表示されることを確認';
+    } finally { targets.forEach(d => { if (saved[d]) rt.op('set', { coll: 'log_workout', id: d, data: saved[d] }); else rt.op('del', { coll: 'log_workout', id: d }); }); }
+  });
   await T(G.workout, '全7日確定版: Day2 Pull 8種目＋カーフ / Day4 Legs 8種目＋腹筋 / Day5 Shoulder & Arms 8種目＋カーフ / Day6 Pull 8種目＋腹筋。ドロップ「限界まで」とスーパーセットの組展開', async () => { await goTab('today'); const wk = async () => text('[data-step="workout"]'); try {
     await page.click('[data-shift="1"]'); assert((await text('[data-step="accessory"]')).includes('カーフ: スミス カーフレイズ'), 'Day2 calves'); assert((await text('h1')).startsWith('Day 2') && (await wk()).includes('Pull ・ 8種目') && (await wk()).includes('Vバー ロウ（事前疲労）・ベントオーバーロウ') && (await wk()).includes('ほか5種目') && !(await wk()).includes('ラックプル'), 'Day2: ' + (await wk()));
     await page.click('[data-shift="1"]'); await page.click('[data-shift="1"]'); assert((await text('[data-step="accessory"]')).includes('腹筋'), 'Day4 abs'); assert((await text('h1')).startsWith('Day 4') && (await wk()).includes('Legs ・ 8種目') && (await wk()).includes('ダンベル RDL（事前疲労）・自重スクワット（事前疲労）') && (await wk()).includes('ほか5種目'), 'Day4: ' + (await wk()));
@@ -481,6 +519,7 @@ async function run(mode) {
 | 20 | 最終種目（例: Day2 カーフ）に到達した時点で、その種目の 1 セット目でも「筋トレ完了」ボタンになり、未記録のまま完了画面に飛べてしまう。種目が変わっても画面が最上部にスクロールされず、種目名や進捗が見切れる。「初回なので目安なし」のヒントがクイック選択後も残って前回値と誤解されうる | ボタンの判定が「最終種目かどうか」だけで、\`e === ex\`（今の種目を見ているだけ）で最終セットかどうかを見ていなかった。遷移時に scrollTo が無かった | 「筋トレ完了」は全種目・全セットが記録済みの時だけ出すよう判定を単純化。種目・セットが変わる遷移（前後の種目、セット完了、休憩明けの自動進行）すべてで最上部へスクロール。クイック重量を選んだらヒント文を「選んだ重さ」に差し替え |
 | 21 | 「落ちた脂肪」の追加で、既存の30日体重グラフと新しい実測/予測グラフの CSS クラスが衝突し点の数が二重にカウントされる。テストが seed した過去の体重/食事/設定（startDate）を後片付けせず、共有 DB を経由して他のテスト（Day 判定・週次レポートなど）まで壊す | 2つの \`.spark\` をページ全体セレクタで区別できていなかった。DB を直接 seed するテストに後片付けが無かった | 30日グラフに \`#weightSpark30\`、脂肪の実測/予測グラフに \`#fatSpark\` の id を付けて区別。DB を直接書き換えるテストはすべて try/finally で seed した日付を削除し settings を元に戻すようにした |
 | 22 | 「食事の記録が3日未満なら塊を出さない」設計が、モチベーション維持という目的に反して「待たせる」ことになっていた | 塊を出す条件が mealDayCount>=3 のゲートになっていた | 1日でも記録があれば初日から塊と数字を表示するよう変更。今日画面にも小さい版（高さ約100px）を追加し「今日 −Nkcal → 脂肪 Ng」「これまで合計 Xkg」を食事記録のたびにリアルタイム更新。累積がプラスの日は塊を出さず「今日 +Nkcal」とだけ表示 |
+| 23 | 休みの日（Day 3・7）でも、有酸素だけの日にウォームアップ6種の画面が必須表示され、待たされる。今日画面にもウォームアップ行が出る。遵守率のウォームアップ分母が休みの日も含めて7になっていた | ウォームアップ画面の判定が isRest を見ていなかった。今日画面のタイムラインと週まとめの分母が休みの日を筋トレの日と同列に数えていた | 休みの日はウォームアップを出さず、筋トレタブを開いたらいきなり有酸素の記録画面（種類・時間・心拍数・記録する／今日はやらない）にした。記録（または「今日はやらない」）で完了画面に進む。今日画面のタイムラインからウォームアップ行を削除。遵守率のウォームアップ分母は筋トレの日（Day1・2・4・5・6）だけを数え「5回中」になる |
 
 ## 実行方法
 
