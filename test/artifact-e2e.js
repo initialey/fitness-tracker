@@ -204,10 +204,10 @@ async function run(mode) {
   await T(G.workout, 'アニメーション・3ステップ・動画リンク・セットカウンターが6種すべてで動く', async () => { const n = await page.$$eval('.wu', els => els.length); assert(n === 6, '6 cards'); const anims = await page.$$eval('.wu svg.anim', els => els.map(e => e.className.baseVal)); assert(anims.length === 6 && new Set(anims).size === 6, 'six distinct animations: ' + anims.join(',')); const running = await page.$$eval('.wu svg .armL, .wu svg .pelvis, .wu svg .upper', els => els.map(e => getComputedStyle(e).animationName).filter(a => a && a !== 'none').length); assert(running >= 6, 'css animations running: ' + running); const steps = await page.$$eval('.wu ol', els => els.map(e => e.querySelectorAll('li').length)); assert(steps.every(x => x === 3), '3 steps each'); const links = await page.$$eval('.wu .vid a', els => els.map(e => e.href)); assert(links.length === 6 && links.every(l => l.includes('youtube.com/results') && l.includes('warm')), 'video links');
     for (let id = 1; id <= 6; id++) { await page.click('[data-wuset="' + id + '"]'); await page.waitForFunction(i => document.querySelector('#wu' + i + ' .sc').textContent.includes('1/2'), id); await page.click('[data-wuset="' + id + '"]'); await page.waitForFunction(i => document.querySelector('#wu' + i + ' .sc').textContent.includes('2/2'), id); }
     assert((await text('#wuProg')).includes('6種中 6種 完了'), '2/2 = done'); assert(await page.$eval('#wu1 .sc', e => e.classList.contains('ok')), 'green at 2/2'); assert(await page.$eval('[data-wuset="1"]', e => e.disabled), '2/2 disables'); await page.click('[data-wuundo="1"]'); await page.waitForFunction(() => document.querySelector('#wu1 .sc').textContent.includes('1/2')); assert((await text('#wuProg')).includes('6種中 5種 完了'), 'undo → 5'); await page.click('#wuStart'); await page.waitForTimeout(100); assert(await has('#wuStart') && (await text('#toast')).includes('ウォームアップがまだです'), 'blocked at 5/6'); await page.click('[data-wuset="1"]'); await page.waitForFunction(() => document.querySelector('#wu1 .sc').textContent.includes('2/2')); await shot('03-warmup'); await page.click('#wuStart'); await page.waitForSelector('#setDone'); if (mode === 'db') { await page.waitForTimeout(200); const w = rt.DB.log_workout['2026-09-16'].warmup; assert(w.done && w.minutes >= 1, 'warmup minutes saved: ' + JSON.stringify(w)); return 'minutes=' + w.minutes; } });
-  await T(G.workout, 'セット一覧（完了=実績値、現在=黄、未=薄）、タップで前セットに戻れる', async () => { assert((await text('.setrows .sr.cur')).includes('← いまここ'), 'cur'); assert((await text('.ghost')).includes(mode === 'db' ? '前回' : '初回なので目安なし'), 'ghost'); if (mode === 'mock') await page.click('[data-qk="10"]'); await page.click('#setDone'); await page.waitForSelector('#rest:not([hidden])'); { const rw = await text('#rn'); assert(rw === '2:00' || rw === '1:59', 'pre-exhaust main rest 120s: ' + rw); } await page.click('#skipRest'); await page.waitForSelector('#setDone:not([hidden])'); const done = await text('.setrows .sr.done .rv'); assert(/kg×1\d/.test(done), 'done row actual: ' + done); assert((await text('.setrows .sr.cur .nm')).includes('2セット目'), 'moved to set2'); await page.click('[data-set="0"]'); await page.waitForTimeout(100); assert((await text('.setrows .sr.cur .nm')).includes('1セット目'), 'back to set1'); assert(!/0kg×0|kg×0\b/.test(await text('.setrows')), 'no 0kg×0'); assert((await text('.ghost')).includes('記録済み'), 'shows recorded'); await page.click('[data-set="1"]'); });
+  await T(G.workout, 'セット一覧（完了=実績値、現在=黄、未=薄）、タップで前セットに戻れる', async () => { assert((await text('.setrows .sr.cur')).includes('← いまここ'), 'cur'); assert((await text('.ghost')).includes(mode === 'db' ? '前回' : '初回です'), 'ghost'); if (mode === 'mock') await page.click('[data-qk="10"]'); await page.click('#setDone'); await page.waitForSelector('#rest:not([hidden])'); { const rw = await text('#rn'); assert(rw === '2:00' || rw === '1:59', 'pre-exhaust main rest 120s: ' + rw); } await page.click('#skipRest'); await page.waitForSelector('#setDone:not([hidden])'); const done = await text('.setrows .sr.done .rv'); assert(/kg×1\d/.test(done), 'done row actual: ' + done); assert((await text('.setrows .sr.cur .nm')).includes('2セット目'), 'moved to set2'); await page.click('[data-set="0"]'); await page.waitForTimeout(100); assert((await text('.setrows .sr.cur .nm')).includes('1セット目'), 'back to set1'); assert(!/0kg×0|kg×0\b/.test(await text('.setrows')), 'no 0kg×0'); assert((await text('.ghost')).includes('記録済み'), 'shows recorded'); await page.click('[data-set="1"]'); });
   await T(G.workout, '前回値なし→クイック重量ボタン。前回値あり→提案（トップ 上限到達で +5%／ダンベルは +1kg、バックオフ トップ×0.85、ドロップ 直前×0.7）', async () => { await gotoEx(1); assert((await text('.ex-name')).includes('インクライン'), 'ex2');
     if (mode === 'mock') { assert(await has('[data-qk]'), 'quick buttons'); return '前回値なし → クイック重量'; }
-    await page.click('[data-set="1"]'); await page.waitForTimeout(80); const g = await text('.ghost'); assert(g.includes('前回 09-09 22kg×8') && g.includes('23kg') && g.includes('上限到達'), 'TOP suggest: ' + g); assert((await text('#wv')) === '23', 'wv 23');
+    await page.click('[data-set="1"]'); await page.waitForTimeout(80); const g = await text('.ghost'); assert(g.includes('前回 9/9（7日前）') && g.includes('22kg×8') && g.includes('23kg') && g.includes('上限到達'), 'TOP suggest: ' + g); assert((await text('#wv')) === '23', 'wv 23');
     await page.click('[data-set="2"]'); await page.waitForTimeout(80); assert((await text('.cur-set .n')).includes('バックオフ'), 'back-off set'); assert((await text('#wv')) === '20', 'BO 23×0.85=20: ' + (await text('#wv'))); assert((await text('.cur-set .p')).includes('トップより軽くして') && (await text('.cur-set .p')).includes('目安 20kg'), 'BO purpose: ' + (await text('.cur-set .p')));
     await gotoEx(5); assert((await text('.ex-name')).includes('サイドレイズ'), 'ex5'); await page.click('[data-set="0"]'); await page.waitForTimeout(80); assert((await text('#wv')) === '11', 'MAIN 10×12(上限)→11: ' + (await text('#wv'))); await page.click('[data-set="1"]'); await page.waitForTimeout(80); assert((await text('#wv')) === '12' && (await text('.ghost')).includes('プログレッシブ'), 'progressive set2 11→12: ' + (await text('.ghost'))); await page.click('[data-set="3"]'); await page.waitForTimeout(80); assert((await text('.cur-set .n')).includes('ドロップセット'), 'drop set'); assert((await text('#wv')) === '9', 'DROP 直前 13(12×1.05)×0.7=9: ' + (await text('#wv'))); assert((await text('.cur-set .p')).includes('休憩なし') && (await text('.cur-set .p')).includes('−30%') && (await text('.cur-set .p')).includes('目安 9kg'), 'DROP purpose: ' + (await text('.cur-set .p'))); assert((await text('.dropfig')).includes('→（休まず）→') && (await text('.dropfig')).includes('9kg'), 'drop figure: ' + (await text('.dropfig'))); const bk = await page.evaluate(() => [window.__tl.bumpKg(40, false, 2), window.__tl.bumpKg(10, false, 2), window.__tl.bumpKg(22, true, 1)]); assert(bk[0] === 42 && bk[1] === 11 && bk[2] === 23, 'bump +5%/+1kg: ' + bk.join(',')); await gotoEx(0); return 'ダンベル トップ 22×8(上限)→23kg / バックオフ 23×0.85=20kg / メイン 10×12(上限)→11kg → プログレッシブ 12kg・13kg / ドロップ 13×0.7=9kg / バー 40kg→42kg(+5%)'; });
   await T(G.workout, 'Day1 確定版: 8種目＋腹筋、スーパーセットは ①→②→休憩→①→② の順、プログレッシブ説明、ドロップは休憩なしで即開始', async () => { assert((await text('.ex-head .p')).includes('/9'), '8 exercises + abs'); const names = []; for (let k = 0; k < 9; k++) { await gotoEx(k); names.push(await text('.ex-name')); } assert(names[0].includes('事前疲労') && names[2].includes('マシン インクラインプレス') && names[4].includes('スーパーセット') && names[7].includes('アンダーハンド') && names[8].includes('腹筋') && names[8].includes('コーチ確認中'), 'names: ' + names.join(' / '));
@@ -461,6 +461,134 @@ async function run(mode) {
       await p2.close();
       return '①7kg×10,8kg×8 ・ ②5kg×10,6kg×8 が完全に独立（保存・提案・休憩・一覧・完了画面・レポートすべて確認）';
     } finally { rt.op('del', { coll: 'log_workout', id: D }); rt.op('del', { coll: 'log_daily', id: D }); rt.op('del', { coll: 'log_cardio', id: D }); }
+  });
+  await T(G.workout, 'パデルを有酸素の選択肢に追加：30分単位・強度3段階・kcal自動計算・Zone2とは別枠で今日画面/脂肪計算/週まとめに反映', async () => {
+    const D = '2027-06-01';
+    const p2 = await newPage(); p2.setDefaultTimeout(20000);
+    await p2.click('.tabs [data-tab="today"]');
+    await p2.clock.setFixedTime(new Date(D + 'T06:50:00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading'));
+    await p2.click('.tabs [data-tab="today"]');
+    try {
+      // 体重72kgを記録（パデルのkcal計算の基準）
+      await p2.click('[data-open="weight"]'); await p2.waitForSelector('#shSave');
+      await p2.fill('#shW', '72'); await p2.click('#shSave'); await p2.waitForFunction(() => document.querySelector('[data-step="weight"]').className.includes('done'));
+      await p2.click('[data-open="cardio"]'); await p2.waitForSelector('#cType');
+      const chips = await p2.$$eval('#cType button', els => els.map(e => e.textContent));
+      assert(chips.includes('パデル'), '有酸素の選択肢にパデルがある: ' + chips.join(','));
+      assert(await p2.$eval('#cPadelBlock', e => e.hidden), 'デフォルト（傾斜歩き）ではパデル専用欄は隠れている');
+      await p2.click('#cType [data-t="padel"]');
+      assert(!(await p2.$eval('#cPadelBlock', e => e.hidden)), 'パデルを選ぶと時間プリセット・強度・kcalプレビューが出る');
+      // 30分単位のボタンで時間が入る
+      await p2.click('#cPadelMin [data-pmin="60"]');
+      assert((await p2.$eval('#cMin', e => e.value)) === '60', '60分ボタンで分数が入る');
+      assert((await p2.locator('#cKcalPreview').textContent()) === '約 504 kcal', '体重72kg・ふつう(METs7.0)・60分 → 504kcal: ' + (await p2.locator('#cKcalPreview').textContent()));
+      // 「+30分」ボタンで加算
+      await p2.click('#cPadelMin [data-pmin="+30"]');
+      assert((await p2.$eval('#cMin', e => e.value)) === '90', '+30分ボタンで加算される');
+      assert((await p2.locator('#cKcalPreview').textContent()) === '約 756 kcal', '90分 → 756kcal: ' + (await p2.locator('#cKcalPreview').textContent()));
+      // 強度3段階で数値が変わる（激しめ METs8.5）
+      await p2.click('#cIntensity [data-int="hard"]');
+      assert((await p2.locator('#cKcalPreview').textContent()) === '約 918 kcal', '強度「激しめ」(8.5)で90分 → 918kcal: ' + (await p2.locator('#cKcalPreview').textContent()));
+      // 自由入力（分）でも再計算される（軽め METs5.5・120分）
+      await p2.click('#cIntensity [data-int="light"]'); await p2.fill('#cMin', '120');
+      assert((await p2.locator('#cKcalPreview').textContent()) === '約 792 kcal', '自由入力120分・軽め(5.5) → 792kcal: ' + (await p2.locator('#cKcalPreview').textContent()));
+      // ふつう・90分で保存
+      await p2.click('#cIntensity [data-int="normal"]'); await p2.fill('#cMin', '90');
+      await p2.click('#cSave'); await p2.waitForTimeout(200);
+      // 今日画面: 「パデル 90分 ・ 約756 kcal」＋ Zone2とは別物の注意書き。予定は達成扱い
+      const cardioRow = await p2.locator('[data-step="cardio"]').textContent();
+      assert(cardioRow.includes('パデル 90分') && cardioRow.includes('約756 kcal') && cardioRow.includes('Zone 2 とは別物です') && cardioRow.includes('コーチに伝えておく'), '今日画面にパデル記録とZone2の注意書き: ' + cardioRow);
+      assert((await p2.$eval('[data-step="cardio"]', e => e.dataset.mark)) === 'ok', '有酸素の予定は達成扱い');
+      // 脂肪の計算（TDEEの運動分）に反映される
+      const exVal = await p2.evaluate(ds => window.__tl.exerciseKcalFor(ds, 72), D);
+      assert(Math.round(exVal) === 756, '脂肪の計算に使う運動消費kcalにパデルが反映される（756kcal）: ' + exVal);
+      // 週まとめ・コーチ向けレポートに Zone 2 とは分けて出る
+      const wa = await p2.evaluate(ds => window.__tl.weekAdherence({ start: ds, end: ds }).cardio, D);
+      assert(wa.padel.count === 1 && wa.padel.minutes === 90 && wa.zone2.count === 0, 'weekAdherence でパデルと Zone 2 が分離: ' + JSON.stringify(wa));
+      const rep = await p2.evaluate(() => window.__tl.weeklyReport());
+      assert(rep.includes('Cardio:') && rep.includes('Padel x1 (90 min)') && !rep.includes('Zone 2'), 'コーチ向けレポートにパデルが Zone 2 と分けて出る（この週は Zone 2 の記録が無い）: ' + rep);
+      await p2.close();
+      return 'パデル追加：30分単位・強度3段階(5.5/7.0/8.5)・kcal自動計算・今日画面/脂肪計算/週まとめでZone2と分離、すべて確認';
+    } finally { rt.op('del', { coll: 'log_weight', id: D }); rt.op('del', { coll: 'log_cardio', id: D }); rt.op('del', { coll: 'log_daily', id: D }); }
+  });
+  await T(G.workout, '前回の重量を全種目で必ず表示する：日付・何日前・直近3回の履歴・セット種類ごとの分離・代替種目名の履歴・セット一覧の未実施行', async () => {
+    // Day5 の3回（7日おき）に分けて種目2（id42・マシンショルダープレス、TOP→BO×2）の履歴を仕込み、4回目に検証する
+    const dates = ['2027-05-16', '2027-05-23', '2027-05-30', '2027-06-06'];
+    const [D1, D2, D3, D4] = dates;
+    // 4日分（毎回ウォームアップ完了込み）を通しで行う重いテストなので db モードの累積待ちに余裕を持たせる
+    const p2 = await newPage(); p2.setDefaultTimeout(30000);
+    const dlgOk2 = async (fillText) => { await p2.waitForSelector('#dlg:not([hidden])'); if (fillText != null) await p2.fill('#dlgIn', fillText); await p2.click('#dlgOk'); await p2.waitForSelector('#dlg', { state: 'hidden' }); await p2.waitForTimeout(120); };
+    const enterDay = async (date) => {
+      await p2.click('.tabs [data-tab="today"]');
+      await p2.clock.setFixedTime(new Date(date + 'T06:50:00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading'));
+      await p2.click('.tabs [data-tab="workout"]'); await p2.waitForSelector('#wuStart');
+      for (let id = 1; id <= 6; id++) { await p2.click('[data-wuset="' + id + '"]'); await p2.click('[data-wuset="' + id + '"]'); }
+      await p2.click('#wuStart'); await p2.waitForSelector('#setDone');
+      await p2.click('[data-ex="1"]'); // 種目2 = id42（TOP→BO×2 のソロ種目）
+      assert((await p2.locator('.ex-name').textContent()).includes('ショルダープレス'), '種目2はソロのショルダープレス: ' + (await p2.locator('.ex-name').textContent()));
+    };
+    const setWeight = async (w, r) => { await p2.click('#wv'); await dlgOk2(String(w)); await p2.click('#rv'); await dlgOk2(String(r)); };
+    const recordTopBo = async (topW, topR, boW, boR) => {
+      await p2.click('[data-set="0"]'); await setWeight(topW, topR); await p2.click('#setDone');
+      if (await p2.$('#rest:not([hidden])')) await p2.click('#skipRest');
+      await p2.waitForSelector('#setDone:not([hidden])');
+      await p2.click('[data-set="1"]'); await setWeight(boW, boR); await p2.click('#setDone');
+      if (await p2.$('#rest:not([hidden])')) await p2.click('#skipRest');
+      await p2.waitForSelector('#setDone:not([hidden])');
+    };
+    try {
+      if (mode === 'mock') {
+        // mock モードは reload をまたいだ永続化が無い（window.claude が無く、ページ内メモリのみ）ため、
+        // 複数日にまたがる履歴の検証は db モードのみで行う。ここでは履歴が無いセットの初回表示だけ確認する
+        await enterDay(D4);
+        await p2.click('[data-set="0"]');
+        assert((await p2.locator('#noHint').textContent()).includes('初回です'), 'mock: 履歴が無いセットは初回です表示: ' + (await p2.locator('#noHint').textContent()));
+        await p2.close();
+        return 'mock は reload 間の永続化が無いため初回表示のみ確認（複数日の履歴は db モードで検証）';
+      }
+      // セットアップ1（5/16）: 記録前は完全に初回（履歴なし）→「初回です」＋クイック重量ボタン
+      await enterDay(D1);
+      await p2.click('[data-set="0"]');
+      assert((await p2.locator('#noHint').textContent()).includes('初回です'), '履歴が全く無いセットは初回表示: ' + (await p2.locator('#noHint').textContent()));
+      assert(await p2.$('[data-qk]'), 'クイック重量ボタンが出る');
+      // TOP 20kg×8・BO 16kg×10 を記録。代替種目名「マシンプレス改」で実施
+      await p2.click('#subBtn'); await dlgOk2('マシンプレス改');
+      await recordTopBo(20, 8, 16, 10);
+      // セットアップ2（5/23）: TOP 21kg×8・BO 17kg×9（代替名なし＝マスタ名で実施）
+      await enterDay(D2); await recordTopBo(21, 8, 17, 9);
+      // セットアップ3（5/30）: TOP 22kg×8・BO 18kg×9
+      await enterDay(D3); await recordTopBo(22, 8, 18, 9);
+
+      // --- テスト日（6/6） ---
+      await enterDay(D4);
+      // 1セット目（TOP）: 前回・何日前・履歴3件
+      await p2.click('[data-set="0"]');
+      const ghostTop = await p2.locator('.ghost').textContent();
+      assert(ghostTop.includes('前回 5/30（7日前）') && ghostTop.includes('22kg×8'), 'TOPの前回表示（日付・何日前・重量×回数）: ' + ghostTop);
+      const histTop = await p2.locator('#histStrip').textContent();
+      assert(histTop.includes('履歴') && histTop.includes('5/30 22kg×8') && histTop.includes('5/23 21kg×8') && histTop.includes('5/16 20kg×8'), '直近3回の履歴が横に並ぶ: ' + histTop);
+      // タップで全履歴（グラフ付き）を開ける。代替種目名で実施した回も出る
+      await p2.click('#histStrip'); await p2.waitForSelector('.spark svg');
+      const histSheet = await p2.locator('#sheet .sheet-body').textContent();
+      assert(histSheet.includes('マシンプレス改で実施') && histSheet.includes('20kg×8'), '全履歴に代替種目名で実施した回も出る（グラフ付き）: ' + histSheet);
+      await p2.click('#histClose'); await p2.waitForSelector('#sheet', { state: 'hidden' });
+      // 2セット目（BO）: TOPとは別の履歴（混ざらない）
+      await p2.click('[data-set="1"]');
+      const ghostBo = await p2.locator('.ghost').textContent();
+      assert(ghostBo.includes('前回 5/30（7日前）') && ghostBo.includes('18kg×9') && !ghostBo.includes('22kg'), 'バックオフはTOPと混ざらない別の履歴を引く: ' + ghostBo);
+      // セット一覧: 未実施行（3セット目＝2つ目のBO、まだ一度も記録していない）には前回値なし、1セット目（TOP・現在は未選択）には薄く前回値
+      const rowsTxt = await p2.$$eval('.setrows .sr .rv', els => els.map(e => e.textContent));
+      assert(rowsTxt[0].includes('22kg×8'), 'セット一覧の未実施行（TOP）にも前回値が薄く出る: ' + JSON.stringify(rowsTxt));
+      assert(rowsTxt[1] === '← いまここ', 'いま選んでいるBOの行は「いまここ」: ' + JSON.stringify(rowsTxt));
+      assert(rowsTxt[2] === '', '一度も記録していない3セット目は前回値なし: ' + JSON.stringify(rowsTxt));
+      // 3セット目（2つ目のBO、setNo=3）: このセット自体の記録は一度も無いが、バックオフはトップの重量から目安を出すので「初回です」にはならない
+      await p2.click('[data-set="2"]');
+      assert(!(await p2.$('#noHint')), '2つ目のバックオフはトップからの目安があるので初回表示にはならない');
+      const ghostBo2 = await p2.locator('.ghost').textContent();
+      assert(ghostBo2.includes('目安') && !ghostBo2.includes('前回'), 'このセット自体の前回記録は無いので「前回」ではなく「目安」表示: ' + ghostBo2);
+      await p2.close();
+      return '全種目で前回値（日付・何日前・直近3回の履歴・タップで全履歴グラフ）を表示。TOP/BOで別々の履歴、代替種目名の履歴も拾う、未記録は初回表示、セット一覧の未実施行にも前回値';
+    } finally { dates.forEach(d => { rt.op('del', { coll: 'log_workout', id: d }); rt.op('del', { coll: 'log_daily', id: d }); rt.op('del', { coll: 'log_cardio', id: d }); }); }
   });
   await T(G.workout, '全7日確定版: Day2 Pull 8種目＋カーフ / Day4 Legs 8種目＋腹筋 / Day5 Shoulder & Arms 8種目＋カーフ / Day6 Pull 8種目＋腹筋。ドロップ「限界まで」とスーパーセットの組展開', async () => { await goTab('today'); const wk = async () => text('[data-step="workout"]'); try {
     await page.click('[data-shift="1"]'); assert((await text('[data-step="accessory"]')).includes('カーフ: スミス カーフレイズ'), 'Day2 calves'); assert((await text('h1')).startsWith('Day 2') && (await wk()).includes('Pull ・ 8種目') && (await wk()).includes('Vバー ロウ（事前疲労）・ベントオーバーロウ') && (await wk()).includes('ほか5種目') && !(await wk()).includes('ラックプル'), 'Day2: ' + (await wk()));
@@ -753,6 +881,7 @@ async function run(mode) {
 | 25 | Day 変更のテストで、db モードだけ新規ページ（newPage + reload）後の \`#dayHead\` 待ちが毎回同じ箇所でタイムアウトする。スタンドアロンの再現スクリプトでは発生せず、一度は「深いテストスイート特有の環境要因」と誤診断しかけた。その場しのぎに today タブへ切り替えるだけでは直らず、今度は「今日だけ変更」の直後に想定していない「記録済み警告」ダイアログが出て \`#sheet\` が閉じないタイムアウトに化けた。ほかに \`.sheet-body\` セレクタが非表示の \`#dlg\` にもヒットして strict mode 違反、7日周期のスケジュールでは「前回」が「まだ」にはならない箇所をテストの期待値の方で誤って「まだ」としていた | \`localStorage.tl.tab\`（アクティブタブ）は同一ブラウザコンテキストの全ページで共有される。直前のテストが today タブ以外（例: 筋トレ）で終わっていると、reload した新規ページも最初の描画からそのタブで復元される。today タブにしか無い \`#dayHead\` はそのままでは永遠に現れない上、筋トレタブの最初の描画でウォームアップ画面の「開いたら自動で startedAt を記録する」処理が今日の日付に対して走ってしまい、あとから today タブへ切り替えても「今日の記録が残っています」警告が誤って出るようになる（見かけ上はタイムアウトの再現性が低く見えるが、実際はテスト実行順に依存した決定的なバグだった）。\`.sheet-body\` は \`#sheet\` と \`#dlg\` の両方に常在する。\`dayNoFor\` は開始日から7日周期で巡回するため離れた日付でも「前回」は必ずどこかで一致する | reload する前に \`localStorage.setItem('tl.tab','today')\` を直接呼んでも、reload 時に旧ページの \`window.beforeunload\`（「今のページの \`UI.tab\`」を localStorage に書き戻す処理）に上書きされて効果が無かった。reload 前に実際に \`.tabs [data-tab="today"]\` をクリックして \`UI.tab\` 自体を today にしてから reload することで解決。reload 後も念のため today タブへ切り替えてから \`#dayHead\` を待つ。\`.sheet-body\` は \`#sheet .sheet-body\` に絞った。「前回」の期待値を実際の周期計算に合わせて修正 |
 | 26 | 差替えチップの追加テストで、\`#mReset\`（プランの内容に戻す）のあとにもう一度 \`#mChange\` を押すと、逆に「変更・追加」欄が閉じてチップが消え \`[data-q]\` 待ちがタイムアウトする | \`UI.sheetMeal.sub\`（欄の開閉状態）はシートを開いたままの操作では保持されるため、\`#mReset\` 後も欄は開いたまま再描画される。そこへ \`#mChange\` をもう一度押すとトグルが反転して閉じてしまう（アプリの仕様どおりで、テスト側の押しすぎが原因） | \`#mReset\` のあとは \`#mChange\` を押し直さず、そのまま \`[data-q]\` を待つようにテストを修正 |
 | 27 | スーパーセット①②の重量・前回値・提案が種目内で共有された rolling state（topKg/prevSetKg/heaviest）を通じて混ざっていた。①で記録した重量が②のプログレッシブ提案の元になってしまう、②の入力欄初期値が①の値を引きずる、など | \`suggestSets()\` が①②を区別せず1つの state で提案を計算していた。セット一覧・いまのセットカード・コーチ報告テキストも①②を1行に結合していて、どちらの実績か読み取りにくかった | \`suggestSets()\` の rolling state を move（①/②、無ければ共通）ごとに分離。いまのセットカードとセット一覧を①②を色分けして入れ子表示するUIに変更（\`setLabel\` に①/②のあとの半角スペースを追加）。完了画面とコーチ報告テキスト（\`pairEnNames()\` で nameEn を \`A + B (superset)\` から分解）も①②を別行に分離。既存テスト（Day1確定版・完了画面レポート・pure function の setLabel）は旧フォーマット（結合1行・スペース無し）を前提にしていたため新フォーマットに合わせて更新 |
+| 28 | 「前回の重量」テストを書く過程で3つのテスト側の思い違いに気づいた: (1) \`weeklyReport()\` は行配列ではなく \`.join('\n')\` 済みの1本の文字列を返す（\`repLines.some\`/\`.v.some\` が関数ではないエラー）。(2) mock モードは \`window.claude\` が無くページ内メモリのみで動くため、reload をまたいだ複数日ぶんの記録の永続化を前提にしたテストは mock では原理的に成立しない。(3) バックオフ種目は自分自身の前回記録が無くても、同じ種目のトップセットの重量から目安を出す（\`suggestSets()\` の既存仕様）ため、一度も記録していないバックオフのセットに「初回です」を期待するのは誤り | (1) 関数の戻り値を確認せずに配列だと決め打った。(2) mock/db のデータ永続化の仕組みの違いを見落としていた。(3) バックオフの提案が \`S.topKg\`（同種目のトップの実効重量）を優先し、自分の \`prevWeightKg\` は「前回」表示にしか使われないことを把握していなかった | (1) \`weeklyReport()\` の戻り値をそのまま文字列として \`.includes()\` で検証するよう修正。(2) mock モードでは reload 間の永続化が無い前提の軽い検証（初回表示の確認のみ）に切り替え、複数日の履歴検証は db モードのみで行うようにした。(3) 「初回です」の検証はセット自体に一切の記録・提案根拠が無いトップセットの初回セット（このテストでは日1の記録前）で行い、トップから目安が出るバックオフのセットは「前回は無いが目安は出る」ことを検証するよう修正 |
 
 ## 実行方法
 
