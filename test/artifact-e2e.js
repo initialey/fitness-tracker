@@ -389,6 +389,34 @@ async function run(mode) {
       return 'Selecta Adult Active（100mlあたり61kcal）・Soya Protein Hoops（100gあたり373kcal）をチップから単品・セットで追加、macrosが一致（セット合計 約390kcal）';
     } finally { rt.op('del', { coll: 'log_meals', id: D }); }
   });
+  await T(G.meal, '追加したピスタチオ(Meadows)が「よく使う差替え」チップに40g・20gの2種類で常時表示され、正しい量とカロリーで追加できる', async () => {
+    const D = '2027-03-08';
+    const p2 = await newPage(); p2.setDefaultTimeout(25000);
+    await p2.clock.setFixedTime(new Date(D + 'T09:00:00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading'));
+    await p2.click('.tabs [data-tab="today"]');
+    try {
+      await p2.click('[data-open="meal:1"]'); await p2.waitForSelector('#mChange'); await p2.click('#mChange'); await p2.waitForSelector('[data-q]');
+      const chips = await p2.$$eval('[data-q]', els => els.map(e => ({ idx: e.dataset.q, txt: e.textContent })));
+      const findIdx = label => { const c = chips.find(x => x.txt === label); assert(c, 'チップが無い: ' + label + ' / 実際: ' + JSON.stringify(chips.map(x => x.txt))); return c.idx; };
+      const i40 = findIdx('ピスタチオ(Meadows)（40g）'), i20 = findIdx('ピスタチオ(Meadows) 20g');
+      // 40g → 224.8kcal・P9.5・F17・C9.6（100gあたり562kcal/P23.7/F42.4/C23.9 の0.4倍）
+      await p2.click('[data-q="' + i40 + '"]'); await p2.waitForSelector('#pendOk');
+      assert((await p2.locator('.pending').textContent()).includes('ピスタチオ40g を追加'), 'pistachio 40g pending');
+      await p2.click('#pendOk'); await p2.waitForTimeout(150);
+      let list = await p2.locator('.sheet-body .list').textContent();
+      assert(list.includes('ピスタチオ') && list.includes('40g') && list.includes('224.8 kcal ・ P9.5 F17 C9.6'), 'pistachio 40g 追加時の量とカロリーが正しい: ' + list);
+      // プランに戻して20gも確認 → 112.4kcal・P4.7・F8.5・C4.8
+      await p2.click('#mReset'); await p2.waitForSelector('#dlg:not([hidden])'); await p2.click('#dlgOk'); await p2.waitForSelector('#dlg', { state: 'hidden' }); await p2.waitForTimeout(120);
+      await p2.waitForSelector('[data-q]');
+      await p2.click('[data-q="' + i20 + '"]'); await p2.waitForSelector('#pendOk');
+      assert((await p2.locator('.pending').textContent()).includes('ピスタチオ20g を追加'), 'pistachio 20g pending');
+      await p2.click('#pendOk'); await p2.waitForTimeout(150);
+      list = await p2.locator('.sheet-body .list').textContent();
+      assert(list.includes('ピスタチオ') && list.includes('20g') && list.includes('112.4 kcal ・ P4.7 F8.5 C4.8'), 'pistachio 20g 追加時の量とカロリーが正しい: ' + list);
+      await p2.close();
+      return 'ピスタチオ(Meadows)（100gあたり562kcal）をチップから40g・20gで追加、macrosが一致';
+    } finally { rt.op('del', { coll: 'log_meals', id: D }); }
+  });
   await T(G.workout, 'スーパーセットの①②は重量・提案・休憩・記録を完全に別々に管理する（Day5 ダンベルショルダープレス＋フロントレイズ）', async () => {
     const D = '2027-05-09'; // Day5
     const p2 = await newPage(); p2.setDefaultTimeout(20000);

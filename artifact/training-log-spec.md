@@ -102,7 +102,7 @@ Day1 Push → Day2 Pull → Day3 休み（有酸素のみ） → Day4 Legs → D
 - 白米は表示に必ず「炊飯後基準／生米基準」を付ける（設定で切替、保存は foodId で区別。基準はコーチ確認中）
 - クリームオブライス: ジャスミン米をフードプロセッサーで粉にする、または市場で製粉。卵白: MTG のミールプラン or 自分で分ける
 - foods にクリームオブライス（ジャスミン米をフードプロセッサーで粉に、または市販の米粉）・Skippy PB を追加。サーモンは差替えチップにだけ出す
-- foods に Selecta Adult Active（100mlあたり 61kcal・P2.0 F3.7 C3.3）・Soya Protein Hoops（100gあたり 373kcal・P38.2 F11.4 C34.3）を追加。差替えチップに「Selecta Adult 150ml」「Soya Hoops 80g」「Selecta 150ml + Soya Hoops 80g」（セットで1食分・約390kcal）を頻度に関わらず常時表示
+- foods に Selecta Adult Active（100mlあたり 61kcal・P2.0 F3.7 C3.3）・Soya Protein Hoops（100gあたり 373kcal・P38.2 F11.4 C34.3）・ピスタチオ(Meadows)（100gあたり 562kcal・P23.7 F42.4 C23.9）を追加。差替えチップに「Selecta Adult 150ml」「Soya Hoops 80g」「Selecta 150ml + Soya Hoops 80g」（セットで1食分・約390kcal）「ピスタチオ(Meadows)（40g）」「ピスタチオ(Meadows) 20g」を頻度に関わらず常時表示
 - 記録の状態は 4 つ: 未記録○ / プラン通り 緑✓ / 変更あり 黄✓ / スキップ 赤−（理由付き）
 - 写真からの推定記録（`sample` の画像入力が使えるときだけ）。推定値は kcal に「※」
 - 今日画面の「いま」カード直下に「📷 食べたものを写真で記録」を常設（プランにない間食・外食の入口）。撮影 → 縮小 → 「どの食事として記録しますか？」（1〜5食目／間食（プラン外））→ 記録済みの食事なら 追加／置き換え → 補足入力 → AI 推定 → 品目を修正 → 記録。間食は `log_meals.meals.snack_N` に status "photo" で保存し、1 日合計に加算、タイムラインには実績時刻の位置に差し込む（行に 📷、kcal※、✓ 再タップで取り消し）

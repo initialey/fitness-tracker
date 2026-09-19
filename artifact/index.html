@@ -493,7 +493,8 @@ const SEED = {
     ['gummy', 'グミ', 'Gummy candy', '100g', 340, 7, 0, 77],
     ['salt_himalayan', 'ヒマラヤ塩', 'Himalayan salt', '100g', 0, 0, 0, 0],
     ['selecta_adult', 'セレクタ アダルト アクティブ', 'Selecta Adult Active', '100ml', 61, 2.0, 3.7, 3.3],
-    ['soya_hoops', 'ソヤ プロテイン フープス', 'Soya Protein Hoops', '100g', 373, 38.2, 11.4, 34.3]
+    ['soya_hoops', 'ソヤ プロテイン フープス', 'Soya Protein Hoops', '100g', 373, 38.2, 11.4, 34.3],
+    ['pistachio_meadows', 'ピスタチオ(Meadows)', 'Pistachios (Meadows)', '100g', 562, 23.7, 42.4, 23.9]
   ],
   // foodId 'rice' は settings.riceBasis で rice_raw / rice_cooked に解決する
   meals: [
@@ -776,7 +777,9 @@ function mealApplyPlan(curItems, newItems, mode) { let items = curItems.slice();
 const PINNED_QUICK_SUBS = [
   { items: [{ foodId: 'selecta_adult', grams: 150 }], label: 'Selecta Adult 150ml' },
   { items: [{ foodId: 'soya_hoops', grams: 80 }], label: 'Soya Hoops 80g' },
-  { items: [{ foodId: 'selecta_adult', grams: 150 }, { foodId: 'soya_hoops', grams: 80 }], label: 'Selecta 150ml + Soya Hoops 80g' }
+  { items: [{ foodId: 'selecta_adult', grams: 150 }, { foodId: 'soya_hoops', grams: 80 }], label: 'Selecta 150ml + Soya Hoops 80g' },
+  { items: [{ foodId: 'pistachio_meadows', grams: 40 }], label: 'ピスタチオ(Meadows)（40g）' },
+  { items: [{ foodId: 'pistachio_meadows', grams: 20 }], label: 'ピスタチオ(Meadows) 20g' }
 ];
 function quickSubs() {
   const count = {};

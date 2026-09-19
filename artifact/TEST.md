@@ -5,7 +5,7 @@
 - **mock**: `window.claude` なし → メモリ上のモックモード
 - **db**: `claude.use("db"/"assets"/"sample"/"downloads")` を疑似ランタイムで注入（db は Node 側に永続し、再読み込み・二重オープンを再現。実際の claude.ai ランタイムではなく API 形状を模したもの）
 
-合計 70 項目 ／ NG 0 件 ／ ページエラー mock 0 件・db 0 件
+合計 71 項目 ／ NG 0 件 ／ ページエラー mock 0 件・db 0 件
 
 ## 共通
 
@@ -17,7 +17,7 @@
 | db スキーマ: log_weight{value,unit,skipped,skipReason,loggedAt} / warmup{completed,minutes,loggedAt} / meals{status: plan|substitute|skip|photo, photoId, reason} / log_daily{dayNo,dayName,notes,skippedItems[]} | ✓ | ✓ | db のみ / statuses=plan,plan,skip,substitute / 9/16 skippedItems=meal 3 |
 | 英略語（W/MAIN/TOP/BO/DROP/PRE/FINAL）がUIに出ない | ✓ | ✓ |  |
 | 数だけの表示（7種、1種）がない | ✓ | ✓ |  |
-| 同日に2回開いても二重保存されない | ✓ | ✓ | db のみ / docs: {"log_workout":4,"plan_days":7,"plan_exercises":45,"plan_warmup":6,"plan_meals":5,"plan_supplements":8,"plan_routine":3,"foods":25,"settings":1,"log_weight":2,"log_daily":6,"log_routine":2,"log_meals":1,"log_supplements":2,"log_media":2,"log_cardio":2} |
+| 同日に2回開いても二重保存されない | ✓ | ✓ | db のみ / docs: {"log_workout":4,"plan_days":7,"plan_exercises":45,"plan_warmup":6,"plan_meals":5,"plan_supplements":8,"plan_routine":3,"foods":26,"settings":1,"log_weight":2,"log_daily":7,"log_routine":2,"log_meals":1,"log_supplements":2,"log_media":2,"log_cardio":2} |
 
 ## 今日画面
 
@@ -52,6 +52,7 @@
 | スキップ→取り消し→プラン通り→取り消し→変更→取り消し: 毎回 未記録に戻り合計が0 | ✓ | ✓ | base=1751 kcal に毎回戻る / base=1751 kcal に毎回戻る |
 | カロリーを手で入力: kcalだけで記録→PFCから計算→合計と脂肪の塊に反映→食事シートにも同じ入口→取り消しで合計から消える | ✓ | ✓ | kcalだけで記録・PFCから計算・合計と脂肪の塊への反映・食事シートの入口・食品の再利用・取り消しを確認 / kcalだけで記録・PFCから計算・合計と脂肪の塊への反映・食事シートの入口・食品の再利用・取り消しを確認 |
 | 追加した2品（Selecta Adult Active・Soya Protein Hoops）が「よく使う差替え」チップに常時表示され、単品・セットどちらも正しい量とカロリーで追加できる | ✓ | ✓ | Selecta Adult Active（100mlあたり61kcal）・Soya Protein Hoops（100gあたり373kcal）をチップから単品・セットで追加、macrosが一致（セット合計 約390kcal） / Selecta Adult Active（100mlあたり61kcal）・Soya Protein Hoops（100gあたり373kcal）をチップから単品・セットで追加、macrosが一致（セット合計 約390kcal） |
+| 追加したピスタチオ(Meadows)が「よく使う差替え」チップに40g・20gの2種類で常時表示され、正しい量とカロリーで追加できる | ✓ | ✓ | ピスタチオ(Meadows)（100gあたり562kcal）をチップから40g・20gで追加、macrosが一致 / ピスタチオ(Meadows)（100gあたり562kcal）をチップから40g・20gで追加、macrosが一致 |
 
 ## 筋トレ画面
 
@@ -84,7 +85,7 @@
 | 体重グラフ（実測＋7日平均）。データ1日でも壊れない | ✓ | ✓ |  |
 | 遵守率にウォームアップ・筋トレ・有酸素・食事・サプリ・水が含まれる | ✓ | ✓ |  |
 | コーチ向けレポート生成→コピーが実データと一致 | ✓ | ✓ |  |
-| CSV エクスポート。downloads が null ならボタン非表示 | ✓ | ✓ | downloads null → 非表示 / training-log-2026-09-16.csv (24071 bytes) |
+| CSV エクスポート。downloads が null ならボタン非表示 | ✓ | ✓ | downloads null → 非表示 / training-log-2026-09-16.csv (24207 bytes) |
 | 「落ちた脂肪」の計算式: BMR(Mifflin-St Jeor)・脂肪1kg=1.1L・体積相当の直径・500mlボトル換算 | ✓ | ✓ | BMR=1636.5kcal（コーチ資料の「約1,690kcal」は計算し直すと1,636.5kcalが正しい値です）・2.3kg→2.5L・直径169.1mm・ボトル5本分 / BMR=1636.5kcal（コーチ資料の「約1,690kcal」は計算し直すと1,636.5kcalが正しい値です）・2.3kg→2.5L・直径169.1mm・ボトル5本分 |
 | TDEE内訳（BMR×活動レベル＋運動）と収支（摂取−TDEE）が仕様の式どおりに出る | ✓ | ✓ | db のみ（day 単位の状態が要る） / TDEE=2957.4kcal（運動+748.1kcal）・ 収支=-325.4kcal |
 | 「落ちた脂肪」ブロックの表示配線: fatModel() の値がそのまま塊のkg・ボトル本数・実測/予測グラフに使われる。定規スライダーの倍率が保存され、再読み込み後も保持される | ✓ | ✓ | db のみ / fatKg=0.6kg・ボトル1本分・較正スライダーの保存を確認 |
@@ -110,7 +111,7 @@
 | 推定 JSON の parse 失敗時にアプリが落ちず、手入力に切替できる | ✓ | ✓ | 写真ボタン非表示のため対象外 |
 | 画像非対応（limits.images 無し）でも写真ボタンと「AIで推定」は出る（sample があれば、limits() を信じず実際に呼んで判断）。失敗したら案内→手入力に切替、写真はメモとして残る | ✓ | ✓ | sample null で非表示（上で確認） |
 | assets null で推定だけ動く（写真はメモリ保持、記録は保存） | ✓ | ✓ | db のみ |
-| 縦長・横長・大きい写真（10MB超）で送信前にリサイズ（長辺1280px、JPEG 0.8）して成功する | ✓ | ✓ | 25.2MB PNG → 608KB JPEG 1280×960 / 25.2MB PNG → 608KB JPEG 1280×960 |
+| 縦長・横長・大きい写真（10MB超）で送信前にリサイズ（長辺1280px、JPEG 0.8）して成功する | ✓ | ✓ | 25.2MB PNG → 608KB JPEG 1280×960 / 25.2MB PNG → 607KB JPEG 1280×960 |
 
 ## テスト中に見つけて修正した内容
 
