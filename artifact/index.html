@@ -14,7 +14,7 @@
 <style>
 :root{
   --bg:#15171A; --card:#23272C; --card2:#2B3036; --ink:#F2F1EC; --mute:#8D949D; --line:#33393F;
-  --yellow:#F2C300; --yellow-ink:#1A1600; --done:#6FCF8A; --warn:#E5534B;
+  --yellow:#F2C300; --yellow-ink:#1A1600; --done:#6FCF8A; --warn:#E5534B; --blue:#5B9BD5;
   --num:"Barlow Condensed","Zen Kaku Gothic New","Hiragino Sans",sans-serif;
   --jp:"Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
   color-scheme:dark;
@@ -157,6 +157,14 @@ textarea.txt{min-height:60px}
 .cur-set .k{font-size:11px;font-weight:700;color:var(--yellow);letter-spacing:.06em}
 .cur-set .n{font:700 20px var(--jp);margin:2px 0}
 .cur-set .p{font-size:14px;color:var(--ink);opacity:.9}
+.cur-set .pair{display:flex;flex-direction:column;gap:5px;margin:4px 0 8px}
+.cur-set .pair-row{display:flex;align-items:center;gap:7px;padding:6px 9px;border-radius:8px;font:600 14px var(--jp);background:rgba(141,148,157,.1);color:var(--mute)}
+.cur-set .pair-row.a{color:var(--blue)}
+.cur-set .pair-row.b{color:var(--yellow)}
+.cur-set .pair-row.cur{border:1.5px solid currentColor;background:rgba(242,195,0,.1)}
+.cur-set .pair-row .mk{font:700 13px var(--num);width:14px;flex:none}
+.cur-set .pair-row .nm{flex:1;color:var(--ink)}
+.cur-set .pair-row .rv{font:600 13px var(--num);color:var(--done);white-space:nowrap}
 .setrows{margin:0 0 14px;border-radius:10px;overflow:hidden;background:var(--card)}
 .setrows .sr{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);font-size:14px;cursor:pointer}
 .setrows .sr:last-child{border-bottom:0}
@@ -167,6 +175,16 @@ textarea.txt{min-height:60px}
 .setrows .sr.cur .mk{color:var(--yellow)}
 .setrows .sr .nm{flex:1}
 .setrows .sr .rv{font:600 14px var(--num);color:var(--done);white-space:nowrap}
+.setrows .sr-group{border-bottom:1px solid var(--line)}
+.setrows .sr-group:last-child{border-bottom:0}
+.setrows .sr-group .sr-head{display:flex;align-items:center;gap:8px;padding:7px 12px;font:700 13px var(--jp);color:var(--mute)}
+.setrows .sr-group.done .sr-head{color:var(--done)}
+.setrows .sr-group.cur .sr-head{background:rgba(242,195,0,.14);color:var(--yellow)}
+.setrows .sr-group .sr-head .mk{width:18px;text-align:center;font:700 14px var(--num)}
+.setrows .sr-group .sr{padding-left:34px;border-bottom:0}
+.setrows .sr-group .sr.a .nm{color:var(--blue)}
+.setrows .sr-group .sr.b .nm{color:var(--yellow)}
+.setrows .sr-group .sr.done .nm{color:var(--mute)}
 .setrows .sr.cur .rv{color:var(--yellow)}
 .quick{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin:-4px 0 14px}
 .quick button{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:6px 12px;font:700 15px var(--num)}
@@ -582,7 +600,13 @@ function expandPairSets(sets, pair) {
   sets.forEach((st, k) => { out.push(Object.assign({}, st, { setNo: no++, pairNo: k + 1, move: 'a', moveName: pair[0] })); out.push(Object.assign({}, st, { setNo: no++, pairNo: k + 1, move: 'b', moveName: pair[1] })); });
   return out;
 }
-const setLabel = st => st.move ? st.pairNo + 'セット目 ' + (st.move === 'a' ? '①' : '②') + st.moveName : st.setNo + 'セット目';
+const setLabel = st => st.move ? st.pairNo + 'セット目 ' + (st.move === 'a' ? '①' : '②') + ' ' + st.moveName : st.setNo + 'セット目';
+/** スーパーセットの英語名を「A + B (superset)」形式の nameEn から分解する（①=A・②=B） */
+function pairEnNames(ex) {
+  if (!ex || !ex.pair) return null;
+  const whole = (ex.nameEn || '').replace(/\s*\(superset\)\s*$/i, ''), parts = whole.split(' + ');
+  return parts.length === 2 ? parts : [ex.nameEn || ex.pair[0], ex.pair[1]];
+}
 /** 実績の表示。未入力を 0kg×0 にしない: 両方空=未記録、重さ空=自重×回数 */
 function setActual(x) { const w = x.weightKg === '' || x.weightKg == null ? '' : Number(x.weightKg), r = x.reps === '' || x.reps == null ? '' : x.reps; if (w === '' && r === '') return '未記録'; if (w === '' || w === 0) return '自重×' + (r === '' ? '—' : r); return disp(w) + unit() + '×' + (r === '' ? '—' : r); }
 
@@ -874,18 +898,20 @@ function workoutModel(date) {
 }
 function bumpKg(kg, isDb, inc) { return isDb ? r1(kg + inc) : Math.max(Math.round(kg * 1.05), Math.round(kg) + 1); }
 function suggestSets(sets, inc, opt) { opt = opt || {};
-  let topKg = '', prevSetKg = '', heaviest = '';
+  // スーパーセットの①②は別種目として扱うため、提案の元になる「直前セット・トップ・最重量」は move（'a'/'b'、無ければ共通）ごとに別々に追う
+  const state = {};
   sets.forEach(st => {
+    const S = state[st.move || '_'] || (state[st.move || '_'] = { topKg: '', prevSetKg: '', heaviest: '' });
     let w = '', reps = '', reason = '';
     const pw = st.prevWeightKg === '' ? '' : Number(st.prevWeightKg), pr = st.prevReps === '' ? '' : Number(st.prevReps), bump = st.setType !== 'WU' && pw !== '' && pr !== '' && pr >= st.max;
-    if (['TOP', 'MAIN', 'WU'].includes(st.setType)) { if (pw !== '') { w = bump ? bumpKg(pw, opt.isDb, inc) : pw; reason = bump ? (opt.isDb ? '上限到達 → +' + inc + 'kg' : '上限到達 → +5%') : '据え置き'; } else if (st.setType === 'WU' && topKg !== '') { w = Math.round(topKg * 0.5); reason = 'トップの半分'; } else if (st.setType === 'MAIN' && opt.progressive && prevSetKg !== '') { w = Math.max(Math.round(prevSetKg * 1.05), Math.round(prevSetKg) + 1); reason = 'プログレッシブ 直前 ' + r1(prevSetKg) + 'kg +5%'; } reps = bump || pr === '' ? (st.min || '') : pr; }
-    else if (st.setType === 'BO') { const base = topKg !== '' ? topKg : (pw !== '' ? pw / 0.85 : ''); if (base !== '') { w = Math.round(base * 0.85); reason = 'トップ ' + r1(base) + 'kg × 0.85'; } reps = pr !== '' && !bump ? pr : st.min; }
-    else if (st.setType === 'DROP') { if (prevSetKg !== '') { w = Math.round(prevSetKg * 0.7); reason = '直前 ' + prevSetKg + 'kg × 0.7'; } reps = st.min || ''; }
-    else if (st.setType === 'FINAL') { const base = heaviest !== '' ? heaviest : (pw !== '' ? pw / 0.7 : ''); if (base !== '') { w = Math.round(base * 0.7); reason = '最重量 ' + r1(base) + 'kg × 0.7（−30%）'; } reps = st.min; }
+    if (['TOP', 'MAIN', 'WU'].includes(st.setType)) { if (pw !== '') { w = bump ? bumpKg(pw, opt.isDb, inc) : pw; reason = bump ? (opt.isDb ? '上限到達 → +' + inc + 'kg' : '上限到達 → +5%') : '据え置き'; } else if (st.setType === 'WU' && S.topKg !== '') { w = Math.round(S.topKg * 0.5); reason = 'トップの半分'; } else if (st.setType === 'MAIN' && opt.progressive && S.prevSetKg !== '') { w = Math.max(Math.round(S.prevSetKg * 1.05), Math.round(S.prevSetKg) + 1); reason = 'プログレッシブ 直前 ' + r1(S.prevSetKg) + 'kg +5%'; } reps = bump || pr === '' ? (st.min || '') : pr; }
+    else if (st.setType === 'BO') { const base = S.topKg !== '' ? S.topKg : (pw !== '' ? pw / 0.85 : ''); if (base !== '') { w = Math.round(base * 0.85); reason = 'トップ ' + r1(base) + 'kg × 0.85'; } reps = pr !== '' && !bump ? pr : st.min; }
+    else if (st.setType === 'DROP') { if (S.prevSetKg !== '') { w = Math.round(S.prevSetKg * 0.7); reason = '直前 ' + S.prevSetKg + 'kg × 0.7'; } reps = st.min || ''; }
+    else if (st.setType === 'FINAL') { const base = S.heaviest !== '' ? S.heaviest : (pw !== '' ? pw / 0.7 : ''); if (base !== '') { w = Math.round(base * 0.7); reason = '最重量 ' + r1(base) + 'kg × 0.7（−30%）'; } reps = st.min; }
     st.suggestWeightKg = w; st.suggestReps = reps; st.suggestReason = reason;
     const eff = st.weightKg !== '' ? Number(st.weightKg) : w;
-    if (st.setType === 'TOP' && eff !== '') topKg = eff; if (eff !== '') prevSetKg = eff;
-    if (eff !== '' && st.setType !== 'WU' && st.setType !== 'FINAL' && st.setType !== 'DROP' && (heaviest === '' || eff > heaviest)) heaviest = eff;
+    if (st.setType === 'TOP' && eff !== '') S.topKg = eff; if (eff !== '') S.prevSetKg = eff;
+    if (eff !== '' && st.setType !== 'WU' && st.setType !== 'FINAL' && st.setType !== 'DROP' && (S.heaviest === '' || eff > S.heaviest)) S.heaviest = eff;
   });
   return sets;
 }
@@ -1666,8 +1692,22 @@ function renderWorkout() {
   if (ex.howTo) h += '<div class="howto" id="howto"' + (UI.howto ? '' : ' hidden') + '>' + esc(ex.howTo) + '</div>';
   const sug = st.suggestWeightKg !== '' ? disp(st.suggestWeightKg) + unit() : (st.setType === 'DROP' ? '直前の −30%' : 'トップの85%');
   const purpose = (SET_TYPES[ex.isPreexhaust && st.setType === 'MAIN' ? 'PRE' : st.setType] || { purpose: '{reps}回' }).purpose.replace('{reps}回', st.target).replace('{reps}', st.target.replace('回', '')).replace('{kg}', sug);
-  h += '<div class="cur-set"><div class="k">いまのセット</div><div class="n">' + esc(st.label) + ' ／ ' + esc(st.typeName) + '</div><div class="p">' + esc(st.move === 'a' ? '終わったら休まずすぐ ②' + ex.pair[1] + ' へ。' + purpose : st.move === 'b' ? '①' + ex.pair[0] + ' の直後、休まずに。終わったら休憩。' + purpose : purpose) + '</div>' + (st.setType === 'DROP' ? dropFigure(ex, UI.wk.set) : '') + '</div>';
-  h += '<div class="setrows">' + ex.sets.map((x, i) => '<div class="sr' + (i === UI.wk.set ? ' cur' : x.done ? ' done' : '') + '" data-set="' + i + '"><span class="mk">' + (x.done ? '✓' : i === UI.wk.set ? '●' : '○') + '</span><span class="nm">' + esc(x.label) + ' ' + esc(x.typeName) + ' ' + esc(x.target) + '</span><span class="rv">' + (x.done ? esc(setActual(x)) : i === UI.wk.set ? '← いまここ' : '') + '</span></div>').join('') + '</div>';
+  if (ex.pair) {
+    const sibIdx = st.move === 'a' ? UI.wk.set + 1 : UI.wk.set - 1, sib = ex.sets[sibIdx];
+    const pairRows = (st.move === 'a' ? [st, sib] : [sib, st]).map(x => { const isCur = x.setNo === st.setNo;
+      return '<div class="pair-row ' + x.move + (isCur ? ' cur' : '') + '"><span class="mk">' + (x.done ? '✓' : isCur ? '▶' : '') + '</span><span class="nm">' + (x.move === 'a' ? '①' : '②') + ' ' + esc(x.moveName) + (isCur ? '　← いまここ' : '') + '</span>' + (x.done ? '<span class="rv">' + esc(setActual(x)) + '</span>' : '') + '</div>'; }).join('');
+    h += '<div class="cur-set"><div class="k">スーパーセット ' + st.pairNo + 'セット目</div><div class="pair">' + pairRows + '</div><div class="p">' + esc(st.move === 'a' ? '終わったら休まずすぐ ②' + ex.pair[1] + ' へ。' + purpose : '①' + ex.pair[0] + ' の直後、休まずに。終わったら休憩。' + purpose) + '</div>' + (st.setType === 'DROP' ? dropFigure(ex, UI.wk.set) : '') + '</div>';
+  } else {
+    h += '<div class="cur-set"><div class="k">いまのセット</div><div class="n">' + esc(st.label) + ' ／ ' + esc(st.typeName) + '</div><div class="p">' + esc(purpose) + '</div>' + (st.setType === 'DROP' ? dropFigure(ex, UI.wk.set) : '') + '</div>';
+  }
+  if (ex.pair) {
+    const groups = {}; ex.sets.forEach((x, i) => { (groups[x.pairNo] = groups[x.pairNo] || []).push(Object.assign({ idx: i }, x)); });
+    h += '<div class="setrows pair">' + Object.keys(groups).sort((a, b) => a - b).map(pn => { const grp = groups[pn], allDoneGrp = grp.every(x => x.done), isCurGrp = grp.some(x => x.idx === UI.wk.set);
+      return '<div class="sr-group' + (isCurGrp ? ' cur' : allDoneGrp ? ' done' : '') + '"><div class="sr-head"><span class="mk">' + (allDoneGrp ? '✓' : isCurGrp ? '●' : '○') + '</span><span>' + pn + 'セット目' + (isCurGrp ? '　← いまここ' : '') + '</span></div>' +
+        grp.map(x => '<div class="sr ' + x.move + (x.idx === UI.wk.set ? ' cur' : x.done ? ' done' : '') + '" data-set="' + x.idx + '"><span class="mk">' + (x.done ? '✓' : x.idx === UI.wk.set ? '▶' : '') + '</span><span class="nm">' + (x.move === 'a' ? '①' : '②') + ' ' + esc(x.moveName) + ' ' + esc(x.target) + '</span><span class="rv">' + (x.done ? esc(setActual(x)) : x.idx === UI.wk.set ? '← いまここ' : (x.suggestWeightKg !== '' ? '提案 ' + disp(x.suggestWeightKg) + unit() : '')) + '</span></div>').join('') + '</div>'; }).join('') + '</div>';
+  } else {
+    h += '<div class="setrows">' + ex.sets.map((x, i) => '<div class="sr' + (i === UI.wk.set ? ' cur' : x.done ? ' done' : '') + '" data-set="' + i + '"><span class="mk">' + (x.done ? '✓' : i === UI.wk.set ? '●' : '○') + '</span><span class="nm">' + esc(x.label) + ' ' + esc(x.typeName) + ' ' + esc(x.target) + '</span><span class="rv">' + (x.done ? esc(setActual(x)) : i === UI.wk.set ? '← いまここ' : '') + '</span></div>').join('') + '</div>';
+  }
   const w0 = st.done ? disp(st.weightKg) : (st.suggestWeightKg !== '' ? disp(st.suggestWeightKg) : (st.prevWeightKg !== '' ? disp(st.prevWeightKg) : ''));
   const r0 = st.done ? st.reps : (st.suggestReps !== '' ? st.suggestReps : (st.prevReps !== '' ? st.prevReps : (st.min || '')));
   h += '<div class="big"><div class="cell"><div class="lbl"><span>重量</span><i>' + unit() + '</i></div><div class="val' + (w0 === '' ? ' empty' : '') + '" id="wv" data-v="' + esc(w0) + '">' + (w0 === '' ? '—' : esc(w0)) + '</div><div class="pm"><button data-pm="w:-1" aria-label="重量を減らす">−</button><button data-pm="w:1" aria-label="重量を増やす">＋</button></div></div>' +
@@ -1796,11 +1836,21 @@ function dayReport(date) {
     const done = ex.sets.filter(x => x.done);
     const label = ex.isPreexhaust ? 'Pre-exhaust: ' : ex.accessory ? (ex.accessory === 'abs' ? 'Abs: ' : 'Calves: ') : (++n) + '. ';
     const name = (ex.subName ? ex.subName + ' (sub for ' + ex.nameEn + ')' : ex.nameEn).replace(' (pre-exhaust)', '').replace(' (pending coach)', '').replace(' (sets/reps pending coach)', '');
-    let body;
-    if (!done.length) body = ex.accessory ? '(not set yet)' : '— skipped'; else if (ex.pair) { const byPair = {}; done.forEach(x => { (byPair[x.pairNo] = byPair[x.pairNo] || {})[x.move] = setEn(x); }); body = Object.keys(byPair).sort((a, b) => a - b).map(k => (byPair[k].a || '—') + '/' + (byPair[k].b || '—')).join(', '); }
-    else { const main = done.filter(x => x.setType !== 'DROP').map(x => setEn(x) + (x.setType === 'TOP' ? ' (top)' : x.setType === 'BO' ? ' (back-off)' : x.setType === 'WU' ? ' (warm-up)' : x.setType === 'FINAL' ? ' (−30%)' : '')); const drops = done.filter(x => x.setType === 'DROP').map(x => 'drop ' + setEn(x)); body = main.join(', ') + (drops.length ? ' + ' + drops.join(' + ') : ''); }
-    lines.push(ex.accessory ? label + body : label + name + ' — ' + body);
-    if (!done.length && !ex.accessory) notes.push(name + ': skipped'); if (ex.note) notes.push(name + ': ' + ex.note); if (ex.rpe) notes.push(name + ': RPE ' + ex.rpe);
+    if (ex.pair && !ex.accessory) {
+      // ①②は別種目として扱うので、レポートも「①の行」＋「(superset with) ②の行」の2行に分ける
+      const enNames = ex.subName ? null : pairEnNames(ex);
+      const aDone = done.filter(x => x.move === 'a'), bDone = done.filter(x => x.move === 'b');
+      lines.push(label + (enNames ? enNames[0] : name) + ' — ' + (aDone.length ? aDone.map(setEn).join(', ') : '— skipped'));
+      lines.push('   (superset with) ' + (enNames ? enNames[1] : ex.pair[1]) + ' — ' + (bDone.length ? bDone.map(setEn).join(', ') : '— skipped'));
+      if (!done.length) notes.push(name + ': skipped');
+    } else {
+      let body;
+      if (!done.length) body = ex.accessory ? '(not set yet)' : '— skipped';
+      else { const main = done.filter(x => x.setType !== 'DROP').map(x => setEn(x) + (x.setType === 'TOP' ? ' (top)' : x.setType === 'BO' ? ' (back-off)' : x.setType === 'WU' ? ' (warm-up)' : x.setType === 'FINAL' ? ' (−30%)' : '')); const drops = done.filter(x => x.setType === 'DROP').map(x => 'drop ' + setEn(x)); body = main.join(', ') + (drops.length ? ' + ' + drops.join(' + ') : ''); }
+      lines.push(ex.accessory ? label + body : label + name + ' — ' + body);
+      if (!done.length && !ex.accessory) notes.push(name + ': skipped');
+    }
+    if (ex.note) notes.push(name + ': ' + ex.note); if (ex.rpe) notes.push(name + ': RPE ' + ex.rpe);
   });
   lines.push('');
   const cd = ((ST.log_cardio[date] || {}).entries || []), cm = (ST.log_daily[date] || {}).cardioMissed;
@@ -1817,7 +1867,15 @@ function renderComplete(d) {
   let dur = start && end ? Math.max(0, Math.round((new Date(end) - new Date(start)) / 60000)) : ''; if (dur > 180) dur = '';
   const cd = ((ST.log_cardio[d.date] || {}).entries || []), cm = (ST.log_daily[d.date] || {}).cardioMissed;
   let h = '<div class="ex-head"><h1>Day ' + d.dayNo + ' ' + (d.isRest ? '休み（有酸素のみ）' : esc(d.dayName)) + ' 完了</h1>' + (d.isRest ? '' : '<span class="p">' + (dur !== '' ? '所要 ' + dur + '分（ウォームアップ開始〜完了）' : '所要時間 —') + '</span>') + '</div>';
-  if (!d.isRest) h += '<div class="card"><div class="ttl">やった内容</div>' + d.exercises.map(ex => { const done = ex.sets.filter(x => x.done); let v; if (!done.length) v = ex.accessory ? 'コーチ確認中 ・ 未記録' : '— スキップ'; else if (ex.pair) { const by = {}; done.forEach(x => { (by[x.pairNo] = by[x.pairNo] || {})[x.move] = setActual(x); }); v = Object.keys(by).sort((a, b) => a - b).map(k => (by[k].a || '—') + ' / ' + (by[k].b || '—')).join('、'); } else v = done.map(x => setActual(x) + (x.setType === 'DROP' ? '（ドロップ）' : x.setType === 'TOP' ? '（トップ）' : '')).join('、'); return '<div class="cmp-row"><span>' + esc(ex.subName || ex.nameJa) + '</span><span class="v">' + esc(v) + '</span></div>'; }).join('') + '</div>';
+  if (!d.isRest) h += '<div class="card"><div class="ttl">やった内容</div>' + d.exercises.flatMap(ex => { const done = ex.sets.filter(x => x.done);
+    if (ex.pair && !ex.subName) {
+      // ①②は別種目として扱うので行も分ける
+      const aDone = done.filter(x => x.move === 'a'), bDone = done.filter(x => x.move === 'b');
+      const row = (nm, ds) => '<div class="cmp-row"><span>' + esc(nm) + '</span><span class="v">' + esc(ds.length ? ds.map(setActual).join('、') : '— スキップ') + '</span></div>';
+      return [row(ex.pair[0], aDone), row('（' + ex.pair[1] + ' とスーパーセット）', bDone)];
+    }
+    let v; if (!done.length) v = ex.accessory ? 'コーチ確認中 ・ 未記録' : '— スキップ'; else v = done.map(x => setActual(x) + (x.setType === 'DROP' ? '（ドロップ）' : x.setType === 'TOP' ? '（トップ）' : '')).join('、');
+    return ['<div class="cmp-row"><span>' + esc(ex.subName || ex.nameJa) + '</span><span class="v">' + esc(v) + '</span></div>']; }).join('') + '</div>';
   h += '<div class="card"><div class="ttl">有酸素 <span class="mute small">' + esc(ST.settings.cardioLabel) + '</span></div>' + (cd.length ? '<div class="cmp-row"><span>' + esc(cd.map(c => cardioTypeJa(c.type) + ' ' + c.minutes + '分' + (c.hr ? ' ・ 心拍 ' + c.hr : '')).join('、')) + '</span><span class="v">記録済み</span></div>' : cm ? '<div class="cmp-row"><span>今日はやらない（' + esc(reasonJa(cm)) + '）</span></div>' : '<div class="btns"><button class="b-yel" id="cmpCardio">有酸素を記録</button><button class="b-sub" id="cmpCardioNo">今日はやらない（理由）</button></div><div class="mute small" style="margin-top:6px">あとで今日画面の有酸素行からも入力できます</div>') + '</div>';
   const txt = UI.reportDraft && UI.reportDraft.date === d.date ? UI.reportDraft.text : dayReport(d.date);
   h += '<div class="card"><div class="ttl">コーチ報告用テキスト <span class="mute small">英語 ・ Messenger 貼り付け用 ・ 編集できます</span></div><textarea class="rep-ta" id="repDay">' + esc(txt) + '</textarea><div class="btns" style="margin-top:8px"><button class="b-yel" id="repCopy">コピー</button><button class="b-sub" id="repRegen">実データから作り直す</button></div></div>';

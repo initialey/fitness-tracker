@@ -211,9 +211,10 @@ async function run(mode) {
     await page.click('[data-set="2"]'); await page.waitForTimeout(80); assert((await text('.cur-set .n')).includes('バックオフ'), 'back-off set'); assert((await text('#wv')) === '20', 'BO 23×0.85=20: ' + (await text('#wv'))); assert((await text('.cur-set .p')).includes('トップより軽くして') && (await text('.cur-set .p')).includes('目安 20kg'), 'BO purpose: ' + (await text('.cur-set .p')));
     await gotoEx(5); assert((await text('.ex-name')).includes('サイドレイズ'), 'ex5'); await page.click('[data-set="0"]'); await page.waitForTimeout(80); assert((await text('#wv')) === '11', 'MAIN 10×12(上限)→11: ' + (await text('#wv'))); await page.click('[data-set="1"]'); await page.waitForTimeout(80); assert((await text('#wv')) === '12' && (await text('.ghost')).includes('プログレッシブ'), 'progressive set2 11→12: ' + (await text('.ghost'))); await page.click('[data-set="3"]'); await page.waitForTimeout(80); assert((await text('.cur-set .n')).includes('ドロップセット'), 'drop set'); assert((await text('#wv')) === '9', 'DROP 直前 13(12×1.05)×0.7=9: ' + (await text('#wv'))); assert((await text('.cur-set .p')).includes('休憩なし') && (await text('.cur-set .p')).includes('−30%') && (await text('.cur-set .p')).includes('目安 9kg'), 'DROP purpose: ' + (await text('.cur-set .p'))); assert((await text('.dropfig')).includes('→（休まず）→') && (await text('.dropfig')).includes('9kg'), 'drop figure: ' + (await text('.dropfig'))); const bk = await page.evaluate(() => [window.__tl.bumpKg(40, false, 2), window.__tl.bumpKg(10, false, 2), window.__tl.bumpKg(22, true, 1)]); assert(bk[0] === 42 && bk[1] === 11 && bk[2] === 23, 'bump +5%/+1kg: ' + bk.join(',')); await gotoEx(0); return 'ダンベル トップ 22×8(上限)→23kg / バックオフ 23×0.85=20kg / メイン 10×12(上限)→11kg → プログレッシブ 12kg・13kg / ドロップ 13×0.7=9kg / バー 40kg→42kg(+5%)'; });
   await T(G.workout, 'Day1 確定版: 8種目＋腹筋、スーパーセットは ①→②→休憩→①→② の順、プログレッシブ説明、ドロップは休憩なしで即開始', async () => { assert((await text('.ex-head .p')).includes('/9'), '8 exercises + abs'); const names = []; for (let k = 0; k < 9; k++) { await gotoEx(k); names.push(await text('.ex-name')); } assert(names[0].includes('事前疲労') && names[2].includes('マシン インクラインプレス') && names[4].includes('スーパーセット') && names[7].includes('アンダーハンド') && names[8].includes('腹筋') && names[8].includes('コーチ確認中'), 'names: ' + names.join(' / '));
-    await gotoEx(4); assert((await text('.tag.ss')).includes('スーパーセット') && (await text('.tag.ss')).includes('休憩なし'), 'superset tag'); assert((await page.$$eval('.tag', els => els.map(e => e.textContent).join('|'))).includes('プログレッシブ ・ セットごとに少しずつ重くする（目安 +5%）'), 'progressive tag'); assert((await text('.tag.ss')).includes('休憩なし') && (await text('.tag.ss')).includes('①ペックデッキ → ②プレート'), 'pair names in tag'); const rows = await page.$$eval('.setrows .sr .nm', els => els.map(e => e.textContent)); assert(rows.length === 6 && rows[0].includes('1セット目 ①ペックデッキ') && rows[0].includes('8〜12回') && rows[1].includes('1セット目 ②プレート') && rows[2].includes('2セット目 ①') && rows[5].includes('3セット目 ②') && !rows.some(r => /セット\d-\d/.test(r)), 'pairs: ' + rows.join(','));
+    await gotoEx(4); assert((await text('.tag.ss')).includes('スーパーセット') && (await text('.tag.ss')).includes('休憩なし'), 'superset tag'); assert((await page.$$eval('.tag', els => els.map(e => e.textContent).join('|'))).includes('プログレッシブ ・ セットごとに少しずつ重くする（目安 +5%）'), 'progressive tag'); assert((await text('.tag.ss')).includes('休憩なし') && (await text('.tag.ss')).includes('①ペックデッキ → ②プレート'), 'pair names in tag'); const heads = await page.$$eval('.setrows .sr-head', els => els.map(e => e.textContent)); assert(heads.length === 3 && heads[0].includes('1セット目') && heads[1].includes('2セット目') && heads[2].includes('3セット目'), 'set groups: ' + heads.join(','));
+    const rows = await page.$$eval('.setrows .sr .nm', els => els.map(e => e.textContent)); assert(rows.length === 6 && rows[0].includes('① ペックデッキ') && rows[0].includes('8〜12回') && rows[1].includes('② プレート') && !rows.some(r => /セット\d-\d/.test(r)), 'pairs: ' + rows.join(','));
     // 1-1 完了 → 休憩なしで 1-2 へ。1-2 完了 → 休憩
-    await page.click('[data-set="0"]'); await page.waitForTimeout(60); if ((await text('#wv')) === '—') await page.click('[data-qk]'); await page.click('#setDone'); await page.waitForTimeout(100); assert(!(await has('#rest:not([hidden])')), 'no rest between pair'); assert((await text('.cur-set .n')).includes('1セット目 ②'), 'moved to ②: ' + (await text('.cur-set .n'))); assert((await text('#toast')).includes('スーパーセット'), 'superset toast'); assert((await text('.cur-set .p')).includes('直後、休まずに'), 'pair purpose'); if ((await text('#wv')) === '—') await page.click('[data-qk]'); await page.click('#setDone'); await page.waitForSelector('#rest:not([hidden])'); assert((await text('#rnext')).includes('2セット目 ①ペックデッキ'), 'rest then next pair: ' + (await text('#rnext'))); await page.click('#skipRest'); await page.waitForSelector('#setDone:not([hidden])');
+    await page.click('[data-set="0"]'); await page.waitForTimeout(60); if ((await text('#wv')) === '—') await page.click('[data-qk]'); await page.click('#setDone'); await page.waitForTimeout(100); assert(!(await has('#rest:not([hidden])')), 'no rest between pair'); assert((await text('.cur-set .pair-row.cur .nm')).includes('② プレート'), 'moved to ②: ' + (await text('.cur-set .pair-row.cur .nm'))); assert((await text('#toast')).includes('スーパーセット'), 'superset toast'); assert((await text('.cur-set .p')).includes('直後、休まずに'), 'pair purpose'); if ((await text('#wv')) === '—') await page.click('[data-qk]'); await page.click('#setDone'); await page.waitForSelector('#rest:not([hidden])'); assert((await text('#rnext')).includes('2セット目 ① ペックデッキ'), 'rest then next pair: ' + (await text('#rnext'))); await page.click('#skipRest'); await page.waitForSelector('#setDone:not([hidden])');
     await gotoEx(5); assert(!(await has('.tag.ss')), 'no superset tag'); assert((await page.$$eval('.tag', els => els.map(e => e.textContent).join('|'))).includes('プログレッシブ'), 'progressive on side raise'); assert((await page.$$eval('.setrows .sr .nm', els => els.map(e => e.textContent))).length === 4, '3 main + drop');
     // 3セット目の完了 → 休憩なしでドロップセットへ
     for (let k = 0; k < 3; k++) { await page.click('[data-set="' + k + '"]'); await page.waitForTimeout(60); if ((await text('#wv')) === '—') await page.click('[data-qk="8"]'); await page.click('#setDone'); await page.waitForTimeout(80); if (await has('#rest:not([hidden])')) { assert(k < 2, 'no rest before drop'); await page.click('#skipRest'); await page.waitForSelector('#setDone:not([hidden])'); } }
@@ -229,7 +230,7 @@ async function run(mode) {
     assert((await text('#setDone')).includes('筋トレ完了'), 'all done'); await page.click('#setDone'); await page.waitForSelector('#repDay');
     const body = await text('#view'); assert(body.includes('Day 1 Push 完了') && body.includes('所要'), 'complete header'); assert(body.includes('やった内容') && body.includes('インクラインダンベルプレス') && body.includes('自重×2'), 'list with bodyweight abs: ' + body.slice(0, 200)); assert(!/0kg×0|kg×0(?!\d)/.test(body), 'no 0kg×0');
     await page.click('#cmpCardio'); await page.waitForSelector('#cMin'); assert((await page.$eval('#cType .on', e => e.textContent)) === '傾斜歩き', 'default incline walk'); await page.fill('#cMin', '40'); await page.fill('#cHr', '128'); await page.click('#cSave'); await page.waitForSelector('#sheet', { state: 'hidden' }); await page.waitForSelector('#repDay'); assert((await text('#view')).includes('傾斜歩き 40分 ・ 心拍 128'), 'cardio recorded on complete screen');
-    const rep = await page.$eval('#repDay', e => e.value); assert(rep.startsWith('Day 1 Push — Sep 16 (Wed)') && rep.includes('Duration:') && rep.includes('Warm-up: done (6 moves x 2 sets') && rep.includes('Pre-exhaust: Cable fly') && /1\. Incline DB press — .*\(top\).*\(back-off\)/.test(rep) && /4\. Pec deck \+ plate shoulder front raise \(superset\) — [\d.]+x\d+\/[\d.]+x\d+/.test(rep) && /5\. DB lateral raise.* \+ drop [\d.]+x\d+/.test(rep) && rep.includes('Abs: bodyweight x2, bodyweight x2, bodyweight x2') && rep.includes('Cardio: incline walk 40 min @ 128 bpm') && rep.includes('Notes:'), 'report: ' + rep); assert(!/\b0x0\b|0kg/.test(rep), 'report has no 0x0');
+    const rep = await page.$eval('#repDay', e => e.value); assert(rep.startsWith('Day 1 Push — Sep 16 (Wed)') && rep.includes('Duration:') && rep.includes('Warm-up: done (6 moves x 2 sets') && rep.includes('Pre-exhaust: Cable fly') && /1\. Incline DB press — .*\(top\).*\(back-off\)/.test(rep) && /4\. Pec deck — [\d.]+x\d+/.test(rep) && /\n {3}\(superset with\) plate shoulder front raise — [\d.]+x\d+/.test(rep) && /5\. DB lateral raise.* \+ drop [\d.]+x\d+/.test(rep) && rep.includes('Abs: bodyweight x2, bodyweight x2, bodyweight x2') && rep.includes('Cardio: incline walk 40 min @ 128 bpm') && rep.includes('Notes:'), 'report: ' + rep); assert(!/\b0x0\b|0kg/.test(rep), 'report has no 0x0');
     await page.fill('#repDay', rep + '\nextra'); await page.click('#repCopy'); await page.waitForFunction(() => /コピー/.test(document.querySelector('#toast').textContent), null, { timeout: 5000 }); assert((await text('#toast')).includes('コピー'), 'copy toast'); await page.click('#cmpBack'); await page.waitForTimeout(150); assert((await page.$eval('.tabs .on', e => e.dataset.tab)) === 'today', 'back to today'); assert((await page.$eval('[data-step="workout"]', e => e.className)).includes('done'), 'workout done'); assert((await text('[data-step="workout"]')).includes('全22セット中 22セット完了'), 'set count with denominator (superset = 1): ' + (await text('[data-step="workout"]'))); assert((await text('[data-step="cardio"]')).includes('傾斜歩き 40分'), 'cardio row'); { const bg = await page.$eval('.step.done .row', e => getComputedStyle(e).backgroundColor); assert(bg !== 'rgba(0, 0, 0, 0)' && bg !== 'rgb(0, 0, 0)', 'done row not black: ' + bg); const tmCss = await page.$eval('.step.done .tm', e => [getComputedStyle(e).display, getComputedStyle(e).alignItems, !!e.querySelector('small')]); assert(tmCss[0] === 'flex' && tmCss[1] === 'flex-end' && tmCss[2], 'time column right-aligned with planned below: ' + tmCss.join(',')); } assert((await mark('accessory')).startsWith('ok|') && (await text('[data-step="accessory"]')).includes('自重×2'), 'abs row done: ' + (await text('[data-step="accessory"]'))); await goTab('workout'); await page.waitForSelector('#repDay'); assert((await page.$eval('#repDay', e => e.value)).endsWith('extra'), 'edited report kept while open'); await page.click('#cmpReview'); await page.waitForSelector('#setDone'); await goTab('today'); });
   await shot('04-workout-done');
   await T(G.workout, 'Day3・Day7 は休み（有酸素のみ）: ウォームアップ画面を出さず有酸素の記録画面へ直行。記録すると完了画面に進む', async () => {
@@ -388,6 +389,79 @@ async function run(mode) {
       return 'Selecta Adult Active（100mlあたり61kcal）・Soya Protein Hoops（100gあたり373kcal）をチップから単品・セットで追加、macrosが一致（セット合計 約390kcal）';
     } finally { rt.op('del', { coll: 'log_meals', id: D }); }
   });
+  await T(G.workout, 'スーパーセットの①②は重量・提案・休憩・記録を完全に別々に管理する（Day5 ダンベルショルダープレス＋フロントレイズ）', async () => {
+    const D = '2027-05-09'; // Day5
+    const p2 = await newPage(); p2.setDefaultTimeout(20000);
+    await p2.click('.tabs [data-tab="today"]');
+    await p2.clock.setFixedTime(new Date(D + 'T06:50:00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading'));
+    const dlgOk2 = async (fillText) => { await p2.waitForSelector('#dlg:not([hidden])'); if (fillText != null) await p2.fill('#dlgIn', fillText); await p2.click('#dlgOk'); await p2.waitForSelector('#dlg', { state: 'hidden' }); await p2.waitForTimeout(120); };
+    try {
+      await p2.click('.tabs [data-tab="workout"]'); await p2.waitForSelector('#wuStart');
+      for (let id = 1; id <= 6; id++) { await p2.click('[data-wuset="' + id + '"]'); await p2.click('[data-wuset="' + id + '"]'); }
+      await p2.click('#wuStart'); await p2.waitForSelector('#setDone');
+      // 種目1（WU扱いの単独種目）・2（ショルダープレス単独）を飛ばし、種目3＝①②のペアへ
+      await p2.click('[data-ex="1"]'); await p2.click('[data-ex="1"]');
+      assert((await p2.locator('.ex-name').textContent()).includes('ダンベル シーテッド ショルダープレス'), '種目3はペアの①から開始: ' + (await p2.locator('.ex-name').textContent()));
+      assert((await p2.locator('.tag.ss').first().textContent()).includes('①ダンベル シーテッド ショルダープレス') && (await p2.locator('.tag.ss').first().textContent()).includes('②ダンベル オーバーハンド フロントレイズ'), 'ペア種目タグに①②両方の名前');
+      // セット一覧は①②の入れ子（2セット分＝2グループ）
+      let groups = await p2.$$('.setrows.pair .sr-group'); assert(groups.length === 2, 'セット一覧は①②を入れ子にした2グループ: ' + groups.length);
+      let g1children = await p2.$$eval('.setrows.pair .sr-group', gs => gs[0].querySelectorAll('.sr').length); assert(g1children === 2, '各グループに①②の2行: ' + g1children);
+
+      // --- 1セット目 ①: 初回なので目安なし。7kg×10 を記録 ---
+      assert(await p2.$('#noHint'), '①1セット目は初回で目安なし');
+      await p2.click('#wv'); await dlgOk2('7'); await p2.click('#rv'); await dlgOk2('10');
+      await p2.click('#setDone');
+      // ①→②は休憩なしで自動遷移。カードに①（実績7kg×10）②（いまここ）が並ぶ
+      assert(!(await p2.$('#rest:not([hidden])')), '①→②の間は休憩タイマーが出ない');
+      const curTxt1 = await p2.locator('.cur-set').textContent();
+      assert(curTxt1.includes('① ダンベル シーテッド ショルダープレス') && curTxt1.includes('7kg×10') && curTxt1.includes('② ダンベル オーバーハンド フロントレイズ'), 'カードに①（実績あり）②（いまここ）が並んで出る: ' + curTxt1);
+      // ②の初期値が①の7kgを引きずっていない（②も初回なので目安なし・空欄）
+      assert(await p2.$('#noHint'), '②も初回は目安なし（①の値を引きずらない）');
+      const w0b = await p2.$eval('#wv', e => e.dataset.v); assert(w0b === '', '②の入力初期値が空（①の7kgではない）: ' + JSON.stringify(w0b));
+
+      // --- 1セット目 ②: 5kg×10 を記録 ---
+      await p2.click('#wv'); await dlgOk2('5'); await p2.click('#rv'); await dlgOk2('10');
+      await p2.click('#setDone');
+      // ②のあとだけ休憩タイマーが出て、「次」に2セット目①の名前と提案重量が正しく出る（見切れない）
+      await p2.waitForSelector('#rest:not([hidden])');
+      const rnextTxt = await p2.locator('#rnext').textContent();
+      assert(rnextTxt.includes('①') && rnextTxt.includes('ダンベル シーテッド ショルダープレス') && rnextTxt.includes('提案 8'), '②のあとの休憩「次」に2セット目①・提案8kgが正しく出る: ' + rnextTxt);
+      await p2.click('#skipRest'); await p2.waitForSelector('#setDone:not([hidden])');
+
+      // --- 2セット目 ①: ①自身の直前（7kg）からのプログレッシブ提案（+5%目安=8kg）。②の5kgを引きずらない ---
+      const ghost1 = await p2.locator('.ghost').textContent();
+      assert(ghost1.includes('プログレッシブ') && ghost1.includes('直前 7kg'), '2セット目①の提案根拠は①自身の直前セット（7kg）: ' + ghost1);
+      const w0c = await p2.$eval('#wv', e => e.dataset.v); assert(w0c === '8', '2セット目①の提案重量=8kg（②の5kgではない）: ' + w0c);
+      await p2.click('#setDone'); // 提案どおり 8kg×8 で記録
+      assert(!(await p2.$('#rest:not([hidden])')), '2セット目も①→②は休憩なし');
+
+      // --- 2セット目 ②: ②自身の直前（5kg）からのプログレッシブ提案（+5%目安=6kg）。①の7kg/8kgを引きずらない ---
+      const ghost2 = await p2.locator('.ghost').textContent();
+      assert(ghost2.includes('プログレッシブ') && ghost2.includes('直前 5kg'), '2セット目②の提案根拠は②自身の直前セット（5kg、①の7kg/8kgではない）: ' + ghost2);
+      const w0d = await p2.$eval('#wv', e => e.dataset.v); assert(w0d === '6', '2セット目②の提案重量=6kg（①の8kgではない）: ' + w0d);
+      await p2.click('#setDone'); // 提案どおり 6kg×8 で記録
+      await p2.waitForSelector('#rest:not([hidden])'); await p2.click('#skipRest'); await p2.waitForSelector('#setDone:not([hidden])');
+
+      // 残りの種目をクイック重量/提案どおりに進めて完了画面まで到達
+      for (let guard = 0; guard < 60; guard++) {
+        const doneLabel = await p2.locator('#setDone').textContent();
+        if (doneLabel.includes('完了画面へ')) { await p2.click('#setDone'); break; }
+        if ((await p2.locator('#wv').textContent()) === '—') { const q = await p2.$('[data-qk]'); if (q) await q.click(); else await p2.click('[data-pm="w:1"]'); }
+        await p2.click('#setDone');
+        if (await p2.$('#rest:not([hidden])')) { await p2.click('#skipRest'); await p2.waitForSelector('#setDone:not([hidden])'); }
+        await p2.waitForTimeout(30);
+      }
+      await p2.waitForSelector('.rep-ta');
+      // 完了画面「やった内容」: ①②が別々の行（実績が混ざらない）
+      const cmpTxt = await p2.locator('.card').first().textContent();
+      assert(cmpTxt.includes('ダンベル シーテッド ショルダープレス') && cmpTxt.includes('7kg×10、8kg×8') && cmpTxt.includes('とスーパーセット') && cmpTxt.includes('5kg×10、6kg×8'), '完了画面で①②が別行・別実績: ' + cmpTxt);
+      // コーチ報告テキスト: 「3. DB seated shoulder press — 7x10, 8x8」「   (superset with) DB overhand front raise — 5x10, 6x8」の2行
+      const repTxt = await p2.locator('#repDay').inputValue();
+      assert(repTxt.includes('3. DB seated shoulder press — 7x10, 8x8') && repTxt.includes('(superset with) DB overhand front raise — 5x10, 6x8'), 'レポートで①②が別行: ' + repTxt);
+      await p2.close();
+      return '①7kg×10,8kg×8 ・ ②5kg×10,6kg×8 が完全に独立（保存・提案・休憩・一覧・完了画面・レポートすべて確認）';
+    } finally { rt.op('del', { coll: 'log_workout', id: D }); rt.op('del', { coll: 'log_daily', id: D }); rt.op('del', { coll: 'log_cardio', id: D }); }
+  });
   await T(G.workout, '全7日確定版: Day2 Pull 8種目＋カーフ / Day4 Legs 8種目＋腹筋 / Day5 Shoulder & Arms 8種目＋カーフ / Day6 Pull 8種目＋腹筋。ドロップ「限界まで」とスーパーセットの組展開', async () => { await goTab('today'); const wk = async () => text('[data-step="workout"]'); try {
     await page.click('[data-shift="1"]'); assert((await text('[data-step="accessory"]')).includes('カーフ: スミス カーフレイズ'), 'Day2 calves'); assert((await text('h1')).startsWith('Day 2') && (await wk()).includes('Pull ・ 8種目') && (await wk()).includes('Vバー ロウ（事前疲労）・ベントオーバーロウ') && (await wk()).includes('ほか5種目') && !(await wk()).includes('ラックプル'), 'Day2: ' + (await wk()));
     await page.click('[data-shift="1"]'); await page.click('[data-shift="1"]'); assert((await text('[data-step="accessory"]')).includes('腹筋'), 'Day4 abs'); assert((await text('h1')).startsWith('Day 4') && (await wk()).includes('Legs ・ 8種目') && (await wk()).includes('ダンベル RDL（事前疲労）・自重スクワット（事前疲労）') && (await wk()).includes('ほか5種目'), 'Day4: ' + (await wk()));
@@ -395,7 +469,7 @@ async function run(mode) {
     await page.click('[data-shift="1"]'); assert((await text('[data-step="accessory"]')).includes('腹筋'), 'Day6 abs'); assert((await text('h1')).startsWith('Day 6') && (await wk()).includes('Pull ・ 8種目') && (await wk()).includes('ストレートアーム ラットエクステンション（事前疲労）') && (await wk()).includes('ホリゾンタルロウ ＋ フェイスプル（スーパーセット）') && (await wk()).includes('ほか5種目'), 'Day6: ' + (await wk()));
     } finally { for (let k = 0; k < 8 && !(await text('.date')).includes('9/16'); k++) await page.click('[data-shift="-1"]'); } assert((await text('h1')).startsWith('Day 1'), 'back to Day1');
     const r = await page.evaluate(() => { const t = window.__tl; const d = t.parseSetScheme('MAIN10-15x3,DROP*'); const p = t.expandPairSets(t.parseSetScheme('MAIN8,MAIN10,MAIN12'), ['A動作', 'B動作']); return { n: d.length, last: d[3], lastTxt: t.repsText(d[3]), pn: p.length, labels: p.map(x => t.setLabel(x)), moves: p.map(x => x.move).join('') }; });
-    assert(r.n === 4 && r.last.setType === 'DROP' && r.last.min === 0 && r.lastTxt === '限界まで', 'DROP*: ' + JSON.stringify(r)); assert(r.pn === 6 && r.moves === 'ababab' && r.labels[0] === '1セット目 ①A動作' && r.labels[5] === '3セット目 ②B動作', 'pairs: ' + JSON.stringify(r.labels)); return 'Day2/4/5/6 の種目数と代表種目、DROP*=限界まで、スーパーセット 3組→6セット'; });
+    assert(r.n === 4 && r.last.setType === 'DROP' && r.last.min === 0 && r.lastTxt === '限界まで', 'DROP*: ' + JSON.stringify(r)); assert(r.pn === 6 && r.moves === 'ababab' && r.labels[0] === '1セット目 ① A動作' && r.labels[5] === '3セット目 ② B動作', 'pairs: ' + JSON.stringify(r.labels)); return 'Day2/4/5/6 の種目数と代表種目、DROP*=限界まで、スーパーセット 3組→6セット'; });
   await T(G.workout, '不具合修正: 最終種目（Day2 カーフ）に自然に到達しても、1セット目は「このセット完了」。最終セットまで進んで初めて「筋トレ完了」になる。遷移のたびに最上部へスクロール', async () => {
     const p2 = await newPage(); await p2.click('.tabs [data-tab="today"]'); await p2.click('[data-shift="1"]'); assert((await p2.locator('.date').textContent()).includes('9/17'), 'on 9/17 = Day2');
     await p2.click('.tabs [data-tab="workout"]'); await p2.waitForSelector('#wuStart');
@@ -678,6 +752,7 @@ async function run(mode) {
 | 24 | 「カロリーを手で入力」テストが mock/db 両方で断続的にタイムアウトし、後片付け前に落ちて次の食事系テストを巻き込んで壊す | (1) 新しい newPage に clock.setFixedTime を使うと、ブラウザコンテキスト全体（共有 page 含む）の時計が変わってしまう。(2) 特定の行のテキスト更新を待つ waitForFunction が、テスト後半（状態が積み上がった時点）でデフォルト8秒に収まらないことがあった。(3) dayCalorieBalance() は r1（小数1桁）、画面表示は Math.round の整数なので、端数のある日は intake と表示値が一致しないことがある | 日付をまたぐ検証はせず、共有 page 上の未記録の食事（5食目）で完結させるよう作り直し。行のテキストではなく合計カードの数値を待つ waitForFunction に変え、タイムアウトを20秒に緩和。dayCalorieBalance との比較は Math.round で揃える |
 | 25 | Day 変更のテストで、db モードだけ新規ページ（newPage + reload）後の \`#dayHead\` 待ちが毎回同じ箇所でタイムアウトする。スタンドアロンの再現スクリプトでは発生せず、一度は「深いテストスイート特有の環境要因」と誤診断しかけた。その場しのぎに today タブへ切り替えるだけでは直らず、今度は「今日だけ変更」の直後に想定していない「記録済み警告」ダイアログが出て \`#sheet\` が閉じないタイムアウトに化けた。ほかに \`.sheet-body\` セレクタが非表示の \`#dlg\` にもヒットして strict mode 違反、7日周期のスケジュールでは「前回」が「まだ」にはならない箇所をテストの期待値の方で誤って「まだ」としていた | \`localStorage.tl.tab\`（アクティブタブ）は同一ブラウザコンテキストの全ページで共有される。直前のテストが today タブ以外（例: 筋トレ）で終わっていると、reload した新規ページも最初の描画からそのタブで復元される。today タブにしか無い \`#dayHead\` はそのままでは永遠に現れない上、筋トレタブの最初の描画でウォームアップ画面の「開いたら自動で startedAt を記録する」処理が今日の日付に対して走ってしまい、あとから today タブへ切り替えても「今日の記録が残っています」警告が誤って出るようになる（見かけ上はタイムアウトの再現性が低く見えるが、実際はテスト実行順に依存した決定的なバグだった）。\`.sheet-body\` は \`#sheet\` と \`#dlg\` の両方に常在する。\`dayNoFor\` は開始日から7日周期で巡回するため離れた日付でも「前回」は必ずどこかで一致する | reload する前に \`localStorage.setItem('tl.tab','today')\` を直接呼んでも、reload 時に旧ページの \`window.beforeunload\`（「今のページの \`UI.tab\`」を localStorage に書き戻す処理）に上書きされて効果が無かった。reload 前に実際に \`.tabs [data-tab="today"]\` をクリックして \`UI.tab\` 自体を today にしてから reload することで解決。reload 後も念のため today タブへ切り替えてから \`#dayHead\` を待つ。\`.sheet-body\` は \`#sheet .sheet-body\` に絞った。「前回」の期待値を実際の周期計算に合わせて修正 |
 | 26 | 差替えチップの追加テストで、\`#mReset\`（プランの内容に戻す）のあとにもう一度 \`#mChange\` を押すと、逆に「変更・追加」欄が閉じてチップが消え \`[data-q]\` 待ちがタイムアウトする | \`UI.sheetMeal.sub\`（欄の開閉状態）はシートを開いたままの操作では保持されるため、\`#mReset\` 後も欄は開いたまま再描画される。そこへ \`#mChange\` をもう一度押すとトグルが反転して閉じてしまう（アプリの仕様どおりで、テスト側の押しすぎが原因） | \`#mReset\` のあとは \`#mChange\` を押し直さず、そのまま \`[data-q]\` を待つようにテストを修正 |
+| 27 | スーパーセット①②の重量・前回値・提案が種目内で共有された rolling state（topKg/prevSetKg/heaviest）を通じて混ざっていた。①で記録した重量が②のプログレッシブ提案の元になってしまう、②の入力欄初期値が①の値を引きずる、など | \`suggestSets()\` が①②を区別せず1つの state で提案を計算していた。セット一覧・いまのセットカード・コーチ報告テキストも①②を1行に結合していて、どちらの実績か読み取りにくかった | \`suggestSets()\` の rolling state を move（①/②、無ければ共通）ごとに分離。いまのセットカードとセット一覧を①②を色分けして入れ子表示するUIに変更（\`setLabel\` に①/②のあとの半角スペースを追加）。完了画面とコーチ報告テキスト（\`pairEnNames()\` で nameEn を \`A + B (superset)\` から分解）も①②を別行に分離。既存テスト（Day1確定版・完了画面レポート・pure function の setLabel）は旧フォーマット（結合1行・スペース無し）を前提にしていたため新フォーマットに合わせて更新 |
 
 ## 実行方法
 
