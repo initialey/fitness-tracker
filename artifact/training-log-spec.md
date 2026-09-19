@@ -101,6 +101,7 @@ Day1 Push → Day2 Pull → Day3 休み（有酸素のみ） → Day4 Legs → D
 - 白米は表示に必ず「炊飯後基準／生米基準」を付ける（設定で切替、保存は foodId で区別。基準はコーチ確認中）
 - クリームオブライス: ジャスミン米をフードプロセッサーで粉にする、または市場で製粉。卵白: MTG のミールプラン or 自分で分ける
 - foods にクリームオブライス（ジャスミン米をフードプロセッサーで粉に、または市販の米粉）・Skippy PB を追加。サーモンは差替えチップにだけ出す
+- foods に Selecta Adult Active（100mlあたり 61kcal・P2.0 F3.7 C3.3）・Soya Protein Hoops（100gあたり 373kcal・P38.2 F11.4 C34.3）を追加。差替えチップに「Selecta Adult 150ml」「Soya Hoops 80g」「Selecta 150ml + Soya Hoops 80g」（セットで1食分・約390kcal）を頻度に関わらず常時表示
 - 記録の状態は 4 つ: 未記録○ / プラン通り 緑✓ / 変更あり 黄✓ / スキップ 赤−（理由付き）
 - 写真からの推定記録（`sample` の画像入力が使えるときだけ）。推定値は kcal に「※」
 - 今日画面の「いま」カード直下に「📷 食べたものを写真で記録」を常設（プランにない間食・外食の入口）。撮影 → 縮小 → 「どの食事として記録しますか？」（1〜5食目／間食（プラン外））→ 記録済みの食事なら 追加／置き換え → 補足入力 → AI 推定 → 品目を修正 → 記録。間食は `log_meals.meals.snack_N` に status "photo" で保存し、1 日合計に加算、タイムラインには実績時刻の位置に差し込む（行に 📷、kcal※、✓ 再タップで取り消し）
@@ -158,6 +159,8 @@ Day1 Push → Day2 Pull → Day3 休み（有酸素のみ） → Day4 Legs → D
 
 「できなかった」は体重・食事・サプリ・ルーティン・筋トレ（Day をずらす選択）・有酸素すべてに理由付きで記録し、週まとめとレポートに自動集計。
 
+**その日の Day（部位）を変更**: 今日画面上部の「Day N ・ 部位 ›」と筋トレ画面上部の Day 表示は同じ変更シートを開く。各 Day の前回実施日（○日前 or まだ）を添えた一覧から選び、「今日だけ入れ替える」（翌日以降は元の予定どおり）／「ここから順番をずらす」（この選択を起点に以降の Day を数え直す。以前の予定は履歴として残る）の2択で確定。選んだ Day の前回が前日なら確定前に連続実施の注意（止めはしない）。その日の記録が既にあれば「部位を変えると記録が別の Day に紐づく」警告。過去日の記録は書き換えない。今日画面上部に「Day 1 Push（今日だけ差し替え・本来は Day 4 Legs）」/「Day 1 Push（ここから順番を変更）」と小さく表示、週まとめに変更履歴の行、コーチ向けレポートにも自動で `Note: swapped Day 4 (Legs) → Day 1 (Push) on ...` を追記。シート下部の「予定どおりに戻す」でいつでも取り消せる（「ここから」は確認あり）。
+
 ## 6. データ（db、1 日 1 ドキュメント）
 
 | コレクション | 主なフィールド |
@@ -169,7 +172,7 @@ Day1 Push → Day2 Pull → Day3 休み（有酸素のみ） → Day4 Legs → D
 | `log_meals/{date}` | meals{mealNo または snack_N（間食・プラン外）: {status: plan / substitute / skip / photo, items[{foodId, grams, kcal, p, f, c, origin, eaten, deleted, planGrams, estimated}], loggedAt, photoId, reason, variant, photo{assetId, confidence, note}}} |
 | `log_supplements/{date}` `log_routine/{date}` | items{id: {done, loggedAt}}（今日はなし: na, reason）。水は value(ml) |
 | `log_cardio/{date}` | entries[{type: jog / incline / other, minutes, hr, note, loggedAt}] |
-| `log_daily/{date}` | dayNo（手動上書き）, dayName, notes, waterMl, waterLoggedAt, skippedItems[{item, reason}], workoutMissed{reason, shift}, cardioMissed, warmupSkipped |
+| `log_daily/{date}` | dayNo（手動上書き）, dayChange{mode: "swap"/"shift", from, loggedAt}, dayName, notes, waterMl, waterLoggedAt, skippedItems[{item, reason}], workoutMissed{reason, shift}, cardioMissed, warmupSkipped |
 | `log_media/{id}` | date, type, category(body/form/meal), assetId, mealNo, exerciseId |
 
 ## 7. 運用

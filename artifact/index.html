@@ -472,7 +472,9 @@ const SEED = {
     ['broccoli', 'ブロッコリー', 'Broccoli', '100g', 34, 2.8, 0.4, 7.0],
     ['salmon', 'サーモン', 'Salmon', '100g', 208, 20, 13, 0],
     ['gummy', 'グミ', 'Gummy candy', '100g', 340, 7, 0, 77],
-    ['salt_himalayan', 'ヒマラヤ塩', 'Himalayan salt', '100g', 0, 0, 0, 0]
+    ['salt_himalayan', 'ヒマラヤ塩', 'Himalayan salt', '100g', 0, 0, 0, 0],
+    ['selecta_adult', 'セレクタ アダルト アクティブ', 'Selecta Adult Active', '100ml', 61, 2.0, 3.7, 3.3],
+    ['soya_hoops', 'ソヤ プロテイン フープス', 'Soya Protein Hoops', '100g', 373, 38.2, 11.4, 34.3]
   ],
   // foodId 'rice' は settings.riceBasis で rice_raw / rice_cooked に解決する
   meals: [
@@ -566,7 +568,9 @@ function parseSetScheme(scheme) {
   });
   return out;
 }
-function calcMacros(food, amount) { const f = food.per === '100g' ? Number(amount) / 100 : Number(amount); return { kcal: r1(food.kcal * f), p: r1(food.p * f), f: r1(food.f * f), c: r1(food.c * f) }; }
+const isRatioPer = per => per === '100g' || per === '100ml';
+const perUnitSuffix = per => per === '100ml' ? 'ml' : per === '100g' ? 'g' : per === '1scoop' ? 'スクープ' : '個';
+function calcMacros(food, amount) { const f = isRatioPer(food.per) ? Number(amount) / 100 : Number(amount); return { kcal: r1(food.kcal * f), p: r1(food.p * f), f: r1(food.f * f), c: r1(food.c * f) }; }
 function movingAvg(vals, w) { return vals.map((v, i) => { const from = Math.max(0, i - w + 1); let s = 0; for (let j = from; j <= i; j++) s += vals[j].value; return { date: v.date, value: r1(s / (i - from + 1)) }; }); }
 function pct(n, d) { return d ? Math.round(n / d * 100) : 0; }
 const setTypeName = (t, isPre) => (isPre && t === 'MAIN' ? SET_TYPES.PRE : SET_TYPES[t] || { name: t }).name;
@@ -644,8 +648,24 @@ const sortedVals = (coll, key) => Object.values(ST[coll]).sort((a, b) => Number(
    4. 派生モデル
    ===================================================================== */
 function dayDoc(date) { return ST.log_daily[date] || {}; }
-/** Day 判定。手動上書き > 「できなかった→Day をずらす」の累積 > 開始日からの 7 日周期 */
-function dayNoFor(date) { const d = dayDoc(date); if (d.dayNo) return Number(d.dayNo); const shifts = Object.values(ST.log_daily).filter(x => x.date < date && x.workoutMissed && x.workoutMissed.shift).length; return ((((diffDays(ST.settings.startDate, date) - shifts) % 7) + 7) % 7) + 1; }
+/** date より前で直近の「ここから順番をずらす」基準日（無ければ null）。dayNoFor と部位変更シートの両方で使う */
+function priorDayShiftAnchor(date) {
+  const anchors = Object.keys(ST.log_daily).filter(x => x < date && ST.log_daily[x].dayNo && ST.log_daily[x].dayChange && ST.log_daily[x].dayChange.mode === 'shift').sort();
+  return anchors.length ? anchors[anchors.length - 1] : null;
+}
+/** Day 判定。手動上書き（その日だけ／ここから変更の基準日）> 「できなかった→Day をずらす」の累積 > 開始日からの 7 日周期
+    「ここから順番をずらす」は直近の基準日を新しい起点として、そこから 7 日周期を数え直す */
+function dayNoFor(date) {
+  const d = dayDoc(date); if (d.dayNo) return Number(d.dayNo);
+  const anchor = priorDayShiftAnchor(date);
+  const anchorDate = anchor || ST.settings.startDate, anchorDayNo = anchor ? Number(ST.log_daily[anchor].dayNo) : 1;
+  const shifts = Object.values(ST.log_daily).filter(x => x.date > anchorDate && x.date < date && x.workoutMissed && x.workoutMissed.shift).length;
+  return ((((diffDays(anchorDate, date) - shifts + (anchorDayNo - 1)) % 7) + 7) % 7) + 1;
+}
+/** date に効いている部位変更の基準日（その日自身の変更、または過去の「ここから」変更の基準日）。無ければ null */
+function activeDayChangePivot(date) { const dd = dayDoc(date); if (dd.dayNo && dd.dayChange) return date; return priorDayShiftAnchor(date); }
+/** dayNo を直近（60日以内）にやった日付。beforeDate より前で探す。無ければ null */
+function lastDayOccurrence(dayNo, beforeDate) { for (let i = 1; i <= 60; i++) { const d = addDays(beforeDate, -i); if (d < ST.settings.startDate) break; if (dayNoFor(d) === dayNo) return d; } return null; }
 function planDay(date) { const n = dayNoFor(date); return ST.plan_days[String(n)] || { dayNo: n, name: 'Day ' + n, isRest: false }; }
 function isRestDay(date) { const d = dayDoc(date); return d.isRestOverride != null ? !!d.isRestOverride : !!planDay(date).isRest; }
 /** 'rice' は settings.riceBasis で解決 */
@@ -660,7 +680,7 @@ function itemLabel(it, full) {
   if (!full && it.short) return it.short;
   if (it.label) return it.label;
   const nm = f ? (full ? f.nameJa : f.nameJa.replace(/[（(].*$/, '')) : it.foodId;
-  return nm + it.grams + (f && f.per !== '100g' ? (f.per === '1scoop' ? 'スクープ' : '個') : 'g');
+  return nm + it.grams + (f ? perUnitSuffix(f.per) : 'g');
 }
 function macrosOfItems(items) { const t = { kcal: 0, p: 0, f: 0, c: 0 }; items.forEach(i => ['kcal', 'p', 'f', 'c'].forEach(k => { t[k] += Number(i[k]) || 0; })); ['kcal', 'p', 'f', 'c'].forEach(k => { t[k] = r1(t[k]); }); return t; }
 const macroLine = m => '約' + Math.round(m.kcal) + 'kcal ・ P' + Math.round(m.p) + ' F' + Math.round(m.f) + ' C' + Math.round(m.c);
@@ -682,7 +702,7 @@ function planToItems(items, choices) {
   });
 }
 /** 記録品目の表示名（短縮） */
-function itemShort(it) { const f = ST.foods[it.foodId]; if (it.foodId === 'rice_cooked' || it.foodId === 'rice_raw') return '白米' + it.grams + 'g（' + (it.foodId === 'rice_raw' ? '生米基準' : '炊飯後基準') + '）'; if (it.manual) return (f ? f.nameJa : '手入力') + '（手入力）'; const nm = f ? f.nameJa.replace(/[（(].*$/, '') : it.foodId; return nm + it.grams + (f && f.per !== '100g' ? (f.per === '1scoop' ? 'スクープ' : '個') : 'g'); }
+function itemShort(it) { const f = ST.foods[it.foodId]; if (it.foodId === 'rice_cooked' || it.foodId === 'rice_raw') return '白米' + it.grams + 'g（' + (it.foodId === 'rice_raw' ? '生米基準' : '炊飯後基準') + '）'; if (it.manual) return (f ? f.nameJa : '手入力') + '（手入力）'; const nm = f ? f.nameJa.replace(/[（(].*$/, '') : it.foodId; return nm + it.grams + (f ? perUnitSuffix(f.per) : 'g'); }
 /** 記録品目から状態を導く: 何も食べていない=skip / プラン品目を全部そのまま=plan / それ以外=sub */
 /** 保存済み status の正規化: substitute/photo → sub（内部表現） */
 function normStatus(st) { return st === 'substitute' || st === 'photo' ? 'sub' : (st || ''); }
@@ -715,12 +735,27 @@ function mealsModel(date) {
   const total = macrosOfItems(meals.flatMap(m => m.eaten)), planTotal = macrosOfItems(meals.filter(m => !m.isSnack).map(m => m.planMac));
   return { date, meals, total, planTotal, quickSubs: quickSubs() };
 }
+/** 追加 or 置き換えの適用計画（mealApply の実行と、確定前プレビュー表示の両方で使う） */
+function mealApplyPlan(curItems, newItems, mode) { let items = curItems.slice(); const msgs = [];
+  newItems.forEach(ni => { const hit = mode === 'replace' ? items.find(i => !i.deleted && i.foodId === ni.foodId) : null;
+    if (hit) { msgs.push(itemShort(hit) + ' → ' + itemShort(ni) + ' に置き換え'); items = items.map(i => i === hit ? Object.assign({}, i, ni, { eaten: true, deleted: false }) : i); }
+    else { msgs.push(itemShort(ni) + ' を追加'); items.push(Object.assign({ origin: 'add', eaten: true, deleted: false, planGrams: '' }, ni)); } });
+  return { items, msg: msgs.join('、') };
+}
+// 常に表示する差替えチップ（食材ごとの使用頻度に関わらず固定で出す）
+const PINNED_QUICK_SUBS = [
+  { items: [{ foodId: 'selecta_adult', grams: 150 }], label: 'Selecta Adult 150ml' },
+  { items: [{ foodId: 'soya_hoops', grams: 80 }], label: 'Soya Hoops 80g' },
+  { items: [{ foodId: 'selecta_adult', grams: 150 }, { foodId: 'soya_hoops', grams: 80 }], label: 'Selecta 150ml + Soya Hoops 80g' }
+];
 function quickSubs() {
   const count = {};
   Object.values(ST.log_meals).forEach(day => Object.values(day.meals || {}).forEach(m => { (m.items || []).forEach(it => { if (it.origin === 'plan' || it.deleted) return; const k = it.foodId + '|' + it.grams; count[k] = (count[k] || 0) + 1; }); }));
-  const out = Object.keys(count).sort((a, b) => count[b] - count[a]).slice(0, 4).map(k => { const [foodId, grams] = k.split('|'), f = ST.foods[foodId]; return { foodId, grams: Number(grams), label: (f ? f.nameJa.replace(/[（(].*$/, '') : foodId) + ' ' + grams + (f && f.per === '100g' ? 'g' : '') }; });
-  if (!out.some(o => o.foodId === 'salmon')) out.push({ foodId: 'salmon', grams: 150, label: 'サーモン 150g' });
-  return out;
+  const freq = Object.keys(count).sort((a, b) => count[b] - count[a]).slice(0, 4).map(k => { const [foodId, grams] = k.split('|'), f = ST.foods[foodId]; return { items: [{ foodId, grams: Number(grams) }], label: (f ? f.nameJa.replace(/[（(].*$/, '') : foodId) + ' ' + grams + (f && isRatioPer(f.per) ? perUnitSuffix(f.per) : '') }; });
+  if (!freq.some(o => o.items.length === 1 && o.items[0].foodId === 'salmon')) freq.push({ items: [{ foodId: 'salmon', grams: 150 }], label: 'サーモン 150g' });
+  const key = q => q.items.map(i => i.foodId + '|' + i.grams).join(',');
+  const pinnedKeys = new Set(PINNED_QUICK_SUBS.map(key));
+  return PINNED_QUICK_SUBS.concat(freq.filter(q => !pinnedKeys.has(key(q))));
 }
 function suppsModel(date) { const log = (ST.log_supplements[date] || {}).items || {}; return sortedVals('plan_supplements', 'order').filter(s => s.active !== false).map(s => { const l = log[s.id] || {}; const at = l.loggedAt || legacyIso(date, l.time); return { id: s.id, name: s.name, dose: s.dose || '', timing: s.timing, done: !!l.done, na: !!l.na && !l.done, reason: l.na ? reasonJa(l) : '', loggedAt: l.done || l.na ? at : '', time: l.done ? fmtHm(at) : '' }; }); }
 function routineModel(date) { const log = (ST.log_routine[date] || {}).items || {}; return sortedVals('plan_routine', 'order').filter(r => r.active !== false).map(r => { const l = log[r.id] || {}, isWater = !!(r.isWater || /^水/.test(r.name)); const at = l.loggedAt || (isWater ? '' : legacyIso(date, l.time)); return { id: r.id, name: r.name, short: r.short || '', timing: r.timing, isWater, done: !!l.done, na: !!l.na && !l.done, reason: l.na ? reasonJa(l) : '', loggedAt: at, time: fmtHm(at), value: l.value }; }); }
@@ -747,7 +782,7 @@ function setUnits(exs, wo) {
 function shortExerciseList(names) { return names.slice(0, 3).join('・') + (names.length > 3 ? ' ほか' + (names.length - 3) + '種目' : ''); }
 function todayModel(date) {
   const s = ST.settings, pd = planDay(date), wo = workoutDoc(date), exs = exercisesFor(date);
-  const t = { date, dayNo: pd.dayNo, dayName: pd.name, dayNotes: pd.notes || '', isRest: isRestDay(date), dayOverride: !!dayDoc(date).dayNo,
+  const t = { date, dayNo: pd.dayNo, dayName: pd.name, dayNotes: pd.notes || '', isRest: isRestDay(date), dayOverride: !!dayDoc(date).dayNo, dayChange: dayDoc(date).dayChange || null,
     weekNo: calcWeekNo(s.startDate, date), comment: dayDoc(date).comment || '', weight: ST.log_weight[date] && !ST.log_weight[date].skipped ? ST.log_weight[date] : null, weightSkipped: ST.log_weight[date] && ST.log_weight[date].skipped ? ST.log_weight[date] : null, prevWeight: latestWeightBefore(date),
     workoutMissed: dayDoc(date).workoutMissed || null, cardioMissed: dayDoc(date).cardioMissed || null,
     supplements: suppsModel(date), routine: routineModel(date), waterMl: waterMl(date), waterLoggedAt: waterLoggedAt(date), waterGoalMl: Number(s.waterGoalMl) || 5000,
@@ -866,7 +901,8 @@ function summaryModel(weekNo) {
   const wdays = { measured: 0, skipped: 0, total: days.length, reasons: {} };
   days.forEach(x => { const w = ST.log_weight[x.date]; if (!w) return; if (w.skipped) { wdays.skipped++; const k = reasonEn('weight', w.reason, w.reasonText); wdays.reasons[k] = (wdays.reasons[k] || 0) + 1; } else wdays.measured++; });
   let photoMeals = 0; days.forEach(x => Object.values((ST.log_meals[x.date] || {}).meals || {}).forEach(m => { if (m.photo) photoMeals++; }));
-  return { weekNo: wk, currentWeek: curWeek, range, weights, weightsMa7: movingAvgByDate(weights, 7), weightDays: wdays, missed: missedItems(range), photoMeals, topSets: Object.keys(top).map(k => ({ name: k, points: top[k] })),
+  const dayChanges = Object.keys(ST.log_daily).filter(d => inRange(d) && d <= today && ST.log_daily[d].dayChange).sort().map(d => { const dc = ST.log_daily[d].dayChange; return { date: d, from: dc.from, to: ST.log_daily[d].dayNo, mode: dc.mode, fromName: (ST.plan_days[String(dc.from)] || {}).name || '', toName: (ST.plan_days[String(ST.log_daily[d].dayNo)] || {}).name || '' }; });
+  return { weekNo: wk, currentWeek: curWeek, range, weights, weightsMa7: movingAvgByDate(weights, 7), weightDays: wdays, missed: missedItems(range), dayChanges, photoMeals, topSets: Object.keys(top).map(k => ({ name: k, points: top[k] })),
     todayWeight: ST.log_weight[today] ? Number(ST.log_weight[today].weightKg) : null, startWeight: weights.length ? weights[0].value : null,
     media: Object.values(ST.log_media).filter(m => inRange(m.date)).sort((a, b) => b.date.localeCompare(a.date)), days, adherence: weekAdherence(range) };
 }
@@ -986,6 +1022,7 @@ function weeklyReport(weekNo, opts) {
   const notes = [];
   sm.missed.forEach(m => notes.push(m.date.slice(5).replace('-', '/') + ' ' + m.itemEn + ' missed (' + m.reasonEn + ')'));
   Object.keys(ST.log_daily).filter(inRange).sort().forEach(d => { const c = (ST.log_daily[d].comment || '').trim(); if (c) notes.push(c); if (ST.log_daily[d].warmupSkipped) notes.push('warm-up skipped ' + d.slice(5) + ' (' + ST.log_daily[d].warmupSkipped.reason + ')'); });
+  sm.dayChanges.forEach(c => { const dt = parseYmd(c.date); notes.push('swapped Day ' + c.from + ' (' + c.fromName + ') -> Day ' + c.to + ' (' + c.toName + ') on ' + MON_EN[dt.getUTCMonth()] + ' ' + dt.getUTCDate()); });
   Object.keys(ST.log_workout).filter(inRange).sort().forEach(d => Object.entries(ST.log_workout[d].meta || {}).forEach(([id, m]) => { if (m.note) notes.push(((ST.plan_exercises[id] || {}).nameEn || '') + ': ' + m.note); }));
   const form = sm.media.filter(m => m.category === 'form'), body = sm.media.filter(m => m.category === 'body');
   const link = (label, items, via) => via ? label + ': sent via Messenger' : label + ': ' + (items.length ? items.map(m => m.url || ('/_blob/' + m.assetId)).join(' ') : 'none');
@@ -1017,6 +1054,10 @@ const A = {
   async workoutMissed(date, reason, reasonText, shift) { await A.setDaily(date, { workoutMissed: { reason, reasonText: reasonText || '', shift: !!shift, loggedAt: isoNow() } }); },
   async cardioMissed(date, reason, reasonText) { await A.setDaily(date, { cardioMissed: { reason, reasonText: reasonText || '', loggedAt: isoNow() } }); },
   async clearDaily(date, key) { const d = Object.assign({}, ST.log_daily[date]); delete d[key]; await store.set('log_daily', date, Object.assign({ date }, d)); },
+  /** その日の Day（部位）を変更。mode='swap' は今日だけ差し替え／'shift' はここから順番をずらす（以降の Day 判定の新しい基準日になる） */
+  async changeDayPlan(date, newDayNo, mode) { const fromDayNo = dayNoFor(date); await A.setDaily(date, { dayNo: newDayNo, dayChange: { mode, from: fromDayNo, loggedAt: isoNow() } }); },
+  /** Day の変更を取り消す。date はその変更の基準日（その日の dayNo/dayChange を消せば以降も自動計算に戻る） */
+  async resetDayPlan(date) { await A.setDaily(date, { dayNo: null, dayChange: null }); },
   async toggleSupp(date, id, done) { const doc = Object.assign({ date, items: {} }, ST.log_supplements[date]); const at = done ? isoNow() : ''; doc.items = Object.assign({}, doc.items, { [id]: { done: !!done, time: fmtHm(at), loggedAt: at } }); await store.set('log_supplements', date, doc); },
   async toggleSuppGroup(date, timing, done) { const doc = Object.assign({ date, items: {} }, ST.log_supplements[date]); doc.items = Object.assign({}, doc.items); const at = done ? isoNow() : ''; Object.values(ST.plan_supplements).filter(s => s.timing === timing && s.active !== false).forEach(s => { doc.items[s.id] = { done: !!done, time: fmtHm(at), loggedAt: at }; }); await store.set('log_supplements', date, doc); },
   async toggleRoutine(date, id, done) { const doc = Object.assign({ date, items: {} }, ST.log_routine[date]); const at = done ? isoNow() : ''; doc.items = Object.assign({}, doc.items, { [id]: { done: !!done, time: fmtHm(at), loggedAt: at } }); await store.set('log_routine', date, doc); },
@@ -1054,11 +1095,8 @@ const A = {
   /** シートを閉じるときに削除を確定 */
   async mealPurge(date, n) { const cur = (ST.log_meals[date] && ST.log_meals[date].meals || {})[n]; if (!cur || !(cur.items || []).some(i => i.deleted)) return; await A.setMeal(date, n, Object.assign({}, cur, { items: cur.items.filter(i => !i.deleted) })); },
   /** 追加 or 置き換え。戻り値は「何をしたか」の一文 */
-  mealApply(date, n, newItems, mode) { const cur = mealModel(date, n); let items = cur.items.slice(); const msgs = [];
-    newItems.forEach(ni => { const hit = mode === 'replace' ? items.find(i => !i.deleted && i.foodId === ni.foodId) : null;
-      if (hit) { msgs.push(itemShort(hit) + ' → ' + itemShort(ni) + ' に置き換え'); items = items.map(i => i === hit ? Object.assign({}, i, ni, { eaten: true, deleted: false }) : i); }
-      else { msgs.push(itemShort(ni) + ' を追加'); items.push(Object.assign({ origin: 'add', eaten: true, deleted: false, planGrams: '' }, ni)); } });
-    return A.mealCommit(date, n, items).then(() => msgs.join('、')); },
+  mealApply(date, n, newItems, mode) { const cur = mealModel(date, n); const { items, msg } = mealApplyPlan(cur.items, newItems, mode);
+    return A.mealCommit(date, n, items).then(() => msg); },
   addMealItem(date, n, foodId, amount, mode) { const f = foodOf(foodId); if (!f) throw new Error('foods に ' + foodId + ' がありません'); if (amount === '' || isNaN(Number(amount))) throw new Error('量を入力してください'); return A.mealApply(date, n, [Object.assign({ foodId: resolveFoodId(foodId), grams: Number(amount) }, calcMacros(f, amount))], mode || 'add'); },
   addMealItems(date, n, newItems) { return A.mealApply(date, n, newItems, 'add'); },
   /** 写真推定の結果を記録: 食材を foods(source:'ai_photo') に登録し、品目を estimated 付きで追加。写真は assets に保存して log_media に紐付け */
@@ -1226,7 +1264,8 @@ function render() {
    7. 今日（「いま」カード ＋ 全文タイムライン ＋ 1日合計）
    ===================================================================== */
 function renderToday(t) {
-  let h = '<h1 class="tap" id="dayHead">Day ' + t.dayNo + ' ・ ' + esc(t.dayName) + (t.dayNotes ? '（' + esc(t.dayNotes) + '）' : '') + (t.isRest ? ' ・ 休み' : '') + (t.dayOverride ? ' ・ 手動' : '') + ' ›</h1>';
+  const dayChangeNote = t.dayChange ? (t.dayChange.mode === 'swap' ? '今日だけ差し替え・本来は Day ' + t.dayChange.from + ' ' + ((ST.plan_days[String(t.dayChange.from)] || {}).name || '') : 'ここから順番を変更') : '';
+  let h = '<h1 class="tap" id="dayHead">Day ' + t.dayNo + ' ・ ' + esc(t.dayName) + (dayChangeNote ? '（' + esc(dayChangeNote) + '）' : (t.dayNotes ? '（' + esc(t.dayNotes) + '）' : '')) + (t.isRest ? ' ・ 休み' : '') + (t.dayOverride && !t.dayChange ? ' ・ 手動' : '') + ' ›</h1>';
   h += '<p class="date"><button class="nav" data-shift="-1" aria-label="前日">‹</button><span>' + md(UI.date) + ' <b>' + wd(UI.date) + '</b>' + (UI.date === todayYmd() ? '' : ' <span class="mute" style="font-size:16px">' + (UI.date < todayYmd() ? '過去' : '未来') + '</span>') + '</span><button class="nav" data-shift="1" aria-label="翌日">›</button></p>';
   if (ST.mode === 'mock') h += '<div class="mode">モックモード ・ 保存されていません</div>';
   h += '<div class="now' + (t.now.kind === 'done' ? ' done' : '') + '" id="now"></div>';
@@ -1244,7 +1283,7 @@ function renderToday(t) {
   h += '<div class="card"><div class="ttl small mute">今日のメモ（週次レポートに載ります）</div><textarea class="txt" id="dayComment" placeholder="体調、違和感など">' + esc(t.comment) + '</textarea></div>';
   view.innerHTML = h;
   $$('[data-shift]').forEach(b => { b.onclick = () => { UI.date = addDays(UI.date, Number(b.dataset.shift)); UI.wk = null; UI.rest = null; UI.reviewDate = null; render(); }; });
-  $('#dayHead').onclick = () => openDayPicker(t);
+  $('#dayHead').onclick = () => openDayPicker(t.date);
   renderNow(t);
   $$('[data-chk]').forEach(b => { b.onclick = e => { e.stopPropagation(); stepAction(t, b.dataset.chk, true); }; });
   $$('[data-time]').forEach(el => { el.onclick = e => { e.stopPropagation(); openTimeSheet(t, el.dataset.time); }; });
@@ -1380,11 +1419,47 @@ function openSuppSheet(t, st) {
   $('#suppAll', s).onclick = () => { closeSheet(); act(A.toggleSuppGroup(t.date, st.timing, true)); };
   $('#suppClose', s).onclick = () => { closeSheet(); render(); };
 }
-function openDayPicker(t) {
-  const s = openSheet('<h3>Day を変更</h3><div class="mute small" style="margin-bottom:8px">予定変更で Day を入れ替えた日に。自動判定は Day ' + calcDayNo(ST.settings.startDate, t.date) + '</div><div class="chips">' + t.days.map(x => '<button' + (x.dayNo === t.dayNo ? ' class="on"' : '') + ' data-day="' + x.dayNo + '">Day ' + x.dayNo + ' ' + esc(x.name) + '</button>').join('') + '</div><div class="btns" style="margin-top:12px"><button class="b-sub" id="dayAuto">自動判定に戻す</button><button class="b-sub" id="restToggle">' + (t.isRest ? '休みを解除' : '今日を休みにする') + '</button></div>');
-  $$('[data-day]', s).forEach(b => { b.onclick = () => { closeSheet(); act(A.setDaily(t.date, { dayNo: Number(b.dataset.day) })); }; });
-  $('#dayAuto', s).onclick = () => { closeSheet(); act(A.setDaily(t.date, { dayNo: null, isRestOverride: null })); };
-  $('#restToggle', s).onclick = () => { closeSheet(); act(A.setDaily(t.date, { isRestOverride: !t.isRest })); };
+/** その日にやる Day（部位）を変更する。今日画面の見出しと筋トレ画面の見出し、両方から同じシートを開く */
+function openDayPicker(date) { UI.dayPicker = { date, step: 'pick', selectedDayNo: null, mode: 'swap' }; renderDayPicker(); }
+function renderDayPicker() {
+  const st = UI.dayPicker; if (!st) return;
+  if (st.step === 'confirm') return renderDayPickerConfirm();
+  const date = st.date, curDayNo = dayNoFor(date), isRest = isRestDay(date), days = sortedVals('plan_days', 'dayNo'), pivot = activeDayChangePivot(date);
+  const curName = (ST.plan_days[String(curDayNo)] || {}).name || '';
+  let h = '<h3>Day を変更</h3><div class="mute small" style="margin-bottom:10px">今日の予定：Day ' + curDayNo + ' ・ ' + esc(curName) + '</div><div class="list">' +
+    days.map(x => { const last = x.dayNo === curDayNo ? null : lastDayOccurrence(x.dayNo, date); const tag = x.dayNo === curDayNo ? '← 今日の予定' : (last ? '前回 ' + md(last) + '（' + diffDays(last, date) + '日前）' : 'まだ');
+      return '<div class="it"><button class="b-sub" style="width:100%;text-align:left" data-pickday="' + x.dayNo + '"' + (x.dayNo === curDayNo ? ' disabled' : '') + '><b>Day ' + x.dayNo + '</b> ' + esc(x.name) + (x.notes ? '（' + esc(x.notes) + '）' : '') + '<span class="mute small" style="display:block;margin-top:2px">' + esc(tag) + '</span></button></div>'; }).join('') + '</div>' +
+    '<div class="btns" style="margin-top:12px"><button class="b-sub" id="restToggle">' + (isRest ? '休みを解除' : '今日を休みにする') + '</button>' + (pivot ? '<button class="b-sub" id="dayReset">予定どおりに戻す</button>' : '') + '</div>';
+  const s = openSheet(h);
+  $$('[data-pickday]', s).forEach(b => { b.onclick = () => { st.selectedDayNo = Number(b.dataset.pickday); st.step = 'confirm'; renderDayPicker(); }; });
+  $('#restToggle', s).onclick = () => { UI.dayPicker = null; closeSheet(); act(A.setDaily(date, { isRestOverride: !isRest })); };
+  const rb = $('#dayReset', s); if (rb) rb.onclick = () => handleDayReset(date, pivot);
+}
+function renderDayPickerConfirm() {
+  const st = UI.dayPicker, date = st.date, selDay = st.selectedDayNo, info = ST.plan_days[String(selDay)] || {};
+  const last = lastDayOccurrence(selDay, date), warnConsecutive = last === addDays(date, -1);
+  const descs = { swap: '今日 Day' + selDay + ' ' + info.name + ' をやりますが、明日は予定どおりに戻ります。', shift: '今日 Day' + selDay + ' ' + info.name + ' をやったら、明日以降もこの順番で続きます。' };
+  let h = '<h3>Day ' + selDay + ' ・ ' + esc(info.name) + '</h3>';
+  if (warnConsecutive) h += '<div class="mute small" style="color:var(--yellow);margin-bottom:8px">Day ' + selDay + ' ' + esc(info.name) + ' は昨日やっています。連続すると回復が足りない可能性があります</div>';
+  h += '<div class="chips" id="dcMode"><button data-mode="swap"' + (st.mode === 'swap' ? ' class="on"' : '') + '>今日だけ入れ替える</button><button data-mode="shift"' + (st.mode === 'shift' ? ' class="on"' : '') + '>ここから順番をずらす</button></div>' +
+    '<div class="mute small" style="margin-top:8px" id="dcModeDesc">' + esc(descs[st.mode]) + '</div>' +
+    '<div class="btns" style="margin-top:14px"><button class="b-sub" id="dcBack">戻る</button><button class="b-yel" id="dcSave">変更する</button></div>';
+  const s = openSheet(h);
+  $$('#dcMode button', s).forEach(b => { b.onclick = () => { st.mode = b.dataset.mode; $$('#dcMode button', s).forEach(x => x.classList.toggle('on', x === b)); $('#dcModeDesc', s).textContent = descs[st.mode]; }; });
+  $('#dcBack', s).onclick = () => { st.step = 'pick'; renderDayPicker(); };
+  $('#dcSave', s).onclick = () => confirmDayChange(date, selDay, st.mode);
+}
+async function confirmDayChange(date, newDayNo, mode) {
+  const wo = workoutDoc(date);
+  const hasRecord = (wo.warmup && (wo.warmup.done || wo.warmup.startedAt)) || Object.keys(wo.sets || {}).length > 0 || ((ST.log_cardio[date] || {}).entries || []).length > 0;
+  if (hasRecord) { const ok = await askConfirm('部位を変更しますか？', '今日の記録が残っています。部位を変えると記録が別の Day に紐づきます。続けますか？', '変更する'); if (!ok) return; }
+  UI.dayPicker = null; closeSheet(); act(A.changeDayPlan(date, newDayNo, mode), '部位を変更しました');
+}
+async function handleDayReset(date, pivot) {
+  const dc = dayDoc(pivot).dayChange;
+  if (pivot === date && dc && dc.mode === 'swap') { UI.dayPicker = null; closeSheet(); act(A.resetDayPlan(pivot), '元に戻しました'); return; }
+  const ok = await askConfirm('元に戻す', md(pivot) + ' からの変更を取り消して、元の順番に戻しますか？', '元に戻す'); if (!ok) return;
+  UI.dayPicker = null; closeSheet(); act(A.resetDayPlan(pivot), '元に戻しました');
 }
 function openCardioSheet(after) {
   const s = openSheet('<h3>有酸素を記録</h3><div class="mute small" style="margin-bottom:8px">' + esc(ST.settings.cardioLabel) + '</div><div class="chips" id="cType"><button data-t="jog">ゆっくりジョグ</button><button class="on" data-t="incline">傾斜歩き</button><button data-t="other">その他</button></div><label class="lbl" for="cMin">分数</label><div class="w-in"><input type="number" inputmode="numeric" id="cMin" placeholder="40"><span class="u">分</span></div><label class="lbl" for="cHr">平均心拍数（任意）</label><div class="w-in"><input type="number" inputmode="numeric" id="cHr" placeholder="130"><span class="u">bpm</span></div><label class="lbl" for="cNote">メモ</label><input type="text" class="txt" id="cNote"><div class="btns" style="margin-top:12px"><button class="b-sub" id="cSkip">' + (after ? 'あとで' : 'キャンセル') + '</button><button class="b-yel" id="cSave">保存</button></div>');
@@ -1420,7 +1495,7 @@ function openMealSheet(mealNo, sub) {
   // 品目一覧: プラン由来はチェック、追加・差替えは × でソフト削除
   h += '<div class="list">' + m.items.map(it => { const f = ST.foods[it.foodId];
     return '<div class="it' + (it.deleted ? ' del' : '') + '">' + (it.origin === 'plan' ? '<button class="cb' + (it.eaten ? ' on' : '') + '" data-eat="' + it.idx + '" aria-label="食べた">✓</button>' : '<span class="badge warn">追加</span>') +
-      '<span style="flex:1">' + esc(f ? f.nameJa : it.foodId) + ' <span class="mute">' + it.grams + (it.per === '100g' ? 'g' : '') + (it.origin === 'plan' && Number(it.grams) !== Number(it.planGrams) ? '（プラン ' + it.planGrams + '）' : '') + '</span></span><span class="m">' + it.kcal + ' kcal ・ P' + it.p + ' F' + it.f + ' C' + it.c + '</span>' +
+      '<span style="flex:1">' + esc(f ? f.nameJa : it.foodId) + ' <span class="mute">' + it.grams + (isRatioPer(it.per) ? perUnitSuffix(it.per) : '') + (it.origin === 'plan' && Number(it.grams) !== Number(it.planGrams) ? '（プラン ' + it.planGrams + '）' : '') + '</span></span><span class="m">' + it.kcal + ' kcal ・ P' + it.p + ' F' + it.f + ' C' + it.c + '</span>' +
       (it.origin !== 'plan' ? (it.deleted ? '<button class="un" data-undel="' + it.idx + '">↩ 戻す</button>' : '<button class="x" data-del="' + it.idx + '" aria-label="削除">×</button>') : '') + '</div>'; }).join('') + '</div>';
   m.choices.forEach(ch => { const curId = (m.items.find(i => i.origin === 'plan' && (i.choiceOf || i.foodId) === ch.foodId) || {}).foodId || ch.foodId;
     h += '<div class="chips" style="margin-top:8px" data-choicegroup="' + esc(ch.foodId) + '">' + ch.choices.map(c => '<button data-choice="' + esc(c) + '"' + (resolveFoodId(c) === curId ? ' class="on"' : '') + '>' + esc((ST.foods[c] || {}).nameJa || c) + ((ch.choiceGrams || {})[c] ? ' ' + (ch.choiceGrams || {})[c] + 'g' : '') + 'で</button>').join('') + '</div>'; });
@@ -1468,7 +1543,7 @@ function bindPhotoPanel(s, d, m, date, mealNo) {
   const ag = $('#phAgain', s); if (ag) ag.onclick = () => { UI.sheetMeal.photo = { status: 'pick', note: ph.note }; rerender(); };
   $$('[data-phg]', s).forEach(b => { b.onclick = () => { noteVal(); const [i, dg] = b.dataset.phg.split(':').map(Number); const it = ph.est.items[i]; ph.est.items[i] = scaleItem(it, Math.max(1, it.grams + dg)); rerender(); }; });
   $$('[data-phoff]', s).forEach(b => { b.onclick = () => { noteVal(); const it = ph.est.items[Number(b.dataset.phoff)]; it.on = !it.on; rerender(); }; });
-  $$('[data-phname]', s).forEach(el => { el.onclick = () => { noteVal(); const i = Number(el.dataset.phname); askFood('食材を差し替え', ph.est.items[i].nameJa).then(f => { if (!f) return; const it = ph.est.items[i]; const mac = calcMacros(f, f.per === '100g' ? it.grams : 1); ph.est.items[i] = Object.assign({}, it, { nameJa: f.nameJa, nameEn: f.nameEn || '', foodId: f.foodId }, mac); rerender(); }); }; });
+  $$('[data-phname]', s).forEach(el => { el.onclick = () => { noteVal(); const i = Number(el.dataset.phname); askFood('食材を差し替え', ph.est.items[i].nameJa).then(f => { if (!f) return; const it = ph.est.items[i]; const mac = calcMacros(f, isRatioPer(f.per) ? it.grams : 1); ph.est.items[i] = Object.assign({}, it, { nameJa: f.nameJa, nameEn: f.nameEn || '', foodId: f.foodId }, mac); rerender(); }); }; });
   const save = $('#phSave', s); if (save) save.onclick = async () => { noteVal(); if (!ph.est.items.some(i => i.on)) return toast('記録する品目がありません', true); save.disabled = true; save.textContent = '保存中…';
     try { const msg = await A.recordPhotoMeal(date, mealNo, ph.est, ph, ph.mode ? ph.mode === 'replace' : m.status === 'plan'); UI.sheetMeal.photo = null; closeSheet(); toastAction(msg + 'しました', '元に戻す', () => act(A.mealUndo(date, mealNo))); } catch (e) { save.disabled = false; save.textContent = 'この内容で記録'; toast('保存に失敗: ' + (e.code || e.message), true); } };
 }
@@ -1499,9 +1574,10 @@ function bindMealSheet(s, d, m, date, mealNo) {
   const mph = $('#mPhoto', s); if (mph) mph.onclick = () => { UI.sheetMeal.photo = { status: 'pick', note: '' }; openMealSheet(mealNo, UI.sheetMeal.sub); };
   const sp = $('[data-showphoto]', s); if (sp) sp.onclick = () => showMealPhoto(date, mealNo);
   const setPending = pend => { UI.sheetMeal.pending = pend; UI.sheetMeal.sub = true; openMealSheet(mealNo, true); };
-  $$('[data-q]', s).forEach(b => { b.onclick = () => { const q = d.quickSubs[Number(b.dataset.q)], f = foodOf(q.foodId), ni = Object.assign({ foodId: resolveFoodId(q.foodId), grams: q.grams }, calcMacros(f, q.grams));
-    const hit = m.items.find(i => !i.deleted && i.foodId === ni.foodId);
-    setPending({ msg: hit ? itemShort(hit) + ' → ' + itemShort(ni) + ' に置き換え' : itemShort(ni) + ' を追加', run: () => A.mealApply(date, mealNo, [ni], 'replace') }); }; });
+  $$('[data-q]', s).forEach(b => { b.onclick = () => { const q = d.quickSubs[Number(b.dataset.q)];
+    const nis = q.items.map(it => Object.assign({ foodId: resolveFoodId(it.foodId), grams: it.grams }, calcMacros(foodOf(it.foodId), it.grams)));
+    const { msg } = mealApplyPlan(m.items, nis, 'replace');
+    setPending({ msg, run: () => A.mealApply(date, mealNo, nis, 'replace') }); }; });
   $('[data-half]', s).onclick = () => setPending({ msg: 'プランの品目をすべて半分の量に置き換え', run: () => A.mealHalf(date, mealNo).then(() => '半分の量に置き換え') });
   $('[data-skip]', s).onclick = () => askReason('meal', mealNo + '食目をスキップ', '理由を 1 つ選ぶ').then(r => { if (!r) return; setPending({ msg: mealNo + '食目を「食べなかった（' + (r.reasonText || r.reason) + '）」として記録', run: () => A.mealSkip(date, mealNo, r.reason, r.reasonText).then(() => 'スキップとして記録') }); });
   const po = $('#pendOk', s); if (po) po.onclick = () => { const pend = UI.sheetMeal.pending; UI.sheetMeal.pending = null; act(pend.run()).then(msg => undoToast((msg || pend.msg) + 'しました')); };
@@ -1580,7 +1656,7 @@ function renderWorkout() {
   const ex = d.exercises[UI.wk.ex]; UI.wk.set = Math.min(UI.wk.set, ex.sets.length - 1);
   const st = ex.sets[UI.wk.set], allDone = d.exercises.every(e => e.sets.every(x => x.done));
   restoreRest(d);
-  let h = '<div class="ex-head"><h1>Day ' + d.dayNo + ' ・ ' + esc(d.dayName) + '</h1><span class="p"><button data-ex="-1" aria-label="前の種目">‹</button>種目 ' + (UI.wk.ex + 1) + '/' + d.exercises.length + ' ・ セット ' + (UI.wk.set + 1) + '/' + ex.sets.length + '<button data-ex="1" aria-label="次の種目">›</button></span></div>';
+  let h = '<div class="ex-head"><h1 class="tap" id="wkDayHead">Day ' + d.dayNo + ' ・ ' + esc(d.dayName) + '</h1><span class="p"><button data-ex="-1" aria-label="前の種目">‹</button>種目 ' + (UI.wk.ex + 1) + '/' + d.exercises.length + ' ・ セット ' + (UI.wk.set + 1) + '/' + ex.sets.length + '<button data-ex="1" aria-label="次の種目">›</button></span></div>';
   if (ex.isPreexhaust) h += '<span class="tag">事前疲労</span>'; else if (UI.wk.ex > 0 && d.exercises[UI.wk.ex - 1].isPreexhaust) h += '<span class="tag">事前疲労のあと</span>';
   if (ex.pair) h += '<span class="tag ss">スーパーセット（休憩なし）: ①' + esc(ex.pair[0]) + ' → ②' + esc(ex.pair[1]) + '</span>';
   if (ex.accessory) h += '<span class="tag">最終種目のあと ・ 種目・セット数はコーチ確認中</span>'; else if (ex.supersetGroup) h += '<span class="tag ss">スーパーセット ' + esc(ex.supersetGroup) + '</span>';
@@ -1611,7 +1687,7 @@ function renderWorkout() {
 /** ウォームアップ画面（毎回必須。各動きは「見る→数える→セット完了」。全種が完了扱いで「始める」が有効） */
 function renderWarmup(d) {
   const w = d.warmup, target = d.isRest ? '有酸素' : '筋トレ';
-  let h = '<h1>Day ' + d.dayNo + ' ・ ' + esc(d.dayName) + (d.isRest ? '（休み ・ 有酸素のみ）' : '') + '</h1>';
+  let h = '<h1 class="tap" id="wkDayHead">Day ' + d.dayNo + ' ・ ' + esc(d.dayName) + (d.isRest ? '（休み ・ 有酸素のみ）' : '') + '</h1>';
   h += '<div class="cur-set"><div class="k">' + target + 'の前に ・ 毎回必須</div><div class="n">ウォームアップ ' + w.items.length + '種</div><div class="p">' + esc(ST.settings.warmupNote) + '</div></div>';
   h += '<div class="wu-prog" id="wuProg">' + w.items.length + '種中 ' + w.doneCount + '種 完了' + (w.startedAt ? ' ・ <span id="wuElapsed">' + mmss((Date.now() - w.startedAt) / 1000) + '</span>' : '') + '</div>';
   w.items.forEach(it => {
@@ -1623,6 +1699,7 @@ function renderWarmup(d) {
   h += '<button class="done-btn" id="wuStart"' + (w.allDone ? '' : ' style="opacity:.45"') + '>' + target + 'を始める</button>';
   h += '<div class="mini"><button id="wuSkip">今日は飛ばす</button><button id="glossBtn">用語</button></div>';
   view.innerHTML = h;
+  $('#wkDayHead').onclick = () => openDayPicker(d.date);
   // 画面を開いた時刻を startedAt に。3 時間以上前に開いたまま 1 セットも記録していなければ開き直しとみなして取り直す
   const stale = w.startedAt && !w.doneCount && !w.items.some(i => i.sets > 0) && Date.now() - w.startedAt > 3 * 3600e3;
   if ((!w.startedAt || stale) && UI.wuOpened !== d.date) { UI.wuOpened = d.date; A.warmupStart(d.date, !!stale).catch(() => {}); }
@@ -1648,7 +1725,7 @@ function stickSvg(anim) {
 }
 /** 休みの日（Day 3・7）: ウォームアップなしでいきなり有酸素の記録画面。記録 or 「今日はやらない」で完了画面へ */
 function renderRestDay(d) {
-  let h = '<h1>Day ' + d.dayNo + ' ・ 休み（有酸素のみ）</h1>';
+  let h = '<h1 class="tap" id="wkDayHead">Day ' + d.dayNo + ' ・ 休み（有酸素のみ）</h1>';
   h += '<div class="cur-set"><div class="k">今日は有酸素のみ</div><div class="n">' + esc(ST.settings.cardioLabel) + '</div></div>';
   h += '<div class="chips" id="rcType"><button data-t="jog">ゆっくりジョグ</button><button class="on" data-t="incline">傾斜歩き</button><button data-t="other">その他</button></div>';
   h += '<label class="lbl" for="rcMin">時間（分）</label><div class="w-in"><input type="number" inputmode="numeric" id="rcMin" placeholder="40"><span class="u">分</span></div>';
@@ -1656,12 +1733,14 @@ function renderRestDay(d) {
   h += '<button class="done-btn" id="rcSave">記録する</button>';
   h += '<div class="mini"><button id="rcSkip">今日はやらない</button></div>';
   view.innerHTML = h;
+  $('#wkDayHead').onclick = () => openDayPicker(d.date);
   let type = 'incline';
   $$('#rcType button', view).forEach(b => { b.onclick = () => { type = b.dataset.t; $$('#rcType button', view).forEach(x => x.classList.toggle('on', x === b)); }; });
   $('#rcSave').onclick = () => { const min = $('#rcMin').value; if (!min || isNaN(Number(min))) return toast('時間（分）を入力してください', true); const hr = $('#rcHr').value; vibrate(80); act(A.saveCardio(d.date, type, min, '', hr).then(() => A.finishWorkout(d.date)), '記録しました').then(() => window.scrollTo(0, 0)); };
   $('#rcSkip').onclick = () => askReason('workout', '今日はやらない', '有酸素ができなかった理由').then(r => { if (r) act(A.cardioMissed(d.date, r.reason, r.reasonText).then(() => A.finishWorkout(d.date)), '記録しました').then(() => window.scrollTo(0, 0)); });
 }
 function bindWorkout(d, ex, st, allDone) {
+  $('#wkDayHead').onclick = () => openDayPicker(d.date);
   $$('[data-ex]').forEach(b => { b.onclick = () => { const n = UI.wk.ex + Number(b.dataset.ex); if (n < 0 || n >= d.exercises.length) return; UI.wk = { ex: n, set: firstUndoneIn(d.exercises[n]) }; UI.rest = null; UI.howto = false; render(); window.scrollTo(0, 0); }; });
   $$('[data-set]').forEach(el => { el.onclick = () => { UI.wk.set = Number(el.dataset.set); UI.rest = null; render(); window.scrollTo(0, 0); }; });
   const hb = $('#howtoBtn'); if (hb) hb.onclick = () => { UI.howto = !UI.howto; $('#howto').hidden = !UI.howto; };
@@ -1727,6 +1806,7 @@ function dayReport(date) {
   const cd = ((ST.log_cardio[date] || {}).entries || []), cm = (ST.log_daily[date] || {}).cardioMissed;
   lines.push('Cardio: ' + (cd.length ? cd.map(c => cardioTypeEn(c.type) + ' ' + c.minutes + ' min' + (c.hr ? ' @ ' + c.hr + ' bpm' : '') + (c.note ? ' (' + c.note + ')' : '')).join(', ') : cm ? 'skipped (' + reasonEn('workout', cm.reason, cm.reasonText) + ')' : '—'));
   if (w.skipped) notes.push('warm-up skipped: ' + (w.skipReason || '')); const wm = (ST.log_daily[date] || {}).workoutMissed; if (wm) notes.push('workout missed: ' + reasonEn('workout', wm.reason, wm.reasonText));
+  const dc = (ST.log_daily[date] || {}).dayChange; if (dc) notes.push('swapped Day ' + dc.from + ' (' + ((ST.plan_days[String(dc.from)] || {}).name || '') + ') -> Day ' + d.dayNo + ' (' + d.dayName + ') on ' + MON_EN[dt.getUTCMonth()] + ' ' + dt.getUTCDate());
   lines.push(''); lines.push('Notes: ' + (notes.length ? notes.join('; ') : '—'));
   const vids = Object.values(ST.log_media).filter(m => m.date === date && m.category === 'form'); if (vids.length) lines.push('Form videos: ' + vids.map(m => m.url || ('/_blob/' + m.assetId)).join(' '));
   return lines.join('\n');
@@ -1794,6 +1874,7 @@ function renderSummary() {
     (d.days.length ? '<details style="margin-top:8px"><summary class="mute small" style="cursor:pointer">予定と実績の時刻（日別）</summary><div style="overflow-x:auto"><table class="hist"><tr><th>日</th><th>項目</th><th>予定</th><th>実績</th></tr>' + d.days.flatMap(x => x.times.map(tm => '<tr><td>' + md(x.date) + '</td><td>' + esc(tm.title) + '</td><td>' + esc(tm.planned) + '</td><td class="' + (tm.logged && !tm.late ? 'ok' : 'ng') + '" style="color:' + (tm.late ? 'var(--yellow)' : '') + '">' + esc(tm.logged || '—') + '</td></tr>')).join('') + '</table></div></details>' : '') + '</div>';
   h += '<div class="spark" id="weightSpark30"><div class="h"><span>体重（30日 ・ 点線は7日平均 ・ 欠測日は線をつながない）</span></div>' + spark(d.weights.slice(-30), d.weightsMa7.slice(-30)) + '</div>';
   h += '<div class="card" id="missedBlock"><div class="ttl small mute">できなかった項目とその理由</div>' + (d.missed.length ? '<div class="list">' + d.missed.map(m => '<div class="it"><span><span class="num mute">' + md(m.date) + '</span> ' + esc(m.item) + '</span><span class="m">' + esc(m.reason) + '</span></div>').join('') + '</div>' : '<div class="mute small" style="margin-top:6px">なし</div>') + '</div>';
+  if (d.dayChanges.length) h += '<div class="card" id="dayChangeBlock"><div class="ttl small mute">部位の変更</div><div class="list">' + d.dayChanges.map(c => '<div class="it"><span><span class="num mute">' + md(c.date) + '</span> Day' + c.from + ' → Day' + c.to + ' に変更</span><span class="m">' + (c.mode === 'shift' ? 'ここから' : '今日だけ') + '</span></div>').join('') + '</div></div>';
   h += '<div class="spark"><div class="h"><span>いちばん重かった重量（種目別・日ごと）</span></div>' + (d.topSets.length ? d.topSets.map(t => { const pts = t.points, last = pts[pts.length - 1], prev = pts.length > 1 ? pts[pts.length - 2] : null; return '<div class="r' + (prev && last.value > prev.value ? ' up' : '') + '"><span>' + esc(t.name) + '</span><span>' + (prev ? disp(prev.value) + ' → ' : '') + disp(last.value) + ' ' + unit() + ' × ' + last.reps + '</span></div>'; }).join('') : '<div class="r mute"><span>まだ記録なし</span><span>—</span></div>') + '</div>';
   h += '<div class="card"><div class="ttl" style="margin-bottom:8px">コーチに送る</div><div class="report" id="repText"></div><label class="opt"><input type="checkbox" id="optMsgr"> フォーム動画は Messenger で送った（sent via Messenger）</label><div class="btns" style="margin-top:10px"><button class="b-yel" id="copyRep">レポートをコピー</button><button class="b-sub" id="addMedia"' + (CAP.assets ? '' : ' hidden') + '>体の写真を追加</button></div>' +
     (d.media.length ? '<div class="gallery">' + d.media.map(m => { const src = m.url || ('/_blob/' + m.assetId); return '<a class="thumb" href="' + esc(src) + '" target="_blank" rel="noopener">' + (m.type === 'video' ? '<video src="' + esc(src) + '" muted playsinline preload="metadata"></video>' : '<img src="' + esc(src) + '" loading="lazy" alt="' + esc(m.category) + '">') + '<div class="cap">' + esc(m.date.slice(5)) + ' ' + esc(m.category) + (m.type === 'video' ? ' ▶' : '') + '</div></a>'; }).join('') + '</div>' : '') + '</div>';
@@ -1933,7 +2014,7 @@ async function boot() {
   use('downloads').then(dl => { CAP.downloads = dl; scheduleRender(); });
 }
 window.addEventListener('beforeunload', () => { try { localStorage.setItem('tl.tab', UI.tab); } catch (e) { /* ignore */ } });
-window.__tl = { resizeImage, validateEstimate, isSnack, mealLabel, parseSetScheme, expandPairSets, repsText, setLabel, setActual, dayReport, bumpKg, warmupMinutesText, setUnits, shortExerciseList, bmr, exerciseKcalFor, dayCalorieBalance, fatModel, fatVisual, suggestActivityBase, weightOnOrBefore, weekAdherence, matchFood }; // テスト用フック（純粋関数のみ）
+window.__tl = { resizeImage, validateEstimate, isSnack, mealLabel, parseSetScheme, expandPairSets, repsText, setLabel, setActual, dayReport, bumpKg, warmupMinutesText, setUnits, shortExerciseList, bmr, exerciseKcalFor, dayCalorieBalance, fatModel, fatVisual, suggestActivityBase, weightOnOrBefore, weekAdherence, matchFood, dayNoFor }; // テスト用フック（純粋関数のみ）
 boot();
 })();
 </script>
