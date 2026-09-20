@@ -329,10 +329,21 @@ textarea.txt{min-height:60px}
 .bottombar .panel .card{margin-bottom:8px}
 body:has(#bbar:not([hidden])) main{padding-bottom:calc(230px + env(safe-area-inset-bottom,0px))}
 /* 予定（未記録）の食事は枠線だけ。記録の入口ではないのでタップしても開かない */
-.step.planonly .row{background:transparent;border:1px dashed var(--line);cursor:default}
+.step.planonly .row{background:transparent;border:1px dashed var(--line)}
 .step.planonly .nm{color:var(--mute)}
 .step.overdue .row{border-color:var(--orange)}
 .step.overdue .l3{color:var(--orange)}
+.picks{border-radius:10px;overflow:hidden;background:var(--card)}
+.pick{display:grid;grid-template-columns:30px 1fr auto;gap:6px 10px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line)}
+.pick:last-child{border-bottom:0}
+.pick.off{opacity:.45}
+.pick.off .pn{text-decoration:line-through}
+.pick .pn{font-weight:700;overflow-wrap:anywhere}
+.pick .pg{grid-column:2;display:flex;align-items:baseline;gap:4px}
+.pick .pg input{width:86px;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:7px 8px;color:var(--ink);font:700 16px var(--num);text-align:right}
+.pick .pg .u{color:var(--mute);font-size:13px}
+.pick .pkc{grid-column:3;grid-row:2;font:600 14px var(--num);color:var(--mute);white-space:nowrap}
+.picktot{margin-top:12px;padding:10px 12px;border-radius:10px;background:var(--card2)}
 .mealchips{display:flex;gap:8px;align-items:center;margin-top:8px}
 .mealchips .slotchip{background:var(--card2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:5px 10px;font:700 13px var(--jp)}
 .mealchips .undo-mini{background:transparent;border:0;color:var(--mute);font:500 13px var(--jp);padding:5px 4px;text-decoration:underline}
@@ -383,7 +394,7 @@ body:has(#dlg:not([hidden])) .toast.show,body:has(#sheet:not([hidden])) .toast.s
    ===================================================================== */
 const LB = 0.45359237;
 const WD = ['日', '月', '火', '水', '木', '金', '土'];
-const SEED_VERSION = 9; // Day4 をコーチ原文どおりに差し替え、「A または B」を選択式に分割、腹筋3種・カーフ3択を確定 // 初期データを変えたら上げる（db 上の plan_* / foods を再投入する）
+const SEED_VERSION = 10; // 品目ごとの栄養を更新（100gあたり）、全卵は「個」・ホエイは「スクープ」で入力、食品マスタに常用品を追加 // 初期データを変えたら上げる（db 上の plan_* / foods を再投入する）
 // セット種類の日本語名と「目的と重さの目安」文言（{reps} と {kg} を置換）
 const SET_TYPES = {
   WU: { name: 'ウォームアップ', purpose: '軽めの重さで {reps}回。フォームを確かめる' },
@@ -534,29 +545,33 @@ const SEED = {
     [5, '腰回し', 'Hip circles', 'hips', ['足を肩幅に開き、両手を腰に当てる', '膝を軽くゆるめ、腰でゆっくり大きな円を描く。右回り10回、左回り10回', '左右それぞれ10回で1セット']],
     [6, 'つま先タッチ', 'Toe touches', 'toe', ['足を肩幅に開いて立つ', '膝を軽く曲げたまま前屈し、指先でつま先へ。ゆっくり起き上がる', '前屈して起きて1回。10回で1セット']]
   ],
-  // [foodId, nameJa, nameEn, per, kcal, p, f, c]（一般的な栄養成分表ベース。コーチ回答後に修正）
+  // [foodId, nameJa, nameEn, per, kcal, p, f, c, 1単位のg（個・スクープで数えるもの）, 単位名, 「他のものを追加」で出す既定の分量g]
+  // 数値は 100g（100ml）あたり。ラベルがあるものはラベル値を優先する
   foods: [
-    ['egg_whole', '全卵', 'Whole egg', '100g', 143, 12.6, 9.5, 0.7],
-    ['egg_white', '卵白（MTGミールプラン or 手動分離）', 'Egg white', '100g', 52, 10.9, 0.2, 0.7],
+    ['egg_whole', '全卵', 'Whole egg', '100g', 151, 12.3, 10.3, 0.3, 50, '個'],
+    ['egg_white', '卵白（MTGミールプラン or 手動分離）', 'Egg white', '100g', 47, 10.5, 0, 0.7],
     ['rice_raw', '白米（生）', 'White rice (raw)', '100g', 358, 6.1, 0.9, 77.6],
-    ['rice_cooked', '白米（炊飯後）', 'White rice (cooked)', '100g', 156, 2.5, 0.3, 37.1],
+    ['rice_cooked', '白米（炊飯後）', 'White rice (cooked)', '100g', 168, 2.5, 0.3, 37.1, 0, '', 500],
     ['chicken_raw', '鶏胸肉 皮なし（生）', 'Chicken breast (raw)', '100g', 105, 23.3, 1.9, 0.1],
-    ['chicken_cooked', '鶏胸肉 皮なし（加熱後）', 'Chicken breast (cooked)', '100g', 165, 31.0, 3.6, 0],
-    ['green_beans', 'インゲン（バギオ豆）', 'Green beans', '100g', 23, 1.8, 0.1, 5.1],
-    ['olive_oil', 'オリーブオイル', 'Olive oil', '100g', 884, 0, 100, 0],
+    ['chicken_cooked', '鶏胸肉 皮なし（加熱後）', 'Chicken breast (cooked)', '100g', 110, 23.0, 1.5, 0],
+    ['green_beans', 'インゲン（バギオ豆）', 'Green beans', '100g', 31, 1.8, 0.1, 7.1],
+    ['olive_oil', 'オリーブオイル', 'Olive oil', '100g', 900, 0, 100, 0],
     ['rice_flour', '米粉（乾燥）', 'Rice flour (dry)', '100g', 356, 6.0, 0.7, 81.3],
-    ['cream_of_rice', 'クリームオブライス（ジャスミン米粉・乾燥）', 'Cream of rice (jasmine, dry)', '100g', 356, 6.0, 0.7, 81.3],
-    ['skippy_pb', 'ピーナッツバター Skippy', 'Skippy peanut butter', '100g', 594, 22, 50, 22],
-    ['whey', 'ホエイプロテイン（1スクープ30g）', 'Whey protein', '1scoop', 120, 24, 1.5, 3],
+    ['cream_of_rice', 'クリームオブライス（ジャスミン米粉・乾燥）', 'Cream of rice (jasmine, dry)', '100g', 365, 7.0, 1.0, 80.0],
+    ['skippy_pb', 'ピーナッツバター Skippy', 'Skippy peanut butter', '100g', 588, 22, 50, 22],
+    ['whey', 'ホエイプロテイン', 'Whey protein', '100g', 400, 80, 5, 8, 30, 'スクープ'],
     ['peanut_butter', 'ピーナッツバター（無糖）', 'Peanut butter (unsweetened)', '100g', 588, 25, 50, 20],
-    ['beef_lean_cooked', '赤身牛肉（調理後）', 'Lean beef (cooked)', '100g', 200, 30, 8, 0],
-    ['broccoli', 'ブロッコリー', 'Broccoli', '100g', 34, 2.8, 0.4, 7.0],
-    ['salmon', 'サーモン', 'Salmon', '100g', 208, 20, 13, 0],
-    ['gummy', 'グミ', 'Gummy candy', '100g', 340, 7, 0, 77],
+    ['beef_lean_cooked', '赤身牛肉（調理後）', 'Lean beef (cooked)', '100g', 215, 31.0, 9.5, 0],
+    ['broccoli', 'ブロッコリー', 'Broccoli', '100g', 34, 2.8, 0.4, 6.6],
+    ['salmon', 'サーモン', 'Salmon', '100g', 208, 20.4, 13.4, 0],
+    ['gummy', 'グミ', 'Gummy candy', '100g', 357.8, 4.7, 0, 79.8, 0, '', 45],
     ['salt_himalayan', 'ヒマラヤ塩', 'Himalayan salt', '100g', 0, 0, 0, 0],
-    ['selecta_adult', 'セレクタ アダルト アクティブ', 'Selecta Adult Active', '100ml', 61, 2.0, 3.7, 3.3],
-    ['soya_hoops', 'ソヤ プロテイン フープス', 'Soya Protein Hoops', '100g', 373, 38.2, 11.4, 34.3],
-    ['pistachio_meadows', 'ピスタチオ(Meadows)', 'Pistachios (Meadows)', '100g', 562, 23.7, 42.4, 23.9]
+    ['selecta_adult', 'セレクタ アダルト アクティブ', 'Selecta Adult Active', '100ml', 61, 2.0, 3.7, 3.3, 0, '', 150],
+    ['soya_hoops', 'ソヤ プロテイン フープス', 'Soya Protein Hoops', '100g', 373, 38.2, 11.4, 34.3, 0, '', 80],
+    ['pistachio_meadows', 'ピスタチオ(Meadows)', 'Pistachios (Meadows)', '100g', 562, 23.7, 42.4, 23.9, 0, '', 40],
+    ['nuts', 'ナッツ', 'Mixed nuts', '100g', 562.5, 23.8, 42.5, 24.0, 0, '', 40],
+    ['salmon_sushi', 'サーモン寿司', 'Salmon sushi', '1pc', 56, 3.5, 1.4, 7.0, 1, '貫', 1],
+    ['hamburg', 'ハンバーグ', 'Hamburg steak', '100g', 272, 15.0, 14.0, 6.3, 0, '', 400]
   ],
   // foodId 'rice' は settings.riceBasis で rice_raw / rice_cooked に解決する
   meals: [
@@ -571,7 +586,7 @@ const SEED = {
       { foodId: 'salt_himalayan', grams: 1.5, short: '塩1.5g' }, { foodId: 'green_beans', grams: 80, short: 'インゲン80g' }] },
     { mealNo: 4, label: '4食目', note: 'プレワークアウト食（速く吸収される炭水化物）・ 代替案とどちらを選ぶかは自由', items: [
       { foodId: 'cream_of_rice', grams: 50, label: 'クリームオブライス（乾燥）50g ・ ジャスミン米をフードプロセッサーで粉に', short: 'クリームオブライス50g' },
-      { foodId: 'whey', grams: 1, label: 'ホエイ1スクープ（30g）', short: 'ホエイ1スクープ' },
+      { foodId: 'whey', grams: 30, label: 'ホエイ1スクープ（30g）', short: 'ホエイ1スクープ' },
       { foodId: 'skippy_pb', grams: 15, label: 'ピーナッツバター Skippy 15g', short: 'Skippy PB15g' }],
       alt: { label: '代替案: 白米150g・鶏胸肉100g・全卵1個', items: [
         { foodId: 'rice', grams: 150 }, { foodId: 'chicken_cooked', grams: 100, short: '鶏胸肉100g' }, { foodId: 'egg_whole', grams: 50, label: '全卵1個（約50g）', short: '全卵1個' }] } },
@@ -653,6 +668,12 @@ function parseSetScheme(scheme) {
 }
 const isRatioPer = per => per === '100g' || per === '100ml';
 const perUnitSuffix = per => per === '100ml' ? 'ml' : per === '100g' ? 'g' : per === '1scoop' ? 'スクープ' : '個';
+/** 個・スクープで数える食品（全卵 1個=50g、ホエイ 1スクープ=30g）。無ければ null */
+const unitOf = f => f && Number(f.unitG) > 0 ? { g: Number(f.unitG), label: f.unitLabel || '個' } : null;
+/** 品目の短い名前（分量は付けない）。白米だけは基準（炊飯後／生米）を添える */
+function foodShortName(foodId) { const f = foodOf(foodId); if (foodId === 'rice_cooked' || foodId === 'rice_raw' || foodId === 'rice') return '白米（' + riceBasisText().replace('・要確認', '') + '）'; return f ? f.nameJa.replace(/[（(].*$/, '') : foodId; }
+/** 分量の表示。単位を持つ食品は「4個」「1スクープ」、それ以外は「200g」 */
+function amountText(f, grams) { const u = unitOf(f); if (u) return r1(Number(grams) / u.g) + u.label; return r1(Number(grams)) + (f ? perUnitSuffix(f.per) : 'g'); }
 function calcMacros(food, amount) { const f = isRatioPer(food.per) ? Number(amount) / 100 : Number(amount); return { kcal: r1(food.kcal * f), p: r1(food.p * f), f: r1(food.f * f), c: r1(food.c * f) }; }
 function movingAvg(vals, w) { return vals.map((v, i) => { const from = Math.max(0, i - w + 1); let s = 0; for (let j = from; j <= i; j++) s += vals[j].value; return { date: v.date, value: r1(s / (i - from + 1)) }; }); }
 function pct(n, d) { return d ? Math.round(n / d * 100) : 0; }
@@ -726,7 +747,7 @@ async function seedIfNeeded() {
   await replace('plan_meals', SEED.meals.map(m => Object.assign({ _id: m.mealNo }, m)));
   await replace('plan_supplements', SEED.supplements.map((s, i) => ({ _id: s[0], id: s[0], name: s[1], dose: s[3] || '', timing: s[2], order: i + 1, active: true, pending: !s[3] })));
   await replace('plan_routine', SEED.routine.map(r => Object.assign({ _id: r.id }, r)));
-  for (const f of SEED.foods) { const cur = ST.foods[f[0]]; if (!cur || cur.source === 'plan') await store.set('foods', f[0], { foodId: f[0], nameJa: f[1], nameEn: f[2], per: f[3], kcal: f[4], p: f[5], f: f[6], c: f[7], source: 'plan', note: '' }); }
+  for (const f of SEED.foods) { const cur = ST.foods[f[0]]; if (!cur || cur.source === 'plan') await store.set('foods', f[0], { foodId: f[0], nameJa: f[1], nameEn: f[2], per: f[3], kcal: f[4], p: f[5], f: f[6], c: f[7], unitG: f[8] || 0, unitLabel: f[9] || '', portionG: f[10] || 0, source: 'plan', note: '' }); }
   // v7: 休憩 トップ 180 秒／他 120 秒、ウォームアップ注記を既定に戻す（ユーザーが設定で変えていれば次回以降はそのまま）
   const migrate = Number(ST.settings.seedVersion) < 7 ? { restTopSec: 180, restMainSec: 120, restOtherSec: 120, warmupNote: DEFAULT_SETTINGS.warmupNote } : {};
   // v8: 経口サプリ 07:05、サイリウムはその 15 分後（07:20）
@@ -805,7 +826,7 @@ function itemLabel(it, full) {
   if (!full && it.short) return it.short;
   if (it.label) return it.label;
   const nm = f ? (full ? f.nameJa : f.nameJa.replace(/[（(].*$/, '')) : it.foodId;
-  return nm + it.grams + (f ? perUnitSuffix(f.per) : 'g');
+  return nm + amountText(f, it.grams);
 }
 function macrosOfItems(items) { const t = { kcal: 0, p: 0, f: 0, c: 0 }; items.forEach(i => ['kcal', 'p', 'f', 'c'].forEach(k => { t[k] += Number(i[k]) || 0; })); ['kcal', 'p', 'f', 'c'].forEach(k => { t[k] = r1(t[k]); }); return t; }
 const macroLine = m => '約' + Math.round(m.kcal) + 'kcal ・ P' + Math.round(m.p) + ' F' + Math.round(m.f) + ' C' + Math.round(m.c);
@@ -855,7 +876,7 @@ function planToItems(items, choices) {
   });
 }
 /** 記録品目の表示名（短縮） */
-function itemShort(it) { const f = ST.foods[it.foodId]; if (it.foodId === 'rice_cooked' || it.foodId === 'rice_raw') return '白米' + it.grams + 'g（' + (it.foodId === 'rice_raw' ? '生米基準' : '炊飯後基準') + '）'; if (it.manual) return (f ? f.nameJa : '手入力') + '（手入力）'; const nm = f ? f.nameJa.replace(/[（(].*$/, '') : it.foodId; return nm + it.grams + (f ? perUnitSuffix(f.per) : 'g'); }
+function itemShort(it) { const f = ST.foods[it.foodId]; if (it.foodId === 'rice_cooked' || it.foodId === 'rice_raw') return '白米' + it.grams + 'g（' + (it.foodId === 'rice_raw' ? '生米基準' : '炊飯後基準') + '）'; if (it.manual) return (f ? f.nameJa : '手入力') + '（手入力）'; const nm = f ? f.nameJa.replace(/[（(].*$/, '') : it.foodId; return nm + amountText(f, it.grams); }
 /** 記録品目から状態を導く: 何も食べていない=skip / プラン品目を全部そのまま=plan / それ以外=sub */
 /** 保存済み status の正規化: substitute/photo → sub（内部表現） */
 function normStatus(st) { return st === 'substitute' || st === 'photo' ? 'sub' : (st || ''); }
@@ -1003,12 +1024,20 @@ function buildTimeline(t) {
   const nowM = t.date === todayYmd() ? nowMin() : null, dayOver = t.date < todayYmd();
   const mealStep = n => { const m = t.meals.find(x => x.mealNo === n); if (!m) return null;
     if (m.isSnack) return { id: 'meal:' + n, kind: 'meal', mealNo: n, title: m.label, photo: m.photo, lines: [m.eaten.map(i => i.short).join('・'), (m.photo ? '写真から推定 ・ ' : m.manual ? '✏️ 手入力 ・ ' : '') + macroLine(m.mac).replace('kcal', 'kcal' + (m.estimated ? '※' : m.manual ? '✏️' : ''))], planned: '', done: true, mark: 'ok', handled: true, loggedAt: m.loggedAt, status: m.status, isSnack: true, linkedSlot: 'snack' };
-    const lines = [m.status && m.status !== 'skip' && m.status !== 'plan' ? m.eaten.map(i => i.short).join('・') : m.planItems.map(p => p.short).join('・') + (m.note ? '　※' + m.note : '')];
-    if (m.status === 'skip') lines.push('スキップ（' + (m.skipReason || '食べなかった') + '）'); else if (m.status) lines.push((m.status === 'plan' ? (m.variant === 'alt' ? '代替案で記録 ・ ' : 'プラン通り ・ ') : '変更して記録 ・ ') + macroLine(m.mac).replace('kcal', 'kcal' + (m.estimated ? '※' : m.manual ? '✏️' : ''))); else lines.push(macroLine(m.planMac));
+    // 記録済みは「何を食べて何を抜いたか」が分かるように、抜いた品目も打ち消し線で残す
+    const live = m.items.filter(i => !i.deleted);
+    const itemsTxt = m.status && m.status !== 'skip' ? live.map(i => i.short).join('・') : m.planItems.map(p => p.short).join('・') + (m.note ? '　※' + m.note : '');
+    const itemsHtml = m.status && m.status !== 'skip' ? live.map(i => i.eaten ? esc(i.short) : '<s class="mute">' + esc(i.short) + '</s>').join('・') : esc(itemsTxt);
+    const diff = m.status && m.status !== 'skip' ? r1(m.mac.kcal - m.planMac.kcal) : 0;
+    const lines = [itemsTxt];
+    if (m.status === 'skip') lines.push('スキップ（' + (m.skipReason || '食べなかった') + '）');
+    else if (m.status) lines.push((m.status === 'plan' ? (m.variant === 'alt' ? '代替案で記録 ・ ' : 'プラン通り ・ ') : '変更して記録 ・ ') + macroLine(m.mac).replace('kcal', 'kcal' + (m.estimated ? '※' : m.manual ? '✏️' : '')) + (m.status === 'sub' && diff !== 0 ? '（プラン ' + Math.round(m.planMac.kcal) + 'kcal ・ ' + (diff > 0 ? '+' : '') + Math.round(diff) + '）' : ''));
+    else lines.push(macroLine(m.planMac));
     const planned = T['meal' + n] || '';
     const overdue = !m.status && (dayOver || (nowM != null && hmMin(planned) != null && nowM >= hmMin(planned) + 120));
     if (overdue) lines.push('まだ記録がありません');
-    return { id: 'meal:' + n, kind: 'meal', mealNo: n, title: m.label, photo: m.photo, lines, planned, done: m.status === 'plan', mark: m.status === 'plan' ? 'ok' : m.status === 'sub' ? 'sub' : m.status === 'skip' ? 'skip' : '', handled: !!m.status, loggedAt: m.status ? m.loggedAt : '', status: m.status, linkedSlot: Number(n), planOnly: !m.status, overdue }; };
+    const lineHtml = [itemsHtml].concat(lines.slice(1).map(esc));
+    return { id: 'meal:' + n, kind: 'meal', mealNo: n, title: m.label, photo: m.photo, lines, lineHtml, planned, done: m.status === 'plan', mark: m.status === 'plan' ? 'ok' : m.status === 'sub' ? 'sub' : m.status === 'skip' ? 'skip' : '', handled: !!m.status, loggedAt: m.status ? m.loggedAt : '', status: m.status, linkedSlot: Number(n), planOnly: !m.status, overdue }; };
   const warmupStep = planned => ({ id: 'warmup', kind: 'warmup', title: 'ウォームアップ ' + t.warmup.items.length + '種 ・ 約' + s.warmupMin + '分', lines: [t.warmup.items.map(x => x.name).join('・') + ' ／ 各10回×2セット'].concat(t.warmup.done ? [warmupMinutesText(t.warmup.minutes)] : t.warmup.doneCount ? [t.warmup.doneCount + '/' + t.warmup.items.length + '種 完了'] : []), planned, done: t.warmup.done, loggedAt: t.warmup.loggedAt, skipped: t.warmup.skipped });
   const wAt = t.weight ? (t.weight.loggedAt || legacyIso(t.date, t.weight.time)) : (t.weightSkipped ? t.weightSkipped.loggedAt : '');
   steps.push({ id: 'weight', kind: 'weight', title: '体重', lines: [t.weight ? disp(t.weight.weightKg) + unit() + (t.prevWeight ? ' ' + deltaArrow(t.weight.weightKg - t.prevWeight.weightKg) + '（前回 ' + disp(t.prevWeight.weightKg) + unit() + '）' : '') + (t.weight.bodyFatPct !== '' ? ' ・ 体脂肪 ' + t.weight.bodyFatPct + '%' : '') : t.weightSkipped ? '測れなかった（' + reasonJa(t.weightSkipped) + '）' : (t.prevWeight ? '前回 ' + disp(t.prevWeight.weightKg) + unit() + '（' + t.prevWeight.date.slice(5) + '）' : '起床後・トイレ後に')], planned: T.weight, done: !!t.weight, handled: !!t.weight || !!t.weightSkipped, mark: t.weight ? 'ok' : t.weightSkipped ? 'na' : '', loggedAt: wAt, na: !!t.weightSkipped });
@@ -1405,7 +1434,7 @@ const A = {
   /** ↩ 1つ戻す */
   mealUndo(date, n) { const st = mealHist(date, n); if (!st.length) return Promise.resolve(false); const prev = st.pop(); return A.setMeal(date, n, prev).then(() => true); },
   async addFood(food) { let id = food.foodId || String(food.nameEn || food.nameJa).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'food'; if (ST.foods[id]) id += '_' + Date.now().toString(36);
-    const row = { foodId: id, nameJa: food.nameJa, nameEn: food.nameEn || '', per: food.per || '100g', kcal: Number(food.kcal) || 0, p: Number(food.p) || 0, f: Number(food.f) || 0, c: Number(food.c) || 0, source: food.source || 'user', note: food.note || '' }; await store.set('foods', id, row); return row; },
+    const row = { foodId: id, nameJa: food.nameJa, nameEn: food.nameEn || '', per: food.per || '100g', kcal: Number(food.kcal) || 0, p: Number(food.p) || 0, f: Number(food.f) || 0, c: Number(food.c) || 0, unitG: Number(food.unitG) || 0, unitLabel: food.unitLabel || '', portionG: Number(food.portionG) || 0, source: food.source || 'user', note: food.note || '' }; await store.set('foods', id, row); return row; },
   async setDaily(date, patch) { const next = Object.assign({ date }, ST.log_daily[date], patch); next.dayName = ST.plan_days[String(next.dayNo || calcDayNo(ST.settings.startDate, date))] ? ST.plan_days[String(next.dayNo || calcDayNo(ST.settings.startDate, date))].name : ''; if (patch.comment != null) next.notes = patch.comment; await store.set('log_daily', date, next); await A.syncDaily(date); },
   async saveSet(date, exId, setNo, setType, v, reps) { const doc = workoutDoc(date), sets = Object.assign({}, doc.sets); const at = isoNow(); sets[exId + '_' + setNo] = { exerciseId: exId, setNo, setType, weightKg: toKg(v), reps: reps === '' ? '' : Number(reps), at: fmtHm(at), loggedAt: at }; await store.set('log_workout', date, Object.assign({}, doc, { sets })); },
   async deleteSet(date, exId, setNo) { const doc = workoutDoc(date), sets = Object.assign({}, doc.sets); delete sets[exId + '_' + setNo]; await store.set('log_workout', date, Object.assign({}, doc, { sets })); },
@@ -1506,7 +1535,7 @@ function buildCsv() {
    ===================================================================== */
 const CAP = { db: null, assets: null, sample: null, downloads: null, images: null };
 const PHOTO_MEM = {}; // assets が使えないときの写真（このセッションのみ）: 'date#mealNo' → dataURL
-const UI = { date: todayYmd(), tab: 'today', wk: null, rest: null, summaryWeek: null, howto: false, sheetMeal: null, totalsOpen: false };
+const UI = { date: todayYmd(), tab: 'today', wk: null, rest: null, summaryWeek: null, howto: false, sheetMeal: null, mealPick: null, totalsOpen: false };
 const $ = (s, el) => (el || document).querySelector(s);
 const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
 const view = $('#view');
@@ -1531,7 +1560,7 @@ function askReason(kind, title, msg) { return new Promise(res => { const opts = 
 function askChoice(title, msg, choices) { return new Promise(res => { const d = openDlg('<h3>' + esc(title) + '</h3>' + (msg ? '<div class="msg">' + esc(msg) + '</div>' : '') + choices.map((c, i) => '<button class="b ' + (c.cls || 'b-sub') + '" style="width:100%;margin-top:8px" data-choice="' + i + '">' + esc(c.label) + '</button>').join('') + '<button class="b b-ghost" style="width:100%;margin-top:8px" id="dlgNo">やめる</button>'); $$('[data-choice]', d).forEach(b => { b.onclick = () => { closeDlg(); res(choices[Number(b.dataset.choice)].value); }; }); $('#dlgNo', d).onclick = () => { closeDlg(); res(null); }; }); }
 function askTime(title, msg, def) { return new Promise(res => { const d = openDlg('<h3>' + esc(title) + '</h3><div class="msg">' + esc(msg || '') + '</div><input class="time" id="dlgTime" type="time" value="' + esc(def || '') + '"><div class="btns" style="margin-top:12px"><button class="b-sub" id="dlgNo">やめる</button><button class="b-yel" id="dlgOk">この時刻にする</button></div>'); $('#dlgOk', d).onclick = () => { const v = $('#dlgTime', d).value; closeDlg(); res(/^\d{2}:\d{2}$/.test(v) ? v : null); }; $('#dlgNo', d).onclick = () => { closeDlg(); res(null); }; }); }
 function openSheet(html) { const s = $('#sheet'); $('.sheet-body', s).innerHTML = html; s.hidden = false; return s; }
-function closeSheet() { $('#sheet').hidden = true; const sm = UI.sheetMeal; UI.sheetMeal = null; if (sm) A.mealPurge(UI.date, sm.mealNo).then(() => render()).catch(fail); }
+function closeSheet() { $('#sheet').hidden = true; const sm = UI.sheetMeal; UI.sheetMeal = null; UI.mealPick = null; if (sm) A.mealPurge(UI.date, sm.mealNo).then(() => render()).catch(fail); }
 $('#sheet').addEventListener('click', function (e) { if (e.target === this) closeSheet(); });
 $('#dlg').addEventListener('click', function (e) { if (e.target === this) { closeDlg(); } });
 function scheduleRender() { if (renderQueued) return; renderQueued = true; requestAnimationFrame(() => { renderQueued = false; render(); }); }
@@ -1552,6 +1581,7 @@ function render() {
     $('#bbar').hidden = true; $('#bbar').innerHTML = '';
     ({ today: renderToday, workout: renderWorkout, water: renderWater, summary: renderSummary })[UI.tab](t);
     if (UI.sheetMeal) openMealSheet(UI.sheetMeal.mealNo, UI.sheetMeal.sub); // シートを開いたまま操作したら内容を更新（写真だけのシートもそのまま）
+    else if (UI.mealPick) openMealPickSheet(UI.mealPick.date, UI.mealPick.mealNo);
   } catch (e) {
     console.error(e);
     view.innerHTML = '<div class="card"><div class="ttl">表示エラー</div><div class="mute small">' + esc(e.message || e) + '</div><button class="b b-sub" style="width:100%;margin-top:10px" id="retry">再読み込み</button></div>';
@@ -1580,13 +1610,12 @@ function renderToday(t) {
     const lbl = st.mark === 'sub' ? '<span class="lbl-sub sub">変更あり</span>' : st.mark === 'skip' ? '<span class="lbl-sub skip">スキップ</span>' : st.mark === 'na' ? '<span class="lbl-sub na">' + (st.kind === 'weight' ? '測れなかった' : st.kind === 'workout' || st.kind === 'cardio' ? 'できなかった' : '今日はなし') + '</span>' : st.skipped ? '<span class="lbl-sub skip">飛ばした</span>' : '';
     const chk = st.mark === 'ok' ? 'chk on' : st.mark === 'sub' ? 'chk sub' : st.mark === 'skip' ? 'chk skip' : st.mark === 'na' ? 'chk na' : 'chk';
     const cam = st.kind === 'meal' && st.photo ? '<span class="cam" data-photo="' + st.mealNo + '" title="写真を見る">📷</span>' : '';
-    // 食事の予定（未記録）は「記録の入口」ではないので、タップも ✓ ボタンも出さない
-    // 今日以外は行タップで開かず（長押しで「修正する」）、✓ も押せない灰色にする
-    const openAttr = st.planOnly || !isToday ? '' : ' data-open="' + esc(st.id) + '"';
+    // 未記録の食事カードはタップして品目選択シートを開く。今日以外は長押しの「修正する」からだけ開く
+    const openAttr = !isToday ? '' : ' data-open="' + esc(st.id) + '"';
     const chkBtn = st.planOnly ? '' : '<button class="' + chk + (isToday ? '' : ' off') + '" data-chk="' + esc(st.id) + '"' + (isToday ? '' : ' disabled') + ' aria-label="' + (st.handled ? '記録を取り消す' : '完了') + '">' + (st.mark === 'skip' || st.mark === 'na' ? '−' : st.mark ? '✓' : '') + '</button>';
     // 記録済みの食事には「どの枠に紐づいているか」のチップと取り消しを出す
     const chips = st.kind === 'meal' && st.handled ? '<div class="mealchips"><button class="slotchip" data-relink="' + esc(st.id) + '">' + esc(st.isSnack ? '間食' : st.mealNo + '食目') + ' ▾</button><span class="mute small">タップで紐づけ先を変更 ・ 右の ✓ で取り消し</span></div>' : '';
-    h += '<div class="step ' + st.state + (st.planOnly ? ' planonly' : '') + (st.overdue ? ' overdue' : '') + '" data-step="' + esc(st.id) + '" data-mark="' + esc(st.mark) + '"><div class="row"' + openAttr + '><div class="body"><div class="t1"><span class="nm">' + esc(st.title) + cam + lbl + '</span>' + tm + '</div>' + st.lines.map((l, i) => '<div class="' + (i === st.lines.length - 1 && st.lines.length > 1 ? 'l3' : 'l2') + '">' + esc(l) + '</div>').join('') + chips + '</div>' + chkBtn + '</div></div>';
+    h += '<div class="step ' + st.state + (st.planOnly ? ' planonly' : '') + (st.overdue ? ' overdue' : '') + '" data-step="' + esc(st.id) + '" data-mark="' + esc(st.mark) + '"><div class="row"' + openAttr + '><div class="body"><div class="t1"><span class="nm">' + esc(st.title) + cam + lbl + '</span>' + tm + '</div>' + st.lines.map((l, i) => '<div class="' + (i === st.lines.length - 1 && st.lines.length > 1 ? 'l3' : 'l2') + '">' + (st.lineHtml ? st.lineHtml[i] : esc(l)) + '</div>').join('') + chips + '</div>' + chkBtn + '</div></div>';
   });
   h += '</div>';
   h += '<div class="card"><div class="ttl small mute">今日のメモ（週次レポートに載ります）</div><textarea class="txt" id="dayComment" placeholder="体調、違和感など">' + esc(t.comment) + '</textarea></div>';
@@ -1601,7 +1630,7 @@ function renderToday(t) {
   $$('[data-chk^="supp:"], [data-chk^="routine:"]').forEach(b => { const st = t.timeline.find(x => x.id === b.dataset.chk); if (!st || st.handled) return; bindLongPress(b, () => { if (st.kind === 'supp_group') askReason('supp', st.title + ' 今日はなし').then(r => { if (r) act(A.suppNA(t.date, st.timing, r.reason, r.reasonText), '記録しました'); }); else askReason('supp', st.title + ' 今日はなし').then(r => { if (r) act(A.routineNA(t.date, st.itemId, r.reason, r.reasonText), '記録しました'); }); }); });
   $$('[data-open]').forEach(el => { el.onclick = () => stepAction(t, el.dataset.open, false); });
   if (!isToday) $$('.step .row').forEach(el => { const id = el.closest('.step').dataset.step; const st = t.timeline.find(x => x.id === id);
-    if (!st || st.planOnly) return;
+    if (!st || (st.planOnly && !st.handled)) return;
     bindLongPress(el, () => askChoice(md(t.date) + ' の記録', st.title, [{ label: '修正する', value: 'go', cls: 'b-yel' }]).then(v => { if (v === 'go') stepAction(t, id, false); })); });
   $$('[data-relink]').forEach(el => { el.onclick = e => { e.stopPropagation(); const st = t.timeline.find(x => x.id === el.dataset.relink); if (st) openSlotSheet(t.date, st.mealNo); }; });
   renderBottomBar(t);
@@ -1625,6 +1654,93 @@ function renderBottomBar(t) {
   const bw = $('#bbWeek'); if (bw) bw.onclick = () => go('summary');
   const pb = $('#photoBtn'), pf = $('#photoFile'); if (pb && pf) { pb.onclick = () => { pf.value = ''; pf.click(); }; pf.onchange = () => photoFromToday(t, pf.files[0]); }
   $('#manualCalBtn').onclick = () => openManualCalSheet(t.date, null, null);
+}
+/** プランの食事カードをタップして開く「品目選択シート」。品目ごとにチェックと分量を決めてから記録する。
+ *  最初は全部チェックが入った状態。チェックを外す／分量を変えると、その品目の kcal と合計がその場で変わる */
+function openMealPickSheet(date, mealNo) {
+  const m = mealModel(date, mealNo);
+  if (!UI.mealPick || UI.mealPick.mealNo !== mealNo || UI.mealPick.date !== date) {
+    UI.mealPick = { date, mealNo, rows: m.items.filter(i => !i.deleted).map(i => ({
+      foodId: i.foodId, grams: Number(i.grams) || 0, eaten: m.logged ? i.eaten !== false : true,
+      origin: i.origin || 'plan', planGrams: i.planGrams === '' || i.planGrams == null ? '' : Number(i.planGrams),
+      choiceOf: i.choiceOf || '', manual: !!i.manual, estimated: !!i.estimated })) };
+  }
+  const st = UI.mealPick, rows = st.rows;
+  const macOf = r => { const f = foodOf(r.foodId); return f ? calcMacros(f, r.grams) : { kcal: 0, p: 0, f: 0, c: 0 }; };
+  const eatenMacs = () => rows.filter(r => r.eaten).map(macOf);
+  const t = todayModel(date), step = t.timeline.find(x => x.id === 'meal:' + mealNo) || {};
+  let h = '<h3>' + esc(m.label) + ' <span class="mute num" style="font-weight:500;font-size:14px">・ 予定 ' + esc(step.planned || '—') + '</span></h3>';
+  h += '<button class="b b-main" style="width:100%;margin-bottom:10px" id="mpAll">全部食べた</button>';
+  h += '<div class="picks">' + rows.map((r, i) => { const f = foodOf(r.foodId), u = unitOf(f), mac = macOf(r);
+    return '<div class="pick' + (r.eaten ? '' : ' off') + '" data-row="' + i + '">' +
+      '<button class="cb' + (r.eaten ? ' on' : '') + '" data-pk="' + i + '" aria-label="食べた">✓</button>' +
+      '<div class="pn">' + esc(foodShortName(r.foodId)) + (r.origin === 'plan' ? '' : ' <span class="badge warn">追加</span>') + '</div>' +
+      '<div class="pg"><input type="number" step="any" inputmode="decimal" data-pg="' + i + '" value="' + esc(u ? r1(r.grams / u.g) : r1(r.grams)) + '" aria-label="分量"><span class="u">' + esc(u ? u.label : (f ? perUnitSuffix(f.per) : 'g')) + '</span></div>' +
+      '<div class="pkc num" data-pkc="' + i + '">' + Math.round(mac.kcal) + 'kcal</div></div>'; }).join('') + '</div>';
+  h += '<button class="b b-sub" style="width:100%;margin-top:10px" id="mpAdd">＋ 他のものを追加</button>';
+  h += '<div class="picktot" id="mpTot"></div>';
+  h += '<div class="btns" style="margin-top:12px"><button class="b-sub" id="mpCancel">キャンセル</button><button class="b-yel" id="mpSave">記録する</button></div>';
+  const s = openSheet(h); UI.sheetMeal = null;
+  const paint = () => {
+    rows.forEach((r, i) => { const mac = macOf(r), el = $('[data-pkc="' + i + '"]', s); if (el) el.textContent = Math.round(mac.kcal) + 'kcal';
+      const row = $('.pick[data-row="' + i + '"]', s); if (row) row.classList.toggle('off', !r.eaten);
+      const cb = $('[data-pk="' + i + '"]', s); if (cb) cb.classList.toggle('on', r.eaten); });
+    const tot = macrosOfItems(eatenMacs());
+    $('#mpTot', s).innerHTML = '<div class="num" style="font-weight:700">合計 ' + Math.round(tot.kcal) + 'kcal ・ P' + Math.round(tot.p) + ' F' + Math.round(tot.f) + ' C' + Math.round(tot.c) + '</div>' +
+      '<div class="mute small num">（プラン ' + Math.round(m.planMac.kcal) + 'kcal ・ P' + Math.round(m.planMac.p) + ' F' + Math.round(m.planMac.f) + ' C' + Math.round(m.planMac.c) + '）</div>';
+  };
+  paint();
+  $$('[data-pk]', s).forEach(b => { b.onclick = () => { const i = Number(b.dataset.pk); rows[i].eaten = !rows[i].eaten; paint(); }; });
+  $$('[data-pg]', s).forEach(inp => { const i = Number(inp.dataset.pg), f = foodOf(rows[i].foodId), u = unitOf(f);
+    inp.oninput = () => { const v = Number(inp.value); rows[i].grams = isNaN(v) ? 0 : (u ? v * u.g : v); paint(); };
+    // よく使う調整は長押しメニューから
+    bindLongPress(inp.parentNode, () => askChoice('分量を変える', (f ? f.nameJa : '') + ' ' + amountText(f, rows[i].grams), [
+      { label: '半分にする（×0.5）', value: 0.5 }, { label: '1.5倍にする（×1.5）', value: 1.5 }, { label: '2倍にする（×2）', value: 2 }
+    ]).then(k => { if (!k) return; rows[i].grams = r1(rows[i].grams * k); inp.value = u ? r1(rows[i].grams / u.g) : r1(rows[i].grams); paint(); })); });
+  const commit = list => { const items = list.map(r => { const f = foodOf(r.foodId);
+    return Object.assign({ foodId: r.foodId, grams: r.grams, origin: r.origin, eaten: r.eaten, deleted: false, planGrams: r.planGrams === '' ? '' : r.planGrams }, r.choiceOf ? { choiceOf: r.choiceOf } : {}, r.manual ? { manual: true } : {}, r.estimated ? { estimated: true } : {}, f ? calcMacros(f, r.grams) : { kcal: 0, p: 0, f: 0, c: 0 }); });
+    UI.mealPick = null; closeSheet(); return act(A.mealCommit(date, mealNo, items), mealLabel(mealNo) + 'を記録しました'); };
+  $('#mpAll', s).onclick = () => commit(rows.map(r => Object.assign({}, r, { eaten: true, grams: r.origin === 'plan' && r.planGrams !== '' ? r.planGrams : r.grams })));
+  $('#mpSave', s).onclick = () => { if (!rows.some(r => r.eaten)) return toast('食べた品目を選ぶか、シートを閉じてください', true); commit(rows); };
+  $('#mpCancel', s).onclick = () => { UI.mealPick = null; closeSheet(); };
+  $('#mpAdd', s).onclick = () => openAddFoodSheet(pick => { rows.push({ foodId: pick.foodId, grams: pick.grams, eaten: true, origin: 'add', planGrams: '', choiceOf: '', manual: false, estimated: false }); openMealPickSheet(date, mealNo); }, () => openMealPickSheet(date, mealNo));
+}
+/** 「＋ 他のものを追加」: 食品マスタから選ぶ / 検索する / 新しい食品を登録する */
+function openAddFoodSheet(onPick, onCancel) {
+  const back = () => { if (onCancel) onCancel(); else closeSheet(); };
+  const pinned = Object.values(ST.foods).filter(f => Number(f.portionG) > 0);
+  const draw = (q) => {
+    const term = (q || '').trim().toLowerCase();
+    const list = term ? Object.values(ST.foods).filter(f => (f.nameJa + ' ' + (f.nameEn || '') + ' ' + f.foodId).toLowerCase().includes(term)).slice(0, 30) : pinned;
+    let h = '<h3>食品を追加</h3><input class="txt" id="afQ" placeholder="検索" value="' + esc(q || '') + '">';
+    h += '<div class="mute small" style="margin:10px 0 4px">' + (term ? '検索結果' : 'よく使うもの') + '</div>';
+    h += '<div class="list">' + (list.length ? list.map(f => { const g = Number(f.portionG) > 0 ? Number(f.portionG) : 100, mac = calcMacros(f, g);
+      return '<div class="it" data-af="' + esc(f.foodId) + '" data-afg="' + g + '" style="cursor:pointer"><span>' + esc(f.nameJa) + ' <span class="mute">' + esc(amountText(f, g)) + '</span></span><span class="m">' + Math.round(mac.kcal) + 'kcal ・ P' + Math.round(mac.p) + ' F' + Math.round(mac.f) + ' C' + Math.round(mac.c) + '</span></div>'; }).join('') : '<div class="mute small">該当なし</div>') + '</div>';
+    h += '<button class="b b-sub" style="width:100%;margin-top:10px" id="afNew">＋ 新しい食品を登録</button>';
+    h += '<button class="b b-ghost" style="width:100%;margin-top:8px" id="afBack">やめる</button>';
+    const s = openSheet(h);
+    const qi = $('#afQ', s); qi.oninput = () => draw(qi.value); if (term) { qi.focus(); qi.setSelectionRange(qi.value.length, qi.value.length); }
+    $$('[data-af]', s).forEach(el => { el.onclick = () => { const f = ST.foods[el.dataset.af]; onPick({ foodId: f.foodId, grams: Number(el.dataset.afg) }); }; });
+    $('#afNew', s).onclick = () => drawNew('');
+    $('#afBack', s).onclick = back;
+  };
+  const drawNew = (name) => {
+    const s = openSheet('<h3>新しい食品を登録</h3><div class="mute small">登録するとマスタに残り、次から1タップで選べます</div>' +
+      '<label class="lbl" for="afName">名前</label><input type="text" class="txt" id="afName" value="' + esc(name) + '" placeholder="例：コンビニのサンドイッチ">' +
+      '<label class="lbl" for="afG">分量（g）</label><input type="number" inputmode="decimal" class="txt" id="afG" value="100">' +
+      '<div class="stat" style="margin-top:6px">' + [['afK', 'カロリー（この分量で）'], ['afP', 'タンパク質 (g)'], ['afF', '脂質 (g)'], ['afC', '炭水化物 (g)']].map(([id, l]) => '<div><label class="lbl" for="' + id + '">' + l + '</label><input type="number" inputmode="decimal" class="txt" id="' + id + '"></div>').join('') + '</div>' +
+      '<div class="btns" style="margin-top:12px"><button class="b-sub" id="afNo">やめる</button><button class="b-yel" id="afSave">登録して追加</button></div>');
+    $('#afNo', s).onclick = () => draw('');
+    $('#afSave', s).onclick = async () => {
+      const nm = $('#afName', s).value.trim(), g = Number($('#afG', s).value) || 0, k = Number($('#afK', s).value);
+      if (!nm) return toast('名前を入力してください', true);
+      if (!g || !$('#afK', s).value || isNaN(k)) return toast('分量とカロリーを入力してください', true);
+      const r = 100 / g;
+      try { const f = await A.addFood({ nameJa: nm, per: '100g', kcal: r1(k * r), p: r1((Number($('#afP', s).value) || 0) * r), f: r1((Number($('#afF', s).value) || 0) * r), c: r1((Number($('#afC', s).value) || 0) * r), portionG: g, source: 'user' });
+        onPick({ foodId: f.foodId, grams: g }); } catch (e) { toast(e.message || String(e), true); }
+    };
+  };
+  draw('');
 }
 /** 記録の紐づけ先（1食目〜5食目 / 間食）を選び直すシート。記録済みの枠を選んだら入れ替えるか確認する */
 function openSlotSheet(date, fromKey) {
@@ -1666,7 +1782,8 @@ function stepAction(t, id, chk) {
     case 'supp_group': {
       if (st.na && chk) { const prev = ST.log_supplements[t.date]; return act(A.toggleSuppGroup(t.date, st.timing, false)).then(() => undo('サプリの「今日はなし」を取り消しました', () => store.set('log_supplements', t.date, prev))); }
       return chk ? act(A.toggleSuppGroup(t.date, st.timing, !st.done)) : openSuppSheet(t, st); }
-    case 'meal': if (chk && !st.handled) return act(A.mealPlanDone(t.date, st.mealNo), st.mealNo + '食目 プラン通り');
+    case 'meal': if (!chk && !st.isSnack && !st.handled) return openMealPickSheet(t.date, st.mealNo);
+      if (chk && !st.handled) return act(A.mealPlanDone(t.date, st.mealNo), st.mealNo + '食目 プラン通り');
       if (chk && st.isSnack) { const n = st.mealNo; return act(A.mealCancel(t.date, n)).then(() => toastAction('間食の記録を取り消しました', '元に戻す', () => act(A.mealUndo(t.date, n)))); }
       if (chk && st.handled) return act(A.mealCancel(t.date, st.mealNo)).then(() => toastAction(st.mealNo + '食目の記録を取り消しました', '元に戻す', () => act(A.mealUndo(t.date, st.mealNo))));
       return openMealSheet(st.mealNo, false);
@@ -1713,7 +1830,7 @@ function renderNow(t) {
     if (n.kind === 'cardio') return openCardioSheet();
     stepAction(t, n.stepId, true);
   };
-  if (b2) b2.onclick = () => { if (n.kind === 'meal') openMealSheet(n.mealNo, true); else if (n.kind === 'water') act(A.addWater(t.date, 250)); };
+  if (b2) b2.onclick = () => { if (n.kind === 'meal') openMealPickSheet(t.date, n.mealNo); else if (n.kind === 'water') act(A.addWater(t.date, 250)); };
 }
 /** 「📷 写真で記録」: 縮小 → 写真だけの記録パネルへ。どの食事かは聞かない（記録した時刻から自動で紐づく） */
 async function photoFromToday(t, file) {
@@ -1868,7 +1985,7 @@ function openMealSheet(mealNo, sub) {
     h += '<div class="chips" style="margin-top:8px" data-choicegroup="' + esc(ch.foodId) + '">' + ch.choices.map(c => '<button data-choice="' + esc(c) + '"' + (resolveFoodId(c) === curId ? ' class="on"' : '') + '>' + esc((ST.foods[c] || {}).nameJa || c) + ((ch.choiceGrams || {})[c] ? ' ' + (ch.choiceGrams || {})[c] + 'g' : '') + 'で</button>').join('') + '</div>'; });
   const allEaten = m.items.filter(i => i.origin === 'plan' && !i.deleted).every(i => i.eaten) && m.items.some(i => i.origin === 'plan');
   const canPhoto = !!CAP.sample;
-  h += '<div class="btns" style="margin-top:10px">' + (allEaten && m.logged || m.isSnack ? '' : '<button class="b-main" id="mPlan">プラン通り食べた</button>') + '<button class="b-sub" id="mChange">' + (m.logged ? '変更・追加' : '変更して記録') + '</button>' + (canPhoto ? '<button class="b-sub" id="mPhoto">📷 写真で記録</button>' : '') + '</div>';
+  h += '<div class="btns" style="margin-top:10px">' + (allEaten && m.logged || m.isSnack ? '' : '<button class="b-main" id="mPlan">プラン通り食べた</button>') + (m.isSnack ? '' : '<button class="b-sub" id="mPick">品目を選び直す</button>') + '<button class="b-sub" id="mChange">' + (m.logged ? '変更・追加' : '変更して記録') + '</button>' + (canPhoto ? '<button class="b-sub" id="mPhoto">📷 写真で記録</button>' : '') + '</div>';
   if (m.photo) h += '<div class="mute small" style="margin-top:6px">📷 写真から推定して記録済み（確度 ' + esc({ high: '高', medium: '中', low: '低' }[m.photo.confidence] || '不明') + '）<u data-showphoto="1" style="cursor:pointer;margin-left:6px">写真を見る</u></div>';
   if (UI.sheetMeal.photo) h += photoPanelHtml(UI.sheetMeal.photo);
   if (m.alt) h += '<button class="b b-sub" style="width:100%;margin-top:8px" id="mAlt">' + esc(m.alt.label) + '（' + esc(macroLine(macrosOfItems(planToItems(m.alt.items)))) + '）</button>';
@@ -1894,7 +2011,7 @@ function photoPanelHtml(ph) {
       const est = ph.est, tot = estTotal(est.items);
       h += '<div class="est">' + est.items.map((it, i) => '<div class="it' + (it.on ? '' : ' off') + '"><span class="nm" data-phname="' + i + '" title="foods から差し替え">' + esc(it.nameJa) + '</span><span class="g"><button data-phg="' + i + ':-10">−</button>' + it.grams + 'g<button data-phg="' + i + ':10">＋</button></span><button class="x" data-phoff="' + i + '" aria-label="除外">' + (it.on ? '×' : '↩') + '</button><span class="m">' + it.kcal + 'kcal ・ P' + it.p + ' F' + it.f + ' C' + it.c + '</span></div>').join('') + '</div>';
       h += '<div class="row2" style="margin-top:8px"><span class="num" style="font-weight:700">合計 ' + Math.round(tot.kcal) + 'kcal※ ・ P' + Math.round(tot.p) + ' F' + Math.round(tot.f) + ' C' + Math.round(tot.c) + '</span><span style="text-align:right"><span class="conf ' + est.confidence + '">推定の確度: ' + ({ high: '高', medium: '中', low: '低' }[est.confidence]) + '</span></span></div>' + (est.note ? '<div class="mute small" style="margin-top:4px">' + esc(est.note) + '</div>' : '');
-      h += '<div class="btns" style="margin-top:10px"><button class="b-main" id="phSave">この内容で記録</button></div><div class="btns" style="margin-top:8px"><button class="b-sub" id="phEst">もう一度推定</button><button class="b-sub" id="phManual">手入力に切替</button></div>';
+      h += '<div class="btns" style="margin-top:10px"><button class="b-main" id="phSave">この内容で記録</button></div><div class="btns" style="margin-top:8px"><button class="b-sub" id="phReg">食品マスタに登録</button><button class="b-sub" id="phEst">もう一度推定</button><button class="b-sub" id="phManual">手入力に切替</button></div>';
     }
   }
   return h + '</div>';
@@ -1911,6 +2028,11 @@ function bindPhotoPanel(s, d, m, date, mealNo) {
   $$('[data-phg]', s).forEach(b => { b.onclick = () => { noteVal(); const [i, dg] = b.dataset.phg.split(':').map(Number); const it = ph.est.items[i]; ph.est.items[i] = scaleItem(it, Math.max(1, it.grams + dg)); rerender(); }; });
   $$('[data-phoff]', s).forEach(b => { b.onclick = () => { noteVal(); const it = ph.est.items[Number(b.dataset.phoff)]; it.on = !it.on; rerender(); }; });
   $$('[data-phname]', s).forEach(el => { el.onclick = () => { noteVal(); const i = Number(el.dataset.phname); askFood('食材を差し替え', ph.est.items[i].nameJa).then(f => { if (!f) return; const it = ph.est.items[i]; const mac = calcMacros(f, isRatioPer(f.per) ? it.grams : 1); ph.est.items[i] = Object.assign({}, it, { nameJa: f.nameJa, nameEn: f.nameEn || '', foodId: f.foodId }, mac); rerender(); }); }; });
+  // 推定した品目をそのまま食品マスタへ（次から「＋ 他のものを追加」で1タップで選べる）
+  const reg = $('#phReg', s); if (reg) reg.onclick = async () => { noteVal(); const on = ph.est.items.filter(i => i.on); if (!on.length) return toast('登録する品目がありません', true);
+    reg.disabled = true; reg.textContent = '登録中…';
+    try { for (const it of on) { const k = 100 / it.grams; await A.addFood({ nameJa: it.nameJa, nameEn: it.nameEn, per: '100g', kcal: r1(it.kcal * k), p: r1(it.p * k), f: r1(it.f * k), c: r1(it.c * k), portionG: it.grams, source: 'user', note: '写真から推定' }); }
+      reg.textContent = '登録しました'; toast(on.length + ' 品目を食品マスタに登録しました'); } catch (e) { reg.disabled = false; reg.textContent = '食品マスタに登録'; toast(e.message || String(e), true); } };
   const save = $('#phSave', s); if (save) save.onclick = async () => { noteVal(); if (!ph.est.items.some(i => i.on)) return toast('記録する品目がありません', true); save.disabled = true; save.textContent = '保存中…';
     try { const msg = await A.recordPhotoMeal(date, mealNo, ph.est, ph, ph.mode ? ph.mode === 'replace' : m.status === 'plan'); UI.sheetMeal.photo = null; closeSheet(); toastAction(msg + 'しました', '元に戻す', () => act(A.mealUndo(date, mealNo))); } catch (e) { save.disabled = false; save.textContent = 'この内容で記録'; toast('保存に失敗: ' + (e.code || e.message), true); } };
 }
@@ -1937,6 +2059,7 @@ function bindMealSheet(s, d, m, date, mealNo) {
   $$('[data-choicegroup]', s).forEach(g => { $$('[data-choice]', g).forEach(b => { b.onclick = () => act(A.mealSetChoice(date, mealNo, g.dataset.choicegroup, b.dataset.choice)); }); });
   const mp = $('#mPlan', s); if (mp) mp.onclick = () => { act(A.mealPlanDone(date, mealNo, {}), mealNo + '食目 プラン通り').then(() => closeSheet()); };
   const ma = $('#mAlt', s); if (ma) ma.onclick = () => { act(A.mealPlanDone(date, mealNo, { variant: 'alt' }), mealNo + '食目 代替案で記録').then(() => closeSheet()); };
+  const mpk = $('#mPick', s); if (mpk) mpk.onclick = () => { UI.sheetMeal = null; UI.mealPick = null; openMealPickSheet(date, mealNo); };
   $('#mChange', s).onclick = () => { const p = $('#sub', s); p.hidden = !p.hidden; UI.sheetMeal.sub = !p.hidden; };
   const mph = $('#mPhoto', s); if (mph) mph.onclick = () => { UI.sheetMeal.photo = { status: 'pick', note: '' }; openMealSheet(mealNo, UI.sheetMeal.sub); };
   const sp = $('[data-showphoto]', s); if (sp) sp.onclick = () => showMealPhoto(date, mealNo);
@@ -1958,15 +2081,12 @@ function bindMealSheet(s, d, m, date, mealNo) {
 }
 /** カロリーを手で入力（kcal・P/F/C を直接入力）。今日画面のボタンと食事シートの「変更・追加」欄の両方から開ける */
 function openManualCalSheet(date, mealNo, after) {
-  const ms = mealsModel(date);
   // 呼び出し元が食事を指定していなければ、記録した時刻から自動で紐づける
   const fixed = mealNo != null;
-  // 「プランから入れる」チップ: いまの時間帯にあたる枠の内容と数値を一発で入れる（そのあと編集できる）
-  const nowSlot = fixed ? null : slotForTime(fmtHm(isoNow()));
-  const planM = nowSlot && nowSlot !== 'snack' ? ms.meals.find(m => m.mealNo === nowSlot) : null;
-  const planChip = planM ? '<label class="lbl">プランから入れる</label><div class="chips" id="mcPlan"><button data-planchip="1">' + esc(planM.label + ' ' + planM.planItems.map(p => p.short).join('・') + ' ' + Math.round(planM.planMac.kcal) + 'kcal') + '</button></div>' : '';
-  const s = openSheet('<h3>食べたものを記録</h3>' + planChip +
-    '<label class="lbl" for="mcName">何を食べましたか（任意）</label><input type="text" class="txt" id="mcName" placeholder="空なら「手入力」">' +
+  // プランの食事はタイムラインのカードから記録するので、ここは「プランにないもの」専用
+  const s = openSheet('<h3>' + (fixed ? mealLabel(mealNo) + 'に追加' : 'プランにないものを記録') + '</h3>' +
+    (fixed ? '' : '<div class="mute small">プランの食事はタイムラインのカードから記録できます</div>') +
+    '<label class="lbl" for="mcName">何を食べましたか（任意）</label><input type="text" class="txt" id="mcName" placeholder="例：コンビニのサンドイッチ">' +
     '<div class="stat" style="margin-top:6px">' +
     '<div><label class="lbl" for="mcK">カロリー（必須）</label><input type="number" inputmode="numeric" class="txt" id="mcK"></div>' +
     '<div><label class="lbl" for="mcP">タンパク質 (g)</label><input type="number" inputmode="decimal" class="txt" id="mcP"></div>' +
@@ -1975,7 +2095,6 @@ function openManualCalSheet(date, mealNo, after) {
     '<button class="b b-sub" style="width:100%;margin-top:8px" id="mcCalc">タンパク質・脂質・炭水化物から計算</button>' +
     '<div class="btns" style="margin-top:12px"><button class="b-sub" id="mcCancel">キャンセル</button><button class="b-yel" id="mcSave">記録する</button></div>');
   UI.sheetMeal = null;
-  const pc = $('[data-planchip]', s); if (pc) pc.onclick = () => { $('#mcName', s).value = planM.planItems.map(p => p.short).join('・'); $('#mcK', s).value = Math.round(planM.planMac.kcal); $('#mcP', s).value = r1(planM.planMac.p); $('#mcF', s).value = r1(planM.planMac.f); $('#mcC', s).value = r1(planM.planMac.c); toast('プランの内容を入れました。数値は直せます'); };
   $('#mcName', s).addEventListener('blur', () => { const nm = $('#mcName', s).value.trim(); if (!nm || $('#mcK', s).value) return; const ex = matchFood(nm); if (ex && ex.source === 'manual' && ex.nameJa === nm) { $('#mcK', s).value = ex.kcal; $('#mcP', s).value = ex.p; $('#mcF', s).value = ex.f; $('#mcC', s).value = ex.c; toast('前回の入力を呼び出しました'); } });
   $('#mcCalc', s).onclick = () => { const p = Number($('#mcP', s).value) || 0, f = Number($('#mcF', s).value) || 0, c = Number($('#mcC', s).value) || 0; $('#mcK', s).value = Math.round(p * 4 + f * 9 + c * 4); };
   $('#mcCancel', s).onclick = () => { closeSheet(); if (after) after(); };
