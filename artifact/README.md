@@ -25,7 +25,7 @@
 
 | コレクション | doc id | 内容 |
 |---|---|---|
-| `settings` | `main` | startDate, unit(kg/lb), tz, waterGoalMl, restMainSec(150), restTopSec, restOtherSec(90), restAccessorySec(90: 腹筋・カーフ), incDbKg(1), incBarKg(2), weeklyGainPct(5), timerMorningMin, timerAfterMealMin, riceBasis("raw"/"cooked"), workoutMin, warmupMin, bioWeightKg(72.4: 体重未記録のときの有酸素kcal計算の初期値), cardioLabel, times{weight,morning,meal1..5,after_meal,warmup,workout,cardio,night}, seedVersion |
+| `settings` | `main` | startDate, unit(kg/lb), tz, waterGoalMl, restMainSec(150), restTopSec, restOtherSec(90), restAccessorySec(90: 腹筋・カーフ), incDbKg(1), incBarKg(2), weeklyGainPct(5), timerMorningMin, timerAfterMealMin, riceBasis("raw"/"cooked"), targetKcal(2632)/targetP(210)/targetF(69)/targetC(295)（1日の目標・全曜日共通）, workoutMin, warmupMin, bioWeightKg(72.4: 体重未記録のときの有酸素kcal計算の初期値), cardioLabel, times{weight,morning,meal1..5,after_meal,warmup,workout,cardio,night}, seedVersion |
 | `plan_days` | dayNo | name, isRest, cardioRequired, notes |
 | `plan_exercises` | id | dayNo（数値 または 複数日の配列。腹筋は `[1,4,6]`、カーフは `[2,5]` で 1 つの exerciseId を共有し履歴が途切れない）, order, seq（SEED の並び順。order が同じ選択肢の表示順に使う）, nameJa, nameEn, isPreexhaust, supersetGroup("SS"), pair[2 動作名]（スーパーセット: 各セットを 1-1/1-2 に展開、1-1 の後は休憩なし）, progressive（セットごとに少しずつ重くする）, accessory("abs"/"calves": 最終種目のあとの枠、order 99〜101), choiceGroup（同じ値の種目はその日どれか 1 つだけを選ぶ＝「A または B」）, bodyweight（自重。重量欄を出さない）, setScheme（例 `WU10-12,TOP6-8,BO10-12` / `MAIN8-12x3` / `MAIN10-15x3,DROP*` / `TOP6-8,MID16-20` / `MID12-15x2,MID12-15?`。`*` = 限界まで、`MID` = 中重量、末尾 `?` = 任意のセット）, howTo, videoQuery, active, **sets[]**（展開済み。move/moveName/pairNo/optional） |
 | `plan_warmup` | id | name, nameEn, anim(swing/alt/cross/circle/hips/toe), reps, targetSets(3), minSets(2), steps[3]（コーチ指定 6 種、毎回必須） |
@@ -40,7 +40,7 @@
 | `log_supplements` | YYYY-MM-DD | items{ id: {done, loggedAt} }、今日はなし: {done:false, na:true, reason, reasonText, loggedAt} |
 | `log_routine` | YYYY-MM-DD | items{ id: {done, loggedAt} }、水は {done, value(ml), loggedAt}、今日はなし: {na, reason} |
 | `log_media` | id | date, type(photo/video), category(body/form/meal), assetId, url, exerciseId, note |
-| `log_daily` | YYYY-MM-DD | dayNo(手動上書き), dayChange{from, loggedAt}（その日の Day/部位の差し替え。「未消化キュー」方式はこのフィールドだけで表現し、他の日付は書き換えない）, dayName, notes, waterMl, waterLoggedAt（水タブ）, skippedItems[{item, itemJa, reason, reasonJa}]（できなかった項目の自動集計）, isRestOverride, comment, warmupSkipped{reason, at}, workoutMissed{reason, reasonText, loggedAt}, cardioMissed{reason, reasonText, loggedAt} |
+| `log_daily` | YYYY-MM-DD | dayNo(手動上書き), dayChange{from, loggedAt}（その日の Day/部位の差し替え。「未消化キュー」方式はこのフィールドだけで表現し、他の日付は書き換えない）, dayName, notes, waterMl, waterLoggedAt（水タブ）, skippedItems[{item, itemJa, reason, reasonJa}]（できなかった項目の自動集計）, isRestOverride, comment, warmupSkipped{reason, at}, workoutMissed{reason, reasonText, loggedAt}, cardioMissed{reason, reasonText, loggedAt}, restDone{loggedAt}（休みの日の「有酸素はやらない」） |
 
 重量は常に kg で保存。表示時のみ lb 換算（1 lb = 0.45359237 kg、小数 1 桁）。
 初回起動時に `plan_days` が空、または `settings.seedVersion` が `SEED_VERSION`（現在 9 = Day4 をコーチ原文どおりに差し替え、「A または B」を選択式に分割、腹筋3種・カーフ3択を確定）より古ければ、`SEED` 定数（[training-log-spec.md](training-log-spec.md)）で `plan_*` と `foods`(source=plan) を投入し直す。ログは触らない。プランを変えたら `SEED_VERSION` を上げて再公開する。
@@ -77,12 +77,21 @@
 
 タブは **今日・筋トレ・水・週** の 4 つ。同じ情報・同じ操作を 2 か所に置かない。
 
-1. **今日**: 「いま」カード＋**時刻順**のタイムライン。各行は全文表示（省略なし）: 食事は品目と kcal/PFC、サプリは名前を全部、筋トレは種目名を全部、ウォームアップは 6 種の内容。日付の前後移動はここだけ。休みの日（Day 3・7）はウォームアップ・筋トレ・腹筋/カーフの行が無く、有酸素の行だけになる。上部の「Day N ・ 部位 ›」（筋トレ画面上部の Day 表示からも同じ）をタップすると Day ピッカー: 今日の予定（未実施なら持ち越し日付つき）→ その他の未実施（持ち越しが古い順）→ 残りは Day 番号順、の一覧から選んで確定（`log_daily.dayChange`に保存、前日と同じ部位なら注意表示・記録済みなら警告、過去日は変わらない）。「未消化キュー」方式なので差し替えで後回しになった Day はキューに残ったまま消えず、他を消化した後に自然と繰り越して出てくる（今日画面に「M/D は Day N に差し替えたため持ち越し」等の注記、未実施が2つ以上なら注意バナー）。「予定どおりに戻す」（差し替え済みのときだけ）でいつでも取り消せる（確認なし）
+1. **今日**: 「いま」カード＋**時刻順**のタイムライン。各行は全文表示（省略なし）: 食事は品目と kcal/PFC、サプリは名前を全部、筋トレは種目名を全部、ウォームアップは 6 種の内容。日付の前後移動はここだけ。休みの日（Day 3・7）はウォームアップ・筋トレ・腹筋/カーフの行が無く、有酸素の行だけになる。上部の「Day N ・ 部位 ›」（筋トレ画面上部の Day 表示からも同じ）をタップすると Day ピッカー: 今日の予定（未実施なら持ち越し日付つき）→ その他の未実施（持ち越しが古い順）→ 残りは Day 番号順、の一覧から選んで確定（`log_daily.dayChange`に保存、前日と同じ部位なら注意表示・記録済みなら警告、過去日は変わらない）。キューの消化判定は曜日の種類で分ける: **筋トレの日（Day 1・2・4・5・6）** は `log_workout[date].finished` だけで判定し、食事などの記録があっても未完了なら持ち越す。**休みの日（Day 3・7）** は `restDayConsumed(date)`（有酸素の記録／食事・体重・サプリのいずれか1件以上／`log_daily.restDone`（「有酸素はやらない」）／`cardioMissed`／`log_workout.finished`）のどれかで消化する。休みの日に求められているのは「トレーニングをしないこと」なので、その日を過ごした記録が残っていれば消化とみなす。「未消化キュー」方式なので差し替えで後回しになった Day はキューに残ったまま消えず、他を消化した後に自然と繰り越して出てくる（今日画面に「M/D は Day N に差し替えたため持ち越し」等の注記、未実施が2つ以上なら注意バナー）。「予定どおりに戻す」（差し替え済みのときだけ）でいつでも取り消せる（確認なし）
+   - **今日以外の日付**: `renderToday()` は `#now` を描かず、代わりに `#pastBar` を 1 行出す（「9/18（金）の記録 ・ 過去」「9/23（水）の予定 ・ 未来」）。行から `data-open` を外し、`.chk` は `disabled` ＋ `.off` で灰色に。記録カードは `bindLongPress` の長押し →「修正する」でだけ開く（`openTimeSheet`/`openWeightSheet` は元の `loggedAt` を初期値にするので、今の時刻が入ることはない）。「いま」カードで今の時刻の記録が過去・未来の日付に入ってしまう事故を防ぐための措置
    - **画面下部の固定バー（`renderBottomBar()` → `#bbar`）**: 今日の日付を見ているときだけ出す（過去・未来では出さない＝誤って今日に入れないため）。1日合計（カロリーのバー＋タンパク質・脂質・炭水化物）と「📷 写真で記録」「✏️ 手で入力」を横並びで固定。タブバーのすぐ上に置き、スクロールしても消えない（`body:has(#bbar:not([hidden])) main` の下余白と、トーストの退避位置も合わせて調整）。合計をタップすると `UI.totalsOpen` で上に展開し、`totalsBlock()` の内訳・`renderFatMini()` の塊・「週まとめを見る」を出す
    - **食事は「枠を埋める」ではなく「食べたら記録する」**: 未記録の枠（`planOnly`）は破線の枠だけで、`data-open` も `.chk` も付けない（タップしても記録画面は開かない）。予定時刻を 2 時間過ぎたら `overdue` で枠線をオレンジにし「まだ記録がありません」を 1 行足す（自動でスキップ扱いにはしない）。記録済みの食事の行は従来どおりで、左下に紐づけ先のチップ（`[data-relink]` → `openSlotSheet()`）が付く。記録済みの行タップは今までどおり詳細シート（プラン由来の品目はチェックで「食べた／食べなかった」、追加・差替えは × でソフト削除→「↩ 戻す」、直後に「元に戻す」トースト 5 秒、「↩ 1つ戻す」（最大 20 手）、「プランの内容に戻す」（確認あり）、差替えチップ、自由入力 AI 計算／手入力）
 2. **筋トレ**: 筋トレの日は必ず **ウォームアップ画面** から始まる。各動きは 名前＋英名 → 棒人間のインライン SVG アニメ → やり方 3 ステップ → ▶ 動画で見る → セットカウンター「セット 0/3」＋［1セット完了］（2/3 以上で完了扱い、3/3 で緑）。上部に「6種中 N種 完了」と経過時間。全種完了で「筋トレを始める」が有効になり、所要分を log_workout.warmup.minutes に保存。飛ばすには理由入力→log_daily に記録。その後 1 画面 1 セット: 「種目 1/6 ・ セット 1/3」→ 種目名＋動画／やり方／用語 → 【いまのセット】カード（番号＋種類の日本語名＋目的の一文）→ セット一覧（完了は実績値、現在は黄色）→ 大数字±（初回は目安なし＋クイック重量ボタン、前回値があれば提案）→ 完了 → 休憩タイマー → 次セット。英略語（WU/MAIN/TOP…）は UI に出さない。休みの日（Day 3・7）はウォームアップを出さず `renderRestDay()` がいきなり有酸素の記録画面（種類・時間・心拍数・「記録する」／「今日はやらない」＋理由）を出し、記録（または「今日はやらない」）で `A.finishWorkout()` を呼んで完了画面へ進む。下部タブのアイコンもこの日だけ「有酸素」になる
 3. **水**: 目標 5.0 L、累計の大数字、+500ml / +350ml / −500ml。達成で緑「5L 達成！」。`log_daily.waterMl` に保存（旧 log_routine の値は読むだけ）
 4. **週**: 履歴だけ（日別 kcal・食事・ウォームアップ・筋トレ・有酸素・水・サプリの表、体重 30 日、いちばん重かった重量（種目別・日ごと）、コーチ向けレポート→コピー、写真一覧、設定・CSV）。当日の入力操作は置かない。遵守率のウォームアップは筋トレの日（Day 1・2・4・5・6）だけを分母にし、休みの日は数えない（`weekAdherence()`）
+
+### 1日の目標（プラン比の分母）
+
+`coachTarget()` が `settings.targetKcal/targetP/targetF/targetC`（既定 2632 / 210 / 69 / 295）を返し、`mealsModel().planTotal` はこれを使う。休みの日も同じ5食なので曜日では変えない。プランの品目を足した値は `planItemsTotal` として別に持ち、目標と 50kcal 以上ズレていたら `totalsBlock()` が差を 1 行で出す（いまの SEED の品目合計は 2,178 kcal ＝ P223 F56 C193 なので、目標まで 454kcal 足りないことが画面に出る）。
+
+### 体重の入力
+
+入力欄は常に空（`value=""`）で、前回値はプレースホルダーとしてだけ出す。`#nowW` / `#shW` に何か入るまで保存ボタンを `disabled` にして、測っていないのに前回値で保存される事故を防ぐ。体脂肪率は任意。
 
 ### 記録時刻（loggedAt）
 すべての記録（体重・食事・サプリ・ルーティン・水・セット・有酸素・ウォームアップ・筋トレ完了・メディア）に `loggedAt`（ISO 8601、端末時刻、オフセット付き）を保存し、`settings.tz` で表示する。旧データの `time`(HH:mm) は互換的に ISO へ変換して扱う。
@@ -139,7 +148,7 @@ BMR（Mifflin-St Jeor）×活動レベル＋運動消費 を TDEE とし、日�
 
 ## テスト
 
-`npm run e2e:artifact` で mock / db（疑似ランタイム）両モードの 76 項目を実行し、結果を [TEST.md](TEST.md) に書き出す。
+`npm run e2e:artifact` で mock / db（疑似ランタイム）両モードの 78 項目を実行し、結果を [TEST.md](TEST.md) に書き出す。
 
 ## モックモード
 

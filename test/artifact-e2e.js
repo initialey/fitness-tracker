@@ -218,6 +218,37 @@ async function run(mode) {
       return '枠の時間帯（まん中で分割）・深夜は間食・空き枠には自動で紐づく・未記録の枠は破線で開かない・2時間超過でオレンジ＋「まだ記録がありません」・時刻は自動';
     } finally { await resetClock(); await p2.close(); rt.op('del', { coll: 'log_meals', id: '2027-09-02' }); rt.op('del', { coll: 'log_daily', id: '2027-09-02' }); }
   });
+  await T(G.today, '今日以外の日付では「いま」カードも記録ボタンも出さず、✓ も押せない。過去の記録は長押し →「修正する」で開く', async () => {
+    // 時計だけ翌日へ進めて、9/16 を「過去」として見る（終わったら元の時刻に戻す）
+    const backTime = curTime;
+    await setTime('2026-09-17T09:00:00+08:00'); await goTab('today');
+    assert((await text('.date')).includes('9/16') && (await text('.date')).includes('過去'), '上部に「過去」が出る: ' + (await text('.date')));
+    assert(!(await page.$('#now')) || (await page.$eval('#now', e => e.hidden)), '過去の日付に「いま」カードを出さない');
+    assert((await text('#pastBar')).includes('9/16（水）の記録 ・ 過去'), '代わりに1行だけ出す: ' + (await text('#pastBar')));
+    assert(await page.$eval('#bbar', e => e.hidden), '過去の日付では「写真で記録」「手で入力」を出さない');
+    assert(await page.$eval('[data-chk="weight"]', e => e.disabled), '✓ が押せない（無効）');
+    assert(!(await page.$('[data-step="weight"] [data-open]')), 'タップしても開かない');
+    // 長押しで「修正する」→ 元の記録のまま開く（時刻の初期値も元の記録時刻）
+    await page.dispatchEvent('[data-step="weight"] .row', 'pointerdown'); await page.waitForTimeout(700); await page.dispatchEvent('[data-step="weight"] .row', 'pointerup');
+    await page.waitForSelector('#dlg:not([hidden]) [data-choice]');
+    assert((await text('#dlg [data-choice="0"]')) === '修正する', '長押しで「修正する」: ' + (await text('#dlg [data-choice="0"]')));
+    await page.click('#dlg [data-choice="0"]'); await page.waitForSelector('#shSave');
+    assert((await page.$eval('#shW', e => e.value)) === '72.6', '元の記録が初期値（今の値を入れない）: ' + (await page.$eval('#shW', e => e.value)));
+    assert((await text('.sheet-body h3')).includes('記録 06:50'), '記録時刻は元のまま: ' + (await text('.sheet-body h3')));
+    await closeSheet();
+    // 未来の日付も同じ
+    await page.click('[data-shift="1"]'); await page.waitForTimeout(150); assert((await text('.date')).includes('9/17') && !(await text('.date')).includes('過去'), '9/17 は今日: ' + (await text('.date')));
+    assert(await page.$('#now') && !(await page.$eval('#now', e => e.hidden)), '今日なら「いま」カードが出る');
+    await page.click('[data-shift="1"]'); await page.waitForTimeout(150);
+    assert((await text('.date')).includes('未来'), '上部に「未来」が出る: ' + (await text('.date')));
+    assert((await text('#pastBar')).includes('の予定 ・ 未来'), '未来は「予定」: ' + (await text('#pastBar')));
+    assert(!(await page.$('#now')) || (await page.$eval('#now', e => e.hidden)), '未来の日付にも「いま」カードを出さない');
+    assert(await page.$eval('#bbar', e => e.hidden), '未来の日付でも記録ボタンを出さない');
+    // 後片付け: 時計と日付を 9/16 に戻す
+    await setTime(backTime); await page.click('[data-shift="-1"]'); await page.click('[data-shift="-1"]'); await page.waitForTimeout(150);
+    assert((await text('.date')).includes('9/16') && !(await text('.date')).includes('過去'), '9/16 に戻す: ' + (await text('.date')));
+    return '過去・未来では「いま」カード・記録ボタンを出さず ✓ も無効。長押しの「修正する」だけで開き、時刻は元の記録のまま';
+  });
   await shot('01-home');
 
   // ============ 食事シート ============
@@ -928,6 +959,13 @@ async function run(mode) {
     await p2.click('#wuStart'); await p2.waitForSelector('#setDone');
     return p2;
   };
+  /** 別ページで Day ピッカーを使って dayNo を指定する（すでにその Day ならピッカーは開かない＝ボタンが無効なので） */
+  const forceDayP2 = async (pg, dayNo) => {
+    if ((await pg.locator('h1').textContent()).startsWith('Day ' + dayNo)) return;
+    await pg.click('#dayHead'); await pg.waitForSelector('[data-pickday="' + dayNo + '"]'); await pg.click('[data-pickday="' + dayNo + '"]'); await pg.waitForSelector('#dcSave'); await pg.click('#dcSave');
+    await pg.waitForTimeout(80); if (await pg.$('#dlg:not([hidden])')) { await pg.click('#dlgOk'); await pg.waitForSelector('#dlg', { state: 'hidden' }); }
+    await pg.waitForFunction(n => document.querySelector('h1').textContent.startsWith('Day ' + n), dayNo);
+  };
   /** i 番目の種目へ移動する（pick=false なら選択画面のまま止める） */
   const gotoExOn = async (pg, i, pick) => {
     for (let g = 0; g < 20; g++) {
@@ -937,6 +975,61 @@ async function run(mode) {
     }
     throw new Error('gotoExOn ' + i);
   };
+
+  await T(G.workout, '休みの日は「その日を過ごした記録」があれば消化: 食事だけ・体重だけでも翌日に持ち越さない／何も無ければ持ち越す／「有酸素はやらない」で消化／筋トレの日は記録があっても未完了なら持ち越す。休みの日の目標カロリーも平日と同じ', async () => {
+    const D = '2027-10-06', D1 = '2027-10-07';
+    const p2 = await newPage(); p2.setDefaultTimeout(20000);
+    // mock モードは reload をまたいだ永続化が無いので、読み込み直すたびに Day 3 を指定し直す
+    const reloadAt = async (d, hm, dayNo) => { await p2.click('.tabs [data-tab="today"]'); await p2.clock.setFixedTime(new Date(d + 'T' + hm + ':00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading')); await p2.click('.tabs [data-tab="today"]'); await p2.waitForSelector('#dayHead'); if (dayNo) await forceDayP2(p2, dayNo); };
+    const consumed = () => p2.evaluate(d => window.__tl.restDayConsumed(d), D);
+    try {
+      await reloadAt(D, '08:00');
+      await forceDayP2(p2, 3);
+      assert((await consumed()) === false, '記録が何も無ければ休みの日は未消化のまま');
+      // 休みの日でも1日の目標はコーチ指定の 2,632 kcal / P210 F69 C295（平日と同じ）
+      const bar = await p2.locator('#bbar').textContent();
+      assert(bar.includes('2,632 kcal') && bar.includes('210g') && bar.includes('69g') && bar.includes('295g'), '休みの日の目標も平日と同じ: ' + bar);
+      const tg = await p2.evaluate(() => window.__tl.coachTarget());
+      assert(tg.kcal === 2632 && tg.p === 210 && tg.f === 69 && tg.c === 295, 'コーチ指定の目標値: ' + JSON.stringify(tg));
+      // 体重の入力欄は空・前回値は薄いプレースホルダー・空のままでは保存できない
+      assert((await p2.$eval('#nowW', e => e.value)) === '', '体重の入力欄は空');
+      assert((await p2.$eval('#nowW', e => e.getAttribute('placeholder'))) !== '', '前回値はプレースホルダーとして出す');
+      assert(await p2.$eval('#nowBtn', e => e.disabled), '空のままでは保存ボタンが押せない');
+      await p2.fill('#nowW', '70.4'); await p2.waitForFunction(() => !document.querySelector('#nowBtn').disabled);
+      await p2.click('#nowBtn'); await p2.waitForFunction(() => document.querySelector('[data-step="weight"]').className.includes('done'));
+      assert((await consumed()) === true, '体重だけでも休みの日は消化扱い（体脂肪は空でも保存できる）');
+      if (mode === 'db') { await p2.waitForTimeout(250); assert(rt.DB.log_weight[D] && rt.DB.log_weight[D].bodyFatPct === '', '体脂肪は空でも保存できる: ' + JSON.stringify(rt.DB.log_weight[D])); }
+      // 翌日は次の Day へ進む（持ち越さない）
+      if (mode === 'db') { await reloadAt(D1, '08:00'); assert(!(await p2.locator('h1').textContent()).startsWith('Day 3'), '消化した休みの日は翌日に持ち越さない: ' + (await p2.locator('h1').textContent()));
+        assert(!(await p2.locator('#view').textContent()).includes('できなかったため持ち越し'), '「できなかったため持ち越し」も出ない'); await reloadAt(D, '08:00', 3); }
+      // 体重を消して食事だけにしても消化扱い
+      rt.op('del', { coll: 'log_weight', id: D }); await reloadAt(D, '08:00', 3);
+      assert((await consumed()) === false, '記録を消したら未消化に戻る');
+      await p2.click('#manualCalBtn'); await p2.waitForSelector('#mcSave'); await p2.fill('#mcK', '400'); await p2.click('#mcSave'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
+      assert((await consumed()) === true, '食事だけでも休みの日は消化扱い');
+      // 「有酸素はやらない」でも消化扱い（休みの日なので理由は聞かない）
+      rt.op('del', { coll: 'log_meals', id: D }); await reloadAt(D, '08:00', 3);
+      assert((await consumed()) === false, '記録を消したら未消化に戻る');
+      await p2.click('.tabs [data-tab="workout"]'); await p2.waitForSelector('#rcSkip');
+      assert((await p2.locator('#rcSave').textContent()) === '有酸素を記録する' && (await p2.locator('#rcSkip').textContent()) === '有酸素はやらない', '休みの日は2つの選択肢を出す: ' + (await p2.locator('#rcSkip').textContent()));
+      await p2.click('#rcSkip'); await p2.waitForTimeout(400);
+      assert(!(await p2.$('[data-reason]')), '休みの日なので理由は聞かない');
+      assert((await consumed()) === true, '「有酸素はやらない」で消化扱い');
+      if (mode === 'db') { await p2.waitForTimeout(250); assert(rt.DB.log_daily[D] && rt.DB.log_daily[D].restDone, 'restDone を保存: ' + JSON.stringify(rt.DB.log_daily[D] && rt.DB.log_daily[D].restDone)); }
+      // 筋トレの日は記録があっても、トレーニングを完了していなければ持ち越す
+      if (mode === 'db') {
+        const E = '2027-10-13', E1 = '2027-10-14';
+        try {
+          await reloadAt(E, '08:00');
+          await forceDayP2(p2, 4);
+          await p2.click('#manualCalBtn'); await p2.waitForSelector('#mcSave'); await p2.fill('#mcK', '400'); await p2.click('#mcSave'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
+          await reloadAt(E1, '08:00');
+          assert((await p2.locator('h1').textContent()).startsWith('Day 4'), '筋トレの日は食事の記録があっても未完了なら翌日に持ち越す: ' + (await p2.locator('h1').textContent()));
+        } finally { rt.op('del', { coll: 'log_meals', id: E }); rt.op('del', { coll: 'log_daily', id: E }); rt.op('del', { coll: 'log_daily', id: E1 }); }
+      }
+      return '休みの日は 有酸素／食事／体重／サプリ／「有酸素はやらない」のどれかで消化。筋トレの日は今までどおり完了が必要。休みの日の目標も 2,632kcal / P210 F69 C295';
+    } finally { await resetClock(); await p2.close(); [D, D1].forEach(d => { rt.op('del', { coll: 'log_weight', id: d }); rt.op('del', { coll: 'log_meals', id: d }); rt.op('del', { coll: 'log_daily', id: d }); rt.op('del', { coll: 'log_workout', id: d }); rt.op('del', { coll: 'log_cardio', id: d }); }); }
+  });
 
   await T(G.workout, 'Day4（脚）コーチ原文どおり: 事前疲労はA2セット→B2セット（スーパーセット無し）・8種目＋腹筋3種・レッグプレスにウォームアップ無し・末尾の任意セットは飛ばせる', async () => {
     const D = '2027-08-05';
@@ -1220,7 +1313,7 @@ async function run(mode) {
     await goTab('summary'); await page.waitForSelector('#repText'); const pts = await page.$$eval('#weightSpark30 svg .pt', els => els.map(e => e.dataset.date + '=' + e.dataset.v)); assert(pts.join(',') === '2026-09-16=72.6,2026-09-18=72', 'points ' + pts.join(',')); assert((await page.$$eval('#weightSpark30 svg polyline', els => els.length)) === 0, '2 non-adjacent days → no connecting line'); const ma = await page.$$eval('#weightSpark30 svg .mapt', els => els.map(e => e.dataset.date + '=' + e.dataset.v)); assert(ma.includes('2026-09-18=72.3'), '7日平均は実測 (72.6+72.0)/2=72.3: ' + ma.join(','));
     assert((await page.$eval('.stat', e => e.textContent)).includes('体重 2/3 日 測定'), 'measured days'); const rep = await text('#repText'); assert(rep.includes('Weight: 72.6 → 72 kg (avg 72.3, 2/3 days measured, skipped: travel×1)'), 'report weight line: ' + rep.split('\n')[1]); assert(rep.includes('09/17 weight missed (travel)'), 'notes auto: ' + rep); assert((await text('#missedBlock')).includes('9/17') && (await text('#missedBlock')).includes('外泊・旅行'), 'missed block');
     if (mode === 'db') { await page.click('#csvBtn'); await page.waitForTimeout(200); const dl = rt.downloads[rt.downloads.length - 1]; assert(dl.head.includes('"skipped","reason"'), 'csv columns: ' + dl.head.slice(0, 100)); assert(dl.size > 0); } return 'points=' + pts.join(',') + ' / ma(9/18)=72.3'; });
-  await T(G.missed, 'あとで測れたら数値保存で skipped 解除。「記録を取り消す」で未記録に戻る', async () => { await goTab('today'); await page.click('[data-shift="-1"]'); assert((await text('.date')).includes('9/17'), 'on 9/17'); await page.click('[data-open="weight"]'); await page.waitForSelector('#shSave'); await page.fill('#shW', '72.3'); await page.click('#shSave'); await page.waitForFunction(() => document.querySelector('[data-step="weight"]').dataset.mark === 'ok'); assert((await text('[data-step="weight"]')).includes('72.3kg'), 'measured later'); if (mode === 'db') { await page.waitForTimeout(150); assert(!rt.DB.log_weight['2026-09-17'].skipped, 'skipped cleared'); }
+  await T(G.missed, 'あとで測れたら数値保存で skipped 解除。「記録を取り消す」で未記録に戻る', async () => { await setTime('2026-09-17T07:00:00+08:00'); await goTab('today'); await page.click('[data-shift="-1"]'); assert((await text('.date')).includes('9/17'), 'on 9/17'); await page.click('[data-open="weight"]'); await page.waitForSelector('#shSave'); await page.fill('#shW', '72.3'); await page.click('#shSave'); await page.waitForFunction(() => document.querySelector('[data-step="weight"]').dataset.mark === 'ok'); assert((await text('[data-step="weight"]')).includes('72.3kg'), 'measured later'); if (mode === 'db') { await page.waitForTimeout(150); assert(!rt.DB.log_weight['2026-09-17'].skipped, 'skipped cleared'); }
     await page.click('[data-chk="weight"]'); await page.waitForFunction(() => document.querySelector('[data-step="weight"]').dataset.mark === ''); assert((await text('#toast')).includes('取り消しました'), 'cancel toast'); await page.click('#toast button'); await page.waitForFunction(() => document.querySelector('[data-step="weight"]').dataset.mark === 'ok'); await page.click('[data-open="weight"]'); await page.waitForSelector('#shCancel'); await page.click('#shCancel'); await dlgOk(); await page.waitForFunction(() => document.querySelector('[data-step="weight"]').dataset.mark === ''); if (mode === 'db') { await page.waitForTimeout(150); assert(!rt.DB.log_weight['2026-09-17'], 'db doc removed'); } });
   await T(G.missed, 'サプリ「今日はなし（理由）」→ 灰色−・理由表示。再タップで取り消し', async () => { await page.click('[data-open="supp:after_meal"]'); await page.waitForSelector('#suppNA'); await page.click('#suppNA'); await pickReason('切れていた'); await page.waitForTimeout(150); const m = await mark('supp:after_meal'); assert(m.startsWith('na|chk na|−'), 'supp mark ' + m); assert((await text('[data-step="supp:after_meal"]')).includes('今日はなし（切れていた）'), 'reason line'); await page.click('[data-chk="supp:after_meal"]'); await page.waitForFunction(() => document.querySelector('[data-step="supp:after_meal"]').dataset.mark === ''); assert((await text('#toast')).includes('取り消しました'), 'undo toast');
     // ルーティンは長押し
@@ -1237,6 +1330,8 @@ async function run(mode) {
     // TD は awayShifts からの推測ではなく、実際に表示されている月日から直接組み立てる（このテストの前に
     // 別のテストが日付を 9/16 以外に残していた場合でも awayShifts だけではズレることがあるため）
     const md = /(\d+)\/(\d+)/.exec(dateTxt); const TD = '2026-' + String(md[1]).padStart(2, '0') + '-' + String(md[2]).padStart(2, '0'), TD1 = addD(TD, 1);
+    // 今日以外の日付は「いま」カードも ✓ も出ない仕様なので、時計を移動先の日に合わせる
+    await setTime(TD + 'T08:00:00+08:00'); await goTab('workout'); await goTab('today');
     await forceDay('#dayHead', 4);
     assert((await text('h1')).startsWith('Day 4'), 'Day4 に変更: ' + (await text('h1')));
     await page.click('[data-chk="workout"]'); await page.waitForSelector('[data-choice="1"]'); await page.click('[data-choice="1"]'); await pickReason('仕事'); await page.waitForTimeout(150);
@@ -1248,7 +1343,7 @@ async function run(mode) {
       await page.waitForTimeout(150);
       await setTime(TD1 + 'T08:00:00+08:00'); await page.reload(); await page.waitForFunction(() => !document.querySelector('#view .loading')); await goTab('today');
       assert((await text('h1')).startsWith('Day 4'), '完了していない Day4 は翌日も繰り越して出る（先の Day には進まない）: ' + (await text('h1')));
-      await page.click('[data-shift="-1"]');
+      await page.click('[data-shift="-1"]'); await setTime(TD + 'T08:00:00+08:00'); await goTab('workout'); await goTab('today');
     }
     // 取り消し（できなかったの記録が消える。wo.finished は元々未設定のままなので Day の繰り越し自体には影響しない）
     await page.click('[data-chk="workout"]'); await page.waitForFunction(() => document.querySelector('[data-step="workout"]').dataset.mark === '');
@@ -1414,6 +1509,8 @@ async function run(mode) {
 | 31 | 有酸素にピックルボールを追加したとき、今日画面の注意書きが「ピックルボール・パデルは…」と**記録した順**で並び、文言が日によって変わってしまった | 注意書きの種目名を \`entries\` を舐めた出現順で組み立てていた。同じ画面でも記録の順番次第で文言が変わり、テストからも見た目からも安定しない | \`racketNote()\` は \`RACKET_INTENSITY\` のキー順（パデル → ピックルボール）で並べるようにした。あわせて、消費カロリーの計算に使う体重を \`cardioWeightKg()\`（直近の実測値 → 無ければ \`settings.bioWeightKg\` 72.4kg）に一本化し、体重を一度も測っていなくても「計算できません」にならないようにした |
 
 | 32 | 食事記録を「枠を埋める」から「食べたら記録する」方式に変えた際、既存の食事テストが軒並み壊れた。未記録の枠から \`data-open\` と ✓ ボタンを外したので、\`[data-open="meal:N"]\` で枠を開いて埋める前提のテストがすべてタイムアウト。さらに (a) 画面下部に固定した記録バーの上にトーストが重なってボタンをクリックできない、(b) 未記録の枠には \`.chk\` が無いのに \`mark()\` ヘルパーが \`.chk.className\` を無条件に読んでいた、(c) 紐づけ先を変えたあとの「位置が変わらない」を**配列の添字**で比較していたため、同時刻の記録が複数あると並び替えのタイ順で 1 つズレて落ちた | 「枠は記録の入口ではない」という仕様変更は、テスト側の「枠をタップして埋める」という前提ごと置き換わる。UI を画面下部に固定したのに、同じ位置に出るトーストの退避先を見直していなかった | テスト側に \`logIntoSlot(slot)\`（その枠の予定時刻に時計を合わせてから「手で入力」で記録 → 自動紐づけに任せる）と \`openMealSlot(slot)\` を用意し、枠を埋める操作をすべてこれに置き換えた。アプリ側は記録バーが出ている間トーストを上へ逃がすようにし（\`body:has(#bbar:not([hidden])) .toast\`）、\`#mAlt\`（代替案）は記録済みでも出すようにした。テストの \`mark()\` は \`.chk\` が無い場合に空文字を返すようにし、位置の検証は添字の一致ではなく「時刻順で前後の行の間にあること」と「表示時刻が変わらないこと」に変えた |
+
+| 33 | 実施済みの休みの日が「できなかった」として翌日以降に持ち越され続けた。9/18 は体重・リンゴ酢・1食目の記録があるのに、有酸素だけ記録が無かったため未消化のまま残り、9/21 に「9/18 にできなかったため持ち越し」と出ていた。あわせて (a) 過去の日付にも「いま」カードが今の時刻つきで出て、そこから押すと過去の日付に今の時刻で記録が入ってしまう、(b) 1日の目標がコーチ指定の 2,632kcal ではなくプランの品目合計 2,178kcal になっていた、(c) 体重の入力が空でも保存ボタンを押せた | (a) 休みの日の消化判定を「有酸素を記録したか」だけで見ていた。休みの日に求められるのは「トレーニングをしないこと」なので、その日を過ごした記録があれば消化とみなすべきだった。(b) 「いま」カードは常に今日のものとして描いていて、表示中の日付が今日かどうかを見ていなかった。(c) 目標値をプランの品目合計から計算しており、コーチ指定の値とのズレがそのまま目標になっていた | (a) \`restDayConsumed(date)\` を追加し、有酸素の記録／食事・体重・サプリのいずれか1件以上／「有酸素はやらない」（\`log_daily.restDone\`、休みの日なので理由は聞かない）／\`cardioMissed\`／\`log_workout.finished\` のどれかで休みの日を消化扱いにした。筋トレの日は今までどおり \`finished\` だけで判定する。(b) 今日以外の日付では「いま」カードと記録バーを出さず、✓ を無効にし、行タップでも開かないようにして、修正は長押しの「修正する」からに限定した（時刻の初期値は元の記録時刻）。(c) 目標を \`settings.targetKcal/targetP/targetF/targetC\`（2632 / 210 / 69 / 295、全曜日共通）に固定し、プランの品目合計とのズレは隠さず合計の展開に 1 行で出すようにした。(d) 体重は入力欄を空のままにして、何か入るまで保存ボタンを無効にした |
 
 ## 実行方法
 

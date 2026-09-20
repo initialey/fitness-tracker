@@ -30,6 +30,9 @@ button{cursor:pointer}
 main{padding:18px 16px calc(120px + env(safe-area-inset-bottom,0px))}
 h1{font:700 15px var(--jp);color:var(--mute);margin:0 0 2px;text-wrap:balance}
 h1.tap{cursor:pointer}
+.pastbar{background:var(--card);border-radius:12px;padding:12px 14px;margin-bottom:18px;font:700 16px var(--jp);display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.pastbar .mute{font-weight:500;text-align:right}
+.chk.off{opacity:.45}
 .pending-banner{background:rgba(242,195,0,.14);border:1px solid var(--yellow);color:var(--yellow);border-radius:10px;padding:9px 12px;font:600 13px var(--jp);margin:0 0 12px;cursor:pointer}
 .date{font:700 34px/1 var(--num);letter-spacing:.01em;margin:0 0 18px;display:flex;align-items:center;gap:8px;font-variant-numeric:tabular-nums}
 .date b{color:var(--yellow);font-weight:700}
@@ -45,6 +48,7 @@ h1.tap{cursor:pointer}
 .now .timer{font:700 54px/1 var(--num);margin:10px 0 4px;letter-spacing:.02em}
 .now .btns{display:flex;gap:8px;margin-top:12px}
 .now button{width:100%;border:0;border-radius:10px;padding:14px;background:var(--yellow-ink);color:var(--yellow);font:700 17px var(--jp)}
+.now button:disabled,.b:disabled{opacity:.45}
 .now.done button{background:#10281A;color:var(--done)}
 .now button.alt{background:rgba(26,22,0,.15);color:var(--yellow-ink);flex:0 0 34%}
 .now .w-in{background:rgba(26,22,0,.12);margin-top:10px}
@@ -419,6 +423,8 @@ const DEFAULT_SETTINGS = {
   restTopSec: 180, restMainSec: 120, restOtherSec: 120, restAccessorySec: 90, incDbKg: 1, incBarKg: 2, weeklyGainPct: 5, // 休憩: トップ 180 秒／他 120 秒（2〜3 分）、腹筋・カーフは 90 秒
   timerMorningMin: 15, timerAfterMealMin: 15,
   riceBasis: 'cooked', // 'raw' | 'cooked'（表示に必ず基準を明記）
+  // コーチ指定の1日の目標（全曜日共通。休みの日も同じ5食なので曜日で変えない）
+  targetKcal: 2632, targetP: 210, targetF: 69, targetC: 295,
   workoutMin: 60, warmupMin: 5,
   cardioLabel: '35〜40分 ・ Zone2（ゆっくりジョグ or 傾斜歩き）・ 夜でもOK',
   warmupNote: '約5分 ・ 座ったままやらない ・ 痛みが出たら止める',
@@ -745,6 +751,19 @@ const isRestDayNo = n => !!(ST.plan_days[String(n)] || {}).isRest;
  * 過去の日付の記録は書き換えない（このキューはどの日付についても読み取り専用の計算結果で、書き込みは行わない）
  */
 let _queueCache = {}; // uptoDate -> replayQueue 結果（render() の先頭で作り直す。同じレンダー内での再計算を避けるだけの軽いキャッシュ）
+/** 休みの日（Day 3・7）を消化したか。休みの日に求められるのは「トレーニングをしないこと」なので、
+ *  有酸素を記録した／その日を普通に過ごした記録（食事・体重・サプリ）が1件以上ある／明示的に終わらせた、のどれかで消化扱いにする。
+ *  筋トレの日はこの判定を使わず、今までどおり「筋トレを完了したか」だけで見る */
+function restDayConsumed(date) {
+  if (((ST.log_cardio[date] || {}).entries || []).length > 0) return true;
+  const dd = ST.log_daily[date] || {};
+  if (dd.restDone || dd.cardioMissed) return true; // 「有酸素はやらない」/「今日はできなかった」を押した
+  if ((ST.log_workout[date] || {}).finished) return true; // その日を明示的に完了にした
+  if (ST.log_weight[date]) return true;
+  if (Object.keys((ST.log_meals[date] || {}).meals || {}).length > 0) return true;
+  if (Object.values((ST.log_supplements[date] || {}).items || {}).some(x => x.done || x.na)) return true;
+  return false;
+}
 function replayQueue(uptoDate) {
   if (_queueCache[uptoDate]) return _queueCache[uptoDate];
   const today = todayYmd();
@@ -760,7 +779,7 @@ function replayQueue(uptoDate) {
     const carriedFrom = pendingSince[assigned] || null;
     assignments[date] = { dayNo: assigned, swapped, displaced: swapped ? wouldHaveBeen : null, carriedFrom };
     // today より先（未来）はまだ起きていない日なので、実績の有無に関わらず「順調にこなした場合」の見込みとして自動消化する
-    const completed = date > today ? true : (isRestDayNo(assigned) ? ((ST.log_cardio[date] || {}).entries || []).length > 0 : !!(ST.log_workout[date] && ST.log_workout[date].finished));
+    const completed = date > today ? true : (isRestDayNo(assigned) ? restDayConsumed(date) : !!(ST.log_workout[date] && ST.log_workout[date].finished));
     if (completed) { queue.push(assigned); delete pendingSince[assigned]; } else { queue.unshift(assigned); if (!pendingSince[assigned]) pendingSince[assigned] = date; }
   }
   return _queueCache[uptoDate] = { queue, assignments, pendingSince };
@@ -790,6 +809,8 @@ function itemLabel(it, full) {
 }
 function macrosOfItems(items) { const t = { kcal: 0, p: 0, f: 0, c: 0 }; items.forEach(i => ['kcal', 'p', 'f', 'c'].forEach(k => { t[k] += Number(i[k]) || 0; })); ['kcal', 'p', 'f', 'c'].forEach(k => { t[k] = r1(t[k]); }); return t; }
 const macroLine = m => '約' + Math.round(m.kcal) + 'kcal ・ P' + Math.round(m.p) + ' F' + Math.round(m.f) + ' C' + Math.round(m.c);
+/** コーチ指定の1日の目標（全曜日共通。休みの日も同じ5食） */
+function coachTarget() { const s = ST.settings || {}; return { kcal: Number(s.targetKcal) || 2632, p: Number(s.targetP) || 210, f: Number(s.targetF) || 69, c: Number(s.targetC) || 295 }; }
 function latestWeightBefore(date) { const ds = Object.keys(ST.log_weight).filter(d => d < date && !ST.log_weight[d].skipped).sort(); return ds.length ? ST.log_weight[ds[ds.length - 1]] : null; }
 const CARDIO_TYPES = { jog: ['ゆっくりジョグ', 'slow jog'], incline: ['傾斜歩き', 'incline walk'], walk: ['ウォーキング', 'walk'], stairs: ['階段', 'stairs'], padel: ['パデル', 'padel'], pickleball: ['ピックルボール', 'pickleball'], other: ['その他', 'other'] };
 const cardioTypeJa = t => (CARDIO_TYPES[t] || [t])[0];
@@ -879,8 +900,10 @@ function mealModel(date, mealNo) {
 }
 function mealsModel(date) {
   const meals = sortedVals('plan_meals', 'mealNo').map(m => mealModel(date, m.mealNo)).concat(snackKeys(date).map(k => mealModel(date, k)));
-  const total = macrosOfItems(meals.flatMap(m => m.eaten)), planTotal = macrosOfItems(meals.filter(m => !m.isSnack).map(m => m.planMac));
-  return { date, meals, total, planTotal, quickSubs: quickSubs() };
+  const total = macrosOfItems(meals.flatMap(m => m.eaten)), planItemsTotal = macrosOfItems(meals.filter(m => !m.isSnack).map(m => m.planMac));
+  // 1日の目標はコーチ指定の固定値。休みの日も同じ5食なので、曜日で変えない
+  const planTotal = coachTarget();
+  return { date, meals, total, planTotal, planItemsTotal, quickSubs: quickSubs() };
 }
 /** 追加 or 置き換えの適用計画（mealApply の実行と、確定前プレビュー表示の両方で使う） */
 function mealApplyPlan(curItems, newItems, mode) { let items = curItems.slice(); const msgs = [];
@@ -964,7 +987,7 @@ function todayModel(date) {
     cardio: (ST.log_cardio[date] || {}).entries || [], days: sortedVals('plan_days', 'dayNo') };
   const tl = buildTimeline(t); t.timeline = tl.steps; t.now = tl.now;
   const nm = t.meals.find(m => !m.status); t.nextMealNo = nm ? nm.mealNo : 0;
-  const ms = mealsModel(date); t.total = ms.total; t.planTotal = ms.planTotal;
+  const ms = mealsModel(date); t.total = ms.total; t.planTotal = ms.planTotal; t.planItemsTotal = ms.planItemsTotal;
   return t;
 }
 /** 1 日の流れ。各行は title / planned(予定 HH:mm) / loggedAt(実績 ISO) / lines[]（全文、省略しない）
@@ -1544,9 +1567,12 @@ function renderToday(t) {
   let h = '<h1 class="tap" id="dayHead">Day ' + t.dayNo + ' ・ ' + esc(t.dayName) + (dayChangeNote ? '（' + esc(dayChangeNote) + '）' : (t.dayNotes ? '（' + esc(t.dayNotes) + '）' : '')) + (t.isRest ? ' ・ 休み' : '') + ' ›</h1>';
   if (t.carriedFrom) { const note = t.carriedFromDisplacedNote ? md(t.carriedFrom) + ' は Day ' + t.carriedFromDisplacedNote + ' に差し替えたため持ち越し' : md(t.carriedFrom) + ' にできなかったため持ち越し'; h += '<div class="mute small" style="margin:-6px 0 10px">' + esc(note) + '</div>'; }
   if (t.pendingList.length >= 2) h += '<div class="pending-banner tap" id="pendingBanner">未実施が ' + t.pendingList.length + ' つ溜まっています（' + esc(t.pendingList.map(p => 'Day ' + p.dayNo).join('・')) + '）</div>';
-  h += '<p class="date"><button class="nav" data-shift="-1" aria-label="前日">‹</button><span>' + md(UI.date) + ' <b>' + wd(UI.date) + '</b>' + (UI.date === todayYmd() ? '' : ' <span class="mute" style="font-size:16px">' + (UI.date < todayYmd() ? '過去' : '未来') + '</span>') + '</span><button class="nav" data-shift="1" aria-label="翌日">›</button></p>';
+  const isToday = UI.date === todayYmd();
+  h += '<p class="date"><button class="nav" data-shift="-1" aria-label="前日">‹</button><span>' + md(UI.date) + ' <b>' + wd(UI.date) + '</b>' + (isToday ? '' : ' <span class="mute" style="font-size:16px">' + (UI.date < todayYmd() ? '過去' : '未来') + '</span>') + '</span><button class="nav" data-shift="1" aria-label="翌日">›</button></p>';
   if (ST.mode === 'mock') h += '<div class="mode">モックモード ・ 保存されていません</div>';
-  h += '<div class="now' + (t.now.kind === 'done' ? ' done' : '') + '" id="now"></div>';
+  // 今日以外の日付では「いま」カードを出さない（今の時刻で過去・未来に記録が入ってしまうため）
+  if (isToday) h += '<div class="now' + (t.now.kind === 'done' ? ' done' : '') + '" id="now"></div>';
+  else h += '<div class="pastbar" id="pastBar">' + md(UI.date) + '（' + wd(UI.date) + '）の' + (UI.date < todayYmd() ? '記録 ・ 過去' : '予定 ・ 未来') + '<span class="mute small">記録カードを長押しすると修正できます</span></div>';
   h += '<input type="file" accept="image/*" id="photoFile" hidden>';
   h += '<div class="tl">';
   t.timeline.forEach(st => {
@@ -1555,8 +1581,9 @@ function renderToday(t) {
     const chk = st.mark === 'ok' ? 'chk on' : st.mark === 'sub' ? 'chk sub' : st.mark === 'skip' ? 'chk skip' : st.mark === 'na' ? 'chk na' : 'chk';
     const cam = st.kind === 'meal' && st.photo ? '<span class="cam" data-photo="' + st.mealNo + '" title="写真を見る">📷</span>' : '';
     // 食事の予定（未記録）は「記録の入口」ではないので、タップも ✓ ボタンも出さない
-    const openAttr = st.planOnly ? '' : ' data-open="' + esc(st.id) + '"';
-    const chkBtn = st.planOnly ? '' : '<button class="' + chk + '" data-chk="' + esc(st.id) + '" aria-label="' + (st.handled ? '記録を取り消す' : '完了') + '">' + (st.mark === 'skip' || st.mark === 'na' ? '−' : st.mark ? '✓' : '') + '</button>';
+    // 今日以外は行タップで開かず（長押しで「修正する」）、✓ も押せない灰色にする
+    const openAttr = st.planOnly || !isToday ? '' : ' data-open="' + esc(st.id) + '"';
+    const chkBtn = st.planOnly ? '' : '<button class="' + chk + (isToday ? '' : ' off') + '" data-chk="' + esc(st.id) + '"' + (isToday ? '' : ' disabled') + ' aria-label="' + (st.handled ? '記録を取り消す' : '完了') + '">' + (st.mark === 'skip' || st.mark === 'na' ? '−' : st.mark ? '✓' : '') + '</button>';
     // 記録済みの食事には「どの枠に紐づいているか」のチップと取り消しを出す
     const chips = st.kind === 'meal' && st.handled ? '<div class="mealchips"><button class="slotchip" data-relink="' + esc(st.id) + '">' + esc(st.isSnack ? '間食' : st.mealNo + '食目') + ' ▾</button><span class="mute small">タップで紐づけ先を変更 ・ 右の ✓ で取り消し</span></div>' : '';
     h += '<div class="step ' + st.state + (st.planOnly ? ' planonly' : '') + (st.overdue ? ' overdue' : '') + '" data-step="' + esc(st.id) + '" data-mark="' + esc(st.mark) + '"><div class="row"' + openAttr + '><div class="body"><div class="t1"><span class="nm">' + esc(st.title) + cam + lbl + '</span>' + tm + '</div>' + st.lines.map((l, i) => '<div class="' + (i === st.lines.length - 1 && st.lines.length > 1 ? 'l3' : 'l2') + '">' + esc(l) + '</div>').join('') + chips + '</div>' + chkBtn + '</div></div>';
@@ -1567,12 +1594,15 @@ function renderToday(t) {
   $$('[data-shift]').forEach(b => { b.onclick = () => { UI.date = addDays(UI.date, Number(b.dataset.shift)); UI.wk = null; UI.rest = null; UI.reviewDate = null; render(); }; });
   $('#dayHead').onclick = () => openDayPicker(t.date);
   const pbn = $('#pendingBanner'); if (pbn) pbn.onclick = () => openDayPicker(t.date);
-  renderNow(t);
-  $$('[data-chk]').forEach(b => { b.onclick = e => { e.stopPropagation(); stepAction(t, b.dataset.chk, true); }; });
+  if (isToday) renderNow(t);
+  $$('[data-chk]:not([disabled])').forEach(b => { b.onclick = e => { e.stopPropagation(); stepAction(t, b.dataset.chk, true); }; });
   $$('[data-time]').forEach(el => { el.onclick = e => { e.stopPropagation(); openTimeSheet(t, el.dataset.time); }; });
   $$('[data-photo]').forEach(el => { el.onclick = e => { e.stopPropagation(); showMealPhoto(t.date, Number(el.dataset.photo)); }; });
   $$('[data-chk^="supp:"], [data-chk^="routine:"]').forEach(b => { const st = t.timeline.find(x => x.id === b.dataset.chk); if (!st || st.handled) return; bindLongPress(b, () => { if (st.kind === 'supp_group') askReason('supp', st.title + ' 今日はなし').then(r => { if (r) act(A.suppNA(t.date, st.timing, r.reason, r.reasonText), '記録しました'); }); else askReason('supp', st.title + ' 今日はなし').then(r => { if (r) act(A.routineNA(t.date, st.itemId, r.reason, r.reasonText), '記録しました'); }); }); });
   $$('[data-open]').forEach(el => { el.onclick = () => stepAction(t, el.dataset.open, false); });
+  if (!isToday) $$('.step .row').forEach(el => { const id = el.closest('.step').dataset.step; const st = t.timeline.find(x => x.id === id);
+    if (!st || st.planOnly) return;
+    bindLongPress(el, () => askChoice(md(t.date) + ' の記録', st.title, [{ label: '修正する', value: 'go', cls: 'b-yel' }]).then(v => { if (v === 'go') stepAction(t, id, false); })); });
   $$('[data-relink]').forEach(el => { el.onclick = e => { e.stopPropagation(); const st = t.timeline.find(x => x.id === el.dataset.relink); if (st) openSlotSheet(t.date, st.mealNo); }; });
   renderBottomBar(t);
   every(() => { const c = $('#nowClock'); if (c) c.textContent = nowHm(); }, 60000);
@@ -1618,7 +1648,10 @@ function openSlotSheet(date, fromKey) {
 function totalsBlock(t) {
   const row = (k, label, u) => { const have = t.total[k], plan = t.planTotal[k], left = Math.max(0, plan - have), p = plan ? Math.min(100, Math.round(have / plan * 100)) : 0;
     return '<div style="margin-top:8px"><div class="row2" style="font-size:13px"><span>' + label + ' <b class="num">' + fmtN(have) + '</b><span class="mute"> / ' + fmtN(plan) + u + '</span></span><span class="mute num" style="text-align:right">' + (left > 0 ? 'あと ' + fmtN(left) + u : '達成' + (have > plan ? '（+' + fmtN(have - plan) + u + '）' : '')) + '</span></div><div class="bar' + (p >= 100 ? ' ok' : '') + '"><div style="width:' + p + '%"></div></div></div>'; };
-  return '<div class="card"><div class="ttl small mute">1日合計 ・ プラン比（白米は' + riceBasisText() + '）</div>' + row('kcal', 'カロリー', ' kcal') + row('p', 'タンパク質', ' g') + row('f', '脂質', ' g') + row('c', '炭水化物', ' g') + '</div>';
+  // 目標はコーチ指定の固定値（全曜日共通）。プランの品目を足した値とズレていたら黙って隠さず知らせる
+  const gap = Math.abs(Math.round(t.planItemsTotal.kcal) - Math.round(t.planTotal.kcal)) >= 50
+    ? '<div class="mute small" style="margin-top:10px">目標はコーチ指定の ' + fmtN(t.planTotal.kcal) + ' kcal（タンパク質 ' + fmtN(t.planTotal.p) + 'g ・ 脂質 ' + fmtN(t.planTotal.f) + 'g ・ 炭水化物 ' + fmtN(t.planTotal.c) + 'g、休みの日も同じ）。いまプランに入っている5食の品目を足すと ' + fmtN(t.planItemsTotal.kcal) + ' kcal で、' + fmtN(Math.abs(t.planItemsTotal.kcal - t.planTotal.kcal)) + ' kcal 足りません。量の見直しをコーチに確認中です</div>' : '';
+  return '<div class="card"><div class="ttl small mute">1日合計 ・ プラン比（白米は' + riceBasisText() + '）</div>' + row('kcal', 'カロリー', ' kcal') + row('p', 'タンパク質', ' g') + row('f', '脂質', ' g') + row('c', '炭水化物', ' g') + gap + '</div>';
 }
 function stepAction(t, id, chk) {
   const st = t.timeline.find(s => s.id === id); if (!st) return;
@@ -1658,17 +1691,20 @@ function missWorkout(t) {
 function bindLongPress(el, fn) { let tm = null, fired = false; const start = e => { fired = false; tm = setTimeout(() => { fired = true; vibrate(30); fn(); }, 550); }; const stop = () => { clearTimeout(tm); }; el.addEventListener('pointerdown', start); ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => el.addEventListener(ev, stop)); el.addEventListener('click', e => { if (fired) { e.stopImmediatePropagation(); e.preventDefault(); fired = false; } }, true); el.addEventListener('contextmenu', e => e.preventDefault()); }
 function renderNow(t) {
   const n = t.now, el = $('#now'); if (!el) return;
+  if (t.date !== todayYmd()) { el.hidden = true; return; }
   let left = null; if (n.timerUntil) { left = (new Date(n.timerUntil).getTime() - Date.now()) / 1000; if (left <= 0) left = null; }
   let title = n.title, sub = n.sub, btn = n.button, btn2 = n.button2;
   if (n.timerUntil && left == null) { if (n.kind === 'meal') { const m = t.meals.find(x => x.mealNo === n.mealNo); title = n.mealNo + '食目を食べる'; btn = 'プラン通り食べた'; btn2 = '変更'; sub = m ? m.planItems.map(p => p.name).join('・') + '\n' + macroLine(m.planMac) : ''; } else { title = n.title.replace(/まで$/, ''); sub = ''; } }
   let h = '<div class="k"><span>' + (n.kind === 'done' ? '完了' : 'いま') + (n.planned ? ' <span style="opacity:.6;font-weight:500">予定 ' + esc(n.planned) + '</span>' : '') + '</span><span class="num" id="nowClock">' + nowHm() + '</span></div><div class="t">' + esc(title) + '</div>';
   if (left != null) h += '<div class="timer" id="nowTimer">' + mmss(left) + '</div>';
   if (sub) h += '<div class="s" style="white-space:pre-line">' + esc(sub) + '</div>';
-  if (n.kind === 'weight') h += '<div class="w-in"><input type="number" step="0.1" inputmode="decimal" id="nowW" placeholder="' + (t.prevWeight ? disp(t.prevWeight.weightKg) : '0.0') + '" aria-label="体重"><span class="u">' + unit() + '</span><input type="number" step="0.1" inputmode="decimal" id="nowBf" class="bf" placeholder="体脂肪" aria-label="体脂肪率"><span class="u">%</span></div>';
-  if (n.kind !== 'done') h += '<div class="btns"><button id="nowBtn">' + esc(btn) + '</button>' + (btn2 ? '<button class="alt" id="nowBtn2">' + esc(btn2) + '</button>' : '') + '</div>';
+  if (n.kind === 'weight') h += '<div class="w-in"><input type="number" step="0.1" inputmode="decimal" id="nowW" value="" placeholder="' + (t.prevWeight ? disp(t.prevWeight.weightKg) : '0.0') + '" aria-label="体重"><span class="u">' + unit() + '</span><input type="number" step="0.1" inputmode="decimal" id="nowBf" class="bf" placeholder="体脂肪" aria-label="体脂肪率"><span class="u">%</span></div>';
+  // 体重は入力欄が空のあいだ保存できない（測っていないのに前回値で記録される事故を防ぐ）
+  if (n.kind !== 'done') h += '<div class="btns"><button id="nowBtn"' + (n.kind === 'weight' ? ' disabled' : '') + '>' + esc(btn) + '</button>' + (btn2 ? '<button class="alt" id="nowBtn2">' + esc(btn2) + '</button>' : '') + '</div>';
   el.innerHTML = h;
   if (left != null) every(() => { const l = (new Date(n.timerUntil).getTime() - Date.now()) / 1000, te = $('#nowTimer'); if (!te) return; if (l <= 0) { vibrate([200, 100, 200]); render(); } else te.textContent = mmss(l); }, 1000);
   const b = $('#nowBtn'), b2 = $('#nowBtn2'); if (!b) return;
+  const wIn = $('#nowW'); if (wIn) { const sync = () => { b.disabled = wIn.value.trim() === ''; }; wIn.oninput = sync; sync(); }
   b.onclick = () => {
     if (n.kind === 'weight') { const v = $('#nowW').value; if (!v) return toast('体重を入力', true); b.disabled = true; return act(A.saveWeight(t.date, v, $('#nowBf').value), '体重を保存'); }
     if (n.kind === 'meal' && left != null) return openMealSheet(n.mealNo, false);
@@ -1703,6 +1739,7 @@ function openWeightSheet(t) {
   const s = openSheet('<h3>体重 <span class="mute num" style="font-weight:500;font-size:14px">・ 予定 ' + esc(wst.planned || '—') + (wst.loggedAt ? ' ・ 記録 <b>' + esc(fmtHm(wst.loggedAt)) + '</b>' : '') + '</span></h3><div class="w-in"><input type="number" step="0.1" inputmode="decimal" id="shW" value="' + (t.weight ? disp(t.weight.weightKg) : '') + '" placeholder="' + (t.prevWeight ? disp(t.prevWeight.weightKg) : '0.0') + '"><span class="u">' + unit() + '</span><input type="number" step="0.1" inputmode="decimal" id="shBf" class="bf" value="' + (t.weight ? t.weight.bodyFatPct : '') + '" placeholder="体脂肪"><span class="u">%</span></div>' + (t.prevWeight ? '<div class="mute small" style="margin-top:6px">前回 ' + disp(t.prevWeight.weightKg) + unit() + '（' + t.prevWeight.date.slice(5) + '）</div>' : '') + '<button class="b b-yel" style="width:100%;margin-top:12px" id="shSave">保存</button>');
   $('.sheet-body', s).insertAdjacentHTML('beforeend', (t.weightSkipped ? '<div class="badge na" style="margin-top:10px;background:var(--card2);color:var(--mute)">測れなかった（' + esc(reasonJa(t.weightSkipped)) + '）・ 数値を入れて保存すると解除</div>' : '') + '<div class="btns" style="margin-top:10px"><button class="b small" id="shNA">今日は測れなかった</button>' + (t.weight || t.weightSkipped ? '<button class="b small" id="shCancel" style="color:var(--warn)">記録を取り消す</button>' : '') + '</div>');
   $('#shW', s).focus();
+  { const wi = $('#shW', s), sv = $('#shSave', s); const sync = () => { sv.disabled = wi.value.trim() === ''; }; wi.oninput = sync; sync(); }
   $('#shSave', s).onclick = () => { const v = $('#shW', s).value; if (!v) return toast('体重を入力', true); closeSheet(); act(A.saveWeight(t.date, v, $('#shBf', s).value), '体重を保存'); };
   $('#shNA', s).onclick = () => { closeSheet(); askReason('weight', '今日は測れなかった', '理由を 1 つ選ぶ').then(r => { if (!r) return; const prev = ST.log_weight[t.date]; act(A.weightSkip(t.date, r.reason, r.reasonText), '測れなかった（' + (r.reasonText || r.reason) + '）').then(() => toastAction('体重: 測れなかったと記録', '元に戻す', () => act(prev ? store.set('log_weight', t.date, prev) : A.weightCancel(t.date)))); }); };
   const sc = $('#shCancel', s); if (sc) sc.onclick = () => { askConfirm('記録を取り消す', '体重を「未記録」に戻します。', '取り消す').then(ok => { if (!ok) return; const prev = ST.log_weight[t.date]; closeSheet(); act(A.weightCancel(t.date)).then(() => toastAction('体重の記録を取り消しました', '元に戻す', () => act(store.set('log_weight', t.date, prev)))); }); };
@@ -2087,13 +2124,13 @@ function stickSvg(anim) {
 function renderRestDay(d) {
   const wKg = cardioWeightKg(d.date);
   let h = '<h1 class="tap" id="wkDayHead">Day ' + d.dayNo + ' ・ 休み（有酸素のみ）</h1>';
-  h += '<div class="cur-set"><div class="k">今日は有酸素のみ</div><div class="n">' + esc(ST.settings.cardioLabel) + '</div></div>';
+  h += '<div class="cur-set"><div class="k">今日は休みの日です</div><div class="n">' + esc(ST.settings.cardioLabel) + '</div><div class="p">有酸素をやらない日でも、下の「有酸素はやらない」を押せばこの日は終わりにできます</div></div>';
   h += '<div class="chips" id="rcType"><button data-t="jog">ゆっくりジョグ</button><button class="on" data-t="incline">傾斜歩き</button><button data-t="padel">パデル</button><button data-t="pickleball">ピックルボール</button><button data-t="other">その他</button></div>';
   h += '<div id="rcPadelBlock" hidden><div class="chips" id="rcPadelMin"><button data-pmin="30">30分</button><button data-pmin="60">60分</button><button data-pmin="90">90分</button><button data-pmin="120">120分</button><button data-pmin="+30">＋30分</button></div><div class="chips" id="rcIntensity"></div><div class="mute small" id="rcKcalPreview" style="margin-top:4px"></div></div>';
   h += '<label class="lbl" for="rcMin">時間（分）</label><div class="w-in"><input type="number" inputmode="numeric" id="rcMin" placeholder="40"><span class="u">分</span></div>';
   h += '<label class="lbl" for="rcHr">平均心拍数（任意）</label><div class="w-in"><input type="number" inputmode="numeric" id="rcHr" placeholder="130"><span class="u">bpm</span></div>';
-  h += '<button class="done-btn" id="rcSave">記録する</button>';
-  h += '<div class="mini"><button id="rcSkip">今日はやらない</button></div>';
+  h += '<button class="done-btn" id="rcSave">有酸素を記録する</button>';
+  h += '<button class="b b-sub" style="width:100%;margin-top:10px" id="rcSkip">有酸素はやらない</button>';
   view.innerHTML = h;
   $('#wkDayHead').onclick = () => openDayPicker(d.date);
   let type = 'incline', intensity = 'normal';
@@ -2105,7 +2142,8 @@ function renderRestDay(d) {
   $$('#rcPadelMin button', view).forEach(b => { b.onclick = () => { const v = b.dataset.pmin, cur = Number($('#rcMin').value) || 0; $('#rcMin').value = v[0] === '+' ? cur + Number(v.slice(1)) : Number(v); updateKcal(); }; });
   $('#rcMin').oninput = updateKcal;
   $('#rcSave').onclick = () => { const min = $('#rcMin').value; if (!min || isNaN(Number(min))) return toast('時間（分）を入力してください', true); const hr = $('#rcHr').value; vibrate(80); act(A.saveCardio(d.date, type, min, '', hr, intensity).then(() => A.finishWorkout(d.date)), '記録しました').then(() => window.scrollTo(0, 0)); };
-  $('#rcSkip').onclick = () => askReason('workout', '今日はやらない', '有酸素ができなかった理由').then(r => { if (r) act(A.cardioMissed(d.date, r.reason, r.reasonText).then(() => A.finishWorkout(d.date)), '記録しました').then(() => window.scrollTo(0, 0)); });
+  // 休みの日なので理由は聞かない。押した時点でこの日は消化扱い（キューの末尾へ回る）
+  $('#rcSkip').onclick = () => { vibrate(80); act(A.setDaily(d.date, { restDone: { loggedAt: isoNow() } }).then(() => A.finishWorkout(d.date)), '今日はこれで終わりにしました').then(() => window.scrollTo(0, 0)); };
 }
 /** セットを記録して次へ（休憩タイマー開始、ドロップ/スーパーセットは休憩なしで直行） */
 function commitSet(d, ex, st, wv, rv) {
@@ -2479,7 +2517,7 @@ async function boot() {
   use('downloads').then(dl => { CAP.downloads = dl; scheduleRender(); });
 }
 window.addEventListener('beforeunload', () => { try { localStorage.setItem('tl.tab', UI.tab); } catch (e) { /* ignore */ } });
-window.__tl = { resizeImage, validateEstimate, isSnack, mealLabel, parseSetScheme, expandPairSets, repsText, setLabel, setActual, dayReport, bumpKg, warmupMinutesText, setUnits, shortExerciseList, bmr, exerciseKcalFor, dayCalorieBalance, fatModel, fatVisual, suggestActivityBase, weightOnOrBefore, cardioWeightKg, slotWindows, slotForTime, autoSlotFor, weekAdherence, matchFood, dayNoFor, padelKcal, padelMets, racketKcal, racketMets, isRacket, weeklyReport }; // テスト用フック（純粋関数のみ）
+window.__tl = { resizeImage, validateEstimate, isSnack, mealLabel, parseSetScheme, expandPairSets, repsText, setLabel, setActual, dayReport, bumpKg, warmupMinutesText, setUnits, shortExerciseList, bmr, exerciseKcalFor, dayCalorieBalance, fatModel, fatVisual, suggestActivityBase, weightOnOrBefore, cardioWeightKg, restDayConsumed, coachTarget, slotWindows, slotForTime, autoSlotFor, weekAdherence, matchFood, dayNoFor, padelKcal, padelMets, racketKcal, racketMets, isRacket, weeklyReport }; // テスト用フック（純粋関数のみ）
 boot();
 })();
 </script>
