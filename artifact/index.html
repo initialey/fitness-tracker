@@ -30,6 +30,7 @@ button{cursor:pointer}
 main{padding:18px 16px calc(120px + env(safe-area-inset-bottom,0px))}
 h1{font:700 15px var(--jp);color:var(--mute);margin:0 0 2px;text-wrap:balance}
 h1.tap{cursor:pointer}
+.pending-banner{background:rgba(242,195,0,.14);border:1px solid var(--yellow);color:var(--yellow);border-radius:10px;padding:9px 12px;font:600 13px var(--jp);margin:0 0 12px;cursor:pointer}
 .date{font:700 34px/1 var(--num);letter-spacing:.01em;margin:0 0 18px;display:flex;align-items:center;gap:8px;font-variant-numeric:tabular-nums}
 .date b{color:var(--yellow);font-weight:700}
 .date .nav{background:transparent;border:0;color:var(--mute);font:500 26px var(--num);padding:0 6px;line-height:1}
@@ -117,6 +118,7 @@ input.time{width:100%;font:700 34px var(--num);background:var(--card2);border:1p
 .btns button,.b{flex:1;border:0;border-radius:9px;padding:12px;font:700 15px var(--jp)}
 .b-main{background:var(--done);color:#10281A}
 .b-sub{background:var(--card2);color:var(--ink)}
+.b-sub.pend{border:1px solid var(--yellow)}
 .b-yel{background:var(--yellow);color:var(--yellow-ink)}
 .b-ghost{background:transparent;color:var(--mute);border:1px solid var(--line)}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
@@ -674,22 +676,43 @@ const sortedVals = (coll, key) => Object.values(ST[coll]).sort((a, b) => Number(
    4. 派生モデル
    ===================================================================== */
 function dayDoc(date) { return ST.log_daily[date] || {}; }
-/** date より前で直近の「ここから順番をずらす」基準日（無ければ null）。dayNoFor と部位変更シートの両方で使う */
-function priorDayShiftAnchor(date) {
-  const anchors = Object.keys(ST.log_daily).filter(x => x < date && ST.log_daily[x].dayNo && ST.log_daily[x].dayChange && ST.log_daily[x].dayChange.mode === 'shift').sort();
-  return anchors.length ? anchors[anchors.length - 1] : null;
+const isRestDayNo = n => !!(ST.plan_days[String(n)] || {}).isRest;
+/**
+ * Day の判定は「未消化キュー」方式。カレンダー計算（startDate からの日数 ÷ 7）だけで決めると、
+ * 差し替えた日に本来やるはずだった Day が消えてしまうため、やっていない Day を順番待ちのキューとして
+ * startDate から今日まで日ごとに置き換える（イベントソーシング。log_daily/log_workout/log_cardio から毎回組み立て直す）。
+ *   - 今日の Day = キューの先頭（休みの日が2つ以上先頭に並んだら自動で末尾へ回す）
+ *   - その日の記録（筋トレ完了 or 休みの日は有酸素記録）があればキューの末尾へ、無ければ先頭に残したまま翌日へ
+ *   - 差し替え（log_daily[date].dayNo）は先頭を消費せず、選んだ Day だけをキューから取り出す。
+ *     元々先頭にあった Day はそのままキューの先頭に残る（＝持ち越し）
+ * 過去の日付の記録は書き換えない（このキューはどの日付についても読み取り専用の計算結果で、書き込みは行わない）
+ */
+let _queueCache = {}; // uptoDate -> replayQueue 結果（render() の先頭で作り直す。同じレンダー内での再計算を避けるだけの軽いキャッシュ）
+function replayQueue(uptoDate) {
+  if (_queueCache[uptoDate]) return _queueCache[uptoDate];
+  const today = todayYmd();
+  let queue = [1, 2, 3, 4, 5, 6, 7];
+  const assignments = {}, pendingSince = {};
+  const rotateFrontRestPairs = () => { while (queue.length >= 2 && isRestDayNo(queue[0]) && isRestDayNo(queue[1])) queue.push(queue.shift()); };
+  for (let date = ST.settings.startDate; date <= uptoDate; date = addDays(date, 1)) {
+    rotateFrontRestPairs();
+    const dd = dayDoc(date), wouldHaveBeen = queue[0];
+    let assigned, swapped = false;
+    if (dd.dayNo) { assigned = Number(dd.dayNo); swapped = assigned !== wouldHaveBeen; const idx = queue.indexOf(assigned); if (idx >= 0) queue.splice(idx, 1); else assigned = wouldHaveBeen; if (swapped && idx >= 0 && !pendingSince[wouldHaveBeen]) pendingSince[wouldHaveBeen] = date; }
+    else assigned = queue.shift();
+    const carriedFrom = pendingSince[assigned] || null;
+    assignments[date] = { dayNo: assigned, swapped, displaced: swapped ? wouldHaveBeen : null, carriedFrom };
+    // today より先（未来）はまだ起きていない日なので、実績の有無に関わらず「順調にこなした場合」の見込みとして自動消化する
+    const completed = date > today ? true : (isRestDayNo(assigned) ? ((ST.log_cardio[date] || {}).entries || []).length > 0 : !!(ST.log_workout[date] && ST.log_workout[date].finished));
+    if (completed) { queue.push(assigned); delete pendingSince[assigned]; } else { queue.unshift(assigned); if (!pendingSince[assigned]) pendingSince[assigned] = date; }
+  }
+  return _queueCache[uptoDate] = { queue, assignments, pendingSince };
 }
-/** Day 判定。手動上書き（その日だけ／ここから変更の基準日）> 「できなかった→Day をずらす」の累積 > 開始日からの 7 日周期
-    「ここから順番をずらす」は直近の基準日を新しい起点として、そこから 7 日周期を数え直す */
-function dayNoFor(date) {
-  const d = dayDoc(date); if (d.dayNo) return Number(d.dayNo);
-  const anchor = priorDayShiftAnchor(date);
-  const anchorDate = anchor || ST.settings.startDate, anchorDayNo = anchor ? Number(ST.log_daily[anchor].dayNo) : 1;
-  const shifts = Object.values(ST.log_daily).filter(x => x.date > anchorDate && x.date < date && x.workoutMissed && x.workoutMissed.shift).length;
-  return ((((diffDays(anchorDate, date) - shifts + (anchorDayNo - 1)) % 7) + 7) % 7) + 1;
-}
-/** date に効いている部位変更の基準日（その日自身の変更、または過去の「ここから」変更の基準日）。無ければ null */
-function activeDayChangePivot(date) { const dd = dayDoc(date); if (dd.dayNo && dd.dayChange) return date; return priorDayShiftAnchor(date); }
+/** Day 判定。today より先（未来）は「今日以降も順調にこなした場合」の見込みで、real な完了データが無い分は自動消化として続きを見せる。
+ * startDate より前（記録開始前）はキューが存在しないので、カレンダー計算だけで参考表示する */
+function dayNoFor(date) { if (date < ST.settings.startDate) return calcDayNo(ST.settings.startDate, date); const today = todayYmd(); return replayQueue(date > today ? date : today).assignments[date].dayNo; }
+/** date 時点でキューに残っている「未実施」一覧（持ち越し開始日つき、古い順） */
+function pendingDaysAsOf(date) { const q = replayQueue(date); return Object.keys(q.pendingSince).map(n => ({ dayNo: Number(n), since: q.pendingSince[n] })).sort((a, b) => a.since < b.since ? -1 : a.since > b.since ? 1 : 0); }
 /** dayNo を直近（60日以内）にやった日付。beforeDate より前で探す。無ければ null */
 function lastDayOccurrence(dayNo, beforeDate) { for (let i = 1; i <= 60; i++) { const d = addDays(beforeDate, -i); if (d < ST.settings.startDate) break; if (dayNoFor(d) === dayNo) return d; } return null; }
 function planDay(date) { const n = dayNoFor(date); return ST.plan_days[String(n)] || { dayNo: n, name: 'Day ' + n, isRest: false }; }
@@ -815,7 +838,11 @@ function setUnits(exs, wo) {
 function shortExerciseList(names) { return names.slice(0, 3).join('・') + (names.length > 3 ? ' ほか' + (names.length - 3) + '種目' : ''); }
 function todayModel(date) {
   const s = ST.settings, pd = planDay(date), wo = workoutDoc(date), exs = exercisesFor(date);
+  const q = replayQueue(date > todayYmd() ? date : todayYmd()), qa = q.assignments[date] || {};
+  const pendingList = pendingDaysAsOf(date);
   const t = { date, dayNo: pd.dayNo, dayName: pd.name, dayNotes: pd.notes || '', isRest: isRestDay(date), dayOverride: !!dayDoc(date).dayNo, dayChange: dayDoc(date).dayChange || null,
+    carriedFrom: qa.carriedFrom || null, carriedFromDisplacedNote: qa.carriedFrom && q.assignments[qa.carriedFrom] && q.assignments[qa.carriedFrom].displaced === qa.dayNo ? q.assignments[qa.carriedFrom].dayNo : null,
+    pendingList,
     weekNo: calcWeekNo(s.startDate, date), comment: dayDoc(date).comment || '', weight: ST.log_weight[date] && !ST.log_weight[date].skipped ? ST.log_weight[date] : null, weightSkipped: ST.log_weight[date] && ST.log_weight[date].skipped ? ST.log_weight[date] : null, prevWeight: latestWeightBefore(date),
     workoutMissed: dayDoc(date).workoutMissed || null, cardioMissed: dayDoc(date).cardioMissed || null,
     supplements: suppsModel(date), routine: routineModel(date), waterMl: waterMl(date), waterLoggedAt: waterLoggedAt(date), waterGoalMl: Number(s.waterGoalMl) || 5000,
@@ -852,7 +879,7 @@ function buildTimeline(t) {
     const pre = suppGroup('pre', T.warmup); if (pre) steps.push(pre);
     steps.push(warmupStep(T.warmup));
     const wm = t.workoutMissed;
-    steps.push({ id: 'workout', kind: 'workout', title: '筋トレ Day' + t.dayNo + ' ' + t.dayName + ' ・ ' + t.exercises.filter(e => !e.accessory).length + '種目 ・ 約' + s.workoutMin + '分', lines: [shortExerciseList(t.exercises.filter(e => !e.accessory).map(e => e.nameJa))].concat(wm ? ['できなかった（' + reasonJa(wm) + '）・ ' + (wm.shift ? 'Day をずらす（明日 Day' + t.dayNo + ' をやり直す）' : 'そのまま進む')] : t.setUnits.done ? ['全' + t.setUnits.total + 'セット中 ' + t.setUnits.done + 'セット完了'] : []), planned: T.workout, done: t.workoutFinished, handled: t.workoutFinished || !!wm, mark: t.workoutFinished ? 'ok' : wm ? 'na' : '', loggedAt: t.workoutFinishedAt || (wm ? wm.loggedAt : ''), na: !!wm });
+    steps.push({ id: 'workout', kind: 'workout', title: '筋トレ Day' + t.dayNo + ' ' + t.dayName + ' ・ ' + t.exercises.filter(e => !e.accessory).length + '種目 ・ 約' + s.workoutMin + '分', lines: [shortExerciseList(t.exercises.filter(e => !e.accessory).map(e => e.nameJa))].concat(wm ? ['できなかった（' + reasonJa(wm) + '）・ Day' + t.dayNo + ' は持ち越しになります'] : t.setUnits.done ? ['全' + t.setUnits.total + 'セット中 ' + t.setUnits.done + 'セット完了'] : []), planned: T.workout, done: t.workoutFinished, handled: t.workoutFinished || !!wm, mark: t.workoutFinished ? 'ok' : wm ? 'na' : '', loggedAt: t.workoutFinishedAt || (wm ? wm.loggedAt : ''), na: !!wm });
     { const acc = t.exercises.find(e => e.accessory); if (acc) { const logged = Object.values(workoutDoc(t.date).sets || {}).filter(x => Number(x.exerciseId) === acc.id); const sub = ((workoutDoc(t.date).meta || {})[acc.id] || {}).subName || ''; steps.push({ id: 'accessory', kind: 'accessory', title: (acc.accessory === 'abs' ? '腹筋' : 'カーフ: スミス カーフレイズ') + '（最終種目のあと ・ ' + (acc.accessory === 'abs' ? '種目・セット数・回数' : 'セット数・回数') + 'はコーチ確認中）', lines: [logged.length ? (sub ? sub + ' ・ ' : '') + logged.map(x => setActual(x)).join('・') : '種目名・重量・回数は自由入力で記録'], planned: T.workout, done: logged.length > 0, handled: logged.length > 0, mark: logged.length ? 'ok' : '', loggedAt: logged.length ? logged[logged.length - 1].loggedAt : '' }); } }
     ['intra', 'post'].forEach(tm => { const g = suppGroup(tm, T.workout); if (g) steps.push(g); });
     routineSteps('post').forEach(x => { x.planned = T.workout; steps.push(x); });
@@ -954,8 +981,11 @@ function summaryModel(weekNo) {
   const wdays = { measured: 0, skipped: 0, total: days.length, reasons: {} };
   days.forEach(x => { const w = ST.log_weight[x.date]; if (!w) return; if (w.skipped) { wdays.skipped++; const k = reasonEn('weight', w.reason, w.reasonText); wdays.reasons[k] = (wdays.reasons[k] || 0) + 1; } else wdays.measured++; });
   let photoMeals = 0; days.forEach(x => Object.values((ST.log_meals[x.date] || {}).meals || {}).forEach(m => { if (m.photo) photoMeals++; }));
-  const dayChanges = Object.keys(ST.log_daily).filter(d => inRange(d) && d <= today && ST.log_daily[d].dayChange).sort().map(d => { const dc = ST.log_daily[d].dayChange; return { date: d, from: dc.from, to: ST.log_daily[d].dayNo, mode: dc.mode, fromName: (ST.plan_days[String(dc.from)] || {}).name || '', toName: (ST.plan_days[String(ST.log_daily[d].dayNo)] || {}).name || '' }; });
-  return { weekNo: wk, currentWeek: curWeek, range, weights, weightsMa7: movingAvgByDate(weights, 7), weightDays: wdays, missed: missedItems(range), dayChanges, photoMeals, topSets: Object.keys(top).map(k => ({ name: k, points: top[k] })),
+  const q = replayQueue(today);
+  const doneDateFor = (dayNo, afterDate) => { const ds = Object.keys(q.assignments).filter(d => d > afterDate).sort(); for (const d of ds) { const a = q.assignments[d]; if (a.dayNo !== dayNo) continue; const done = isRestDayNo(dayNo) ? ((ST.log_cardio[d] || {}).entries || []).length > 0 : !!(ST.log_workout[d] && ST.log_workout[d].finished); if (done) return d; } return null; };
+  const dayChanges = Object.keys(ST.log_daily).filter(d => inRange(d) && d <= today && ST.log_daily[d].dayChange).sort().map(d => { const dc = ST.log_daily[d].dayChange; return { date: d, from: dc.from, to: ST.log_daily[d].dayNo, fromName: (ST.plan_days[String(dc.from)] || {}).name || '', toName: (ST.plan_days[String(ST.log_daily[d].dayNo)] || {}).name || '', fromDoneDate: doneDateFor(Number(dc.from), d) }; });
+  const pending = pendingDaysAsOf(today).map(p => ({ dayNo: p.dayNo, name: (ST.plan_days[String(p.dayNo)] || {}).name || '', since: p.since }));
+  return { weekNo: wk, currentWeek: curWeek, range, weights, weightsMa7: movingAvgByDate(weights, 7), weightDays: wdays, missed: missedItems(range), dayChanges, pending, photoMeals, topSets: Object.keys(top).map(k => ({ name: k, points: top[k] })),
     todayWeight: ST.log_weight[today] ? Number(ST.log_weight[today].weightKg) : null, startWeight: weights.length ? weights[0].value : null,
     media: Object.values(ST.log_media).filter(m => inRange(m.date)).sort((a, b) => b.date.localeCompare(a.date)), days, adherence: weekAdherence(range) };
 }
@@ -1042,7 +1072,7 @@ function missedItems(range) {
     const sup = Object.entries((ST.log_supplements[d] || {}).items || {}).filter(([, v]) => v.na && !v.done); if (sup.length) { const v = sup[0][1]; out.push({ date: d, item: 'サプリ ' + sup.map(([id]) => (ST.plan_supplements[id] || {}).name || id).join('・'), itemEn: 'supplements (' + sup.length + ')', reason: reasonJa(v), reasonEn: reasonEn('supp', v.reason, v.reasonText) }); }
     Object.entries((ST.log_routine[d] || {}).items || {}).forEach(([id, v]) => { if (v.na && !v.done) out.push({ date: d, item: (ST.plan_routine[id] || {}).name || id, itemEn: ((ST.plan_routine[id] || {}).name || id), reason: reasonJa(v), reasonEn: reasonEn('supp', v.reason, v.reasonText) }); });
     const dd = ST.log_daily[d] || {};
-    if (dd.workoutMissed) out.push({ date: d, item: '筋トレ Day' + dayNoFor(d), itemEn: 'workout Day' + dayNoFor(d), reason: reasonJa(dd.workoutMissed) + (dd.workoutMissed.shift ? '・Day をずらす' : '・そのまま進む'), reasonEn: reasonEn('workout', dd.workoutMissed.reason, dd.workoutMissed.reasonText) + (dd.workoutMissed.shift ? ', day shifted' : '') });
+    if (dd.workoutMissed) out.push({ date: d, item: '筋トレ Day' + dayNoFor(d), itemEn: 'workout Day' + dayNoFor(d), reason: reasonJa(dd.workoutMissed), reasonEn: reasonEn('workout', dd.workoutMissed.reason, dd.workoutMissed.reasonText) });
     if (dd.cardioMissed) out.push({ date: d, item: '有酸素', itemEn: 'cardio', reason: reasonJa(dd.cardioMissed), reasonEn: reasonEn('workout', dd.cardioMissed.reason, dd.cardioMissed.reasonText) });
   }
   return out;
@@ -1077,7 +1107,8 @@ function weeklyReport(weekNo, opts) {
   const notes = [];
   sm.missed.forEach(m => notes.push(m.date.slice(5).replace('-', '/') + ' ' + m.itemEn + ' missed (' + m.reasonEn + ')'));
   Object.keys(ST.log_daily).filter(inRange).sort().forEach(d => { const c = (ST.log_daily[d].comment || '').trim(); if (c) notes.push(c); if (ST.log_daily[d].warmupSkipped) notes.push('warm-up skipped ' + d.slice(5) + ' (' + ST.log_daily[d].warmupSkipped.reason + ')'); });
-  sm.dayChanges.forEach(c => { const dt = parseYmd(c.date); notes.push('swapped Day ' + c.from + ' (' + c.fromName + ') -> Day ' + c.to + ' (' + c.toName + ') on ' + MON_EN[dt.getUTCMonth()] + ' ' + dt.getUTCDate()); });
+  sm.dayChanges.forEach(c => { const dt = parseYmd(c.date); let note = 'swapped Day ' + c.from + ' (' + c.fromName + ') -> Day ' + c.to + ' (' + c.toName + ') on ' + MON_EN[dt.getUTCMonth()] + ' ' + dt.getUTCDate(); if (c.fromDoneDate) { const dt2 = parseYmd(c.fromDoneDate); note += ', Day ' + c.from + ' done on ' + MON_EN[dt2.getUTCMonth()] + ' ' + dt2.getUTCDate(); } notes.push(note); });
+  sm.pending.forEach(p => { const dt = parseYmd(p.since); notes.push('Pending: Day ' + p.dayNo + ' (' + p.name + ') not done since ' + MON_EN[dt.getUTCMonth()] + ' ' + dt.getUTCDate()); });
   Object.keys(ST.log_workout).filter(inRange).sort().forEach(d => Object.entries(ST.log_workout[d].meta || {}).forEach(([id, m]) => { if (m.note) notes.push(((ST.plan_exercises[id] || {}).nameEn || '') + ': ' + m.note); }));
   const form = sm.media.filter(m => m.category === 'form'), body = sm.media.filter(m => m.category === 'body');
   const link = (label, items, via) => via ? label + ': sent via Messenger' : label + ': ' + (items.length ? items.map(m => m.url || ('/_blob/' + m.assetId)).join(' ') : 'none');
@@ -1107,13 +1138,13 @@ const A = {
   async suppNA(date, timing, reason, reasonText) { await A._suppNA(date, timing, reason, reasonText); await A.syncDaily(date); },
   async _suppNA(date, timing, reason, reasonText) { const doc = Object.assign({ date, items: {} }, ST.log_supplements[date]); doc.items = Object.assign({}, doc.items); const at = isoNow(); Object.values(ST.plan_supplements).filter(s => s.timing === timing && s.active !== false).forEach(s => { doc.items[s.id] = { done: false, na: true, reason, reasonText: reasonText || '', loggedAt: at }; }); await store.set('log_supplements', date, doc); },
   async routineNA(date, id, reason, reasonText) { const doc = Object.assign({ date, items: {} }, ST.log_routine[date]); doc.items = Object.assign({}, doc.items, { [id]: { done: false, na: true, reason, reasonText: reasonText || '', loggedAt: isoNow() } }); await store.set('log_routine', date, doc); await A.syncDaily(date); },
-  /** 筋トレ・有酸素「今日はできなかった（理由）」。shift=true で翌日以降の Day を 1 つずらす */
-  async workoutMissed(date, reason, reasonText, shift) { await A.setDaily(date, { workoutMissed: { reason, reasonText: reasonText || '', shift: !!shift, loggedAt: isoNow() } }); },
+  /** 筋トレ・有酸素「今日はできなかった（理由）」。未消化キュー方式では「完了しなかった」だけで自動的に翌日へ持ち越しになるので、ここでは記録するだけでよい */
+  async workoutMissed(date, reason, reasonText) { await A.setDaily(date, { workoutMissed: { reason, reasonText: reasonText || '', loggedAt: isoNow() } }); },
   async cardioMissed(date, reason, reasonText) { await A.setDaily(date, { cardioMissed: { reason, reasonText: reasonText || '', loggedAt: isoNow() } }); },
   async clearDaily(date, key) { const d = Object.assign({}, ST.log_daily[date]); delete d[key]; await store.set('log_daily', date, Object.assign({ date }, d)); },
-  /** その日の Day（部位）を変更。mode='swap' は今日だけ差し替え／'shift' はここから順番をずらす（以降の Day 判定の新しい基準日になる） */
-  async changeDayPlan(date, newDayNo, mode) { const fromDayNo = dayNoFor(date); await A.setDaily(date, { dayNo: newDayNo, dayChange: { mode, from: fromDayNo, loggedAt: isoNow() } }); },
-  /** Day の変更を取り消す。date はその変更の基準日（その日の dayNo/dayChange を消せば以降も自動計算に戻る） */
+  /** その日の Day（部位）を差し替える。もとの予定（キューの先頭）はそのままキューに残る＝翌日以降に持ち越し */
+  async changeDayPlan(date, newDayNo) { const fromDayNo = dayNoFor(date); await A.setDaily(date, { dayNo: Number(newDayNo), dayChange: { from: fromDayNo, loggedAt: isoNow() } }); },
+  /** 差し替えを取り消す（その日の dayNo/dayChange を消せばキューによる自動判定に戻る） */
   async resetDayPlan(date) { await A.setDaily(date, { dayNo: null, dayChange: null }); },
   async toggleSupp(date, id, done) { const doc = Object.assign({ date, items: {} }, ST.log_supplements[date]); const at = done ? isoNow() : ''; doc.items = Object.assign({}, doc.items, { [id]: { done: !!done, time: fmtHm(at), loggedAt: at } }); await store.set('log_supplements', date, doc); },
   async toggleSuppGroup(date, timing, done) { const doc = Object.assign({ date, items: {} }, ST.log_supplements[date]); doc.items = Object.assign({}, doc.items); const at = done ? isoNow() : ''; Object.values(ST.plan_supplements).filter(s => s.timing === timing && s.active !== false).forEach(s => { doc.items[s.id] = { done: !!done, time: fmtHm(at), loggedAt: at }; }); await store.set('log_supplements', date, doc); },
@@ -1252,7 +1283,7 @@ function buildCsv() {
   const skipOf = obj => { if (!obj) return ['', '']; if (obj.skipped || obj.na) return ['1', reasonJa(obj)]; if (obj.status === 'skip') return ['1', obj.skip ? reasonJa(obj.skip) : '食べなかった']; return ['', '']; };
   const push = (sheet, date, key, obj, planned) => { const sk = skipOf(obj); rows.push([sheet, date, key, planned || '', obj && obj.loggedAt || '', sk[0], sk[1], JSON.stringify(obj)]); };
   Object.keys(ST.log_weight).concat(Object.keys(ST.log_meals), Object.keys(ST.log_workout)).filter((v, i, a) => a.indexOf(v) === i).sort().forEach(d => dayTimes(d).forEach(tm => rows.push(['times', d, tm.id, tm.planned, tm.logged, '', '', JSON.stringify({ title: tm.title, late: tm.late })])));
-  Object.values(ST.log_daily).forEach(x => { if (x.workoutMissed) rows.push(['missed', x.date, 'workout', T.workout, x.workoutMissed.loggedAt || '', '1', reasonJa(x.workoutMissed) + (x.workoutMissed.shift ? '・Day をずらす' : ''), JSON.stringify(x.workoutMissed)]); if (x.cardioMissed) rows.push(['missed', x.date, 'cardio', T.cardio, x.cardioMissed.loggedAt || '', '1', reasonJa(x.cardioMissed), JSON.stringify(x.cardioMissed)]); });
+  Object.values(ST.log_daily).forEach(x => { if (x.workoutMissed) rows.push(['missed', x.date, 'workout', T.workout, x.workoutMissed.loggedAt || '', '1', reasonJa(x.workoutMissed), JSON.stringify(x.workoutMissed)]); if (x.cardioMissed) rows.push(['missed', x.date, 'cardio', T.cardio, x.cardioMissed.loggedAt || '', '1', reasonJa(x.cardioMissed), JSON.stringify(x.cardioMissed)]); });
   Object.values(ST.log_weight).forEach(w => push('weight', w.date, '', w, T.weight));
   Object.values(ST.log_workout).forEach(w => { Object.entries(w.sets || {}).forEach(([k, v]) => push('workout', w.date, k, v, T.workout)); Object.entries(w.meta || {}).forEach(([k, v]) => push('workout_meta', w.date, k, v)); if (w.warmup) push('warmup', w.date, '', w.warmup, T.warmup); });
   Object.values(ST.log_cardio).forEach(c => (c.entries || []).forEach((e, i) => push('cardio', c.date, String(i), e, T.cardio)));
@@ -1303,7 +1334,7 @@ function nowMin() { const d = new Date(); return d.getHours() * 60 + d.getMinute
 $$('.tabs button').forEach(b => { b.onclick = () => go(b.dataset.tab); });
 function go(tab) { UI.tab = tab; render(); window.scrollTo(0, 0); }
 function render() {
-  clearTimers();
+  clearTimers(); _queueCache = {}; // Day キューのリプレイ結果は log_* が変わるたびに作り直す（1 レンダー内は使い回す）
   $$('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === UI.tab));
   if (ST.mode === 'loading' || !store.ready) { view.innerHTML = '<div class="loading">読み込み中…</div>'; return; }
   try {
@@ -1324,8 +1355,10 @@ function render() {
    7. 今日（「いま」カード ＋ 全文タイムライン ＋ 1日合計）
    ===================================================================== */
 function renderToday(t) {
-  const dayChangeNote = t.dayChange ? (t.dayChange.mode === 'swap' ? '今日だけ差し替え・本来は Day ' + t.dayChange.from + ' ' + ((ST.plan_days[String(t.dayChange.from)] || {}).name || '') : 'ここから順番を変更') : '';
-  let h = '<h1 class="tap" id="dayHead">Day ' + t.dayNo + ' ・ ' + esc(t.dayName) + (dayChangeNote ? '（' + esc(dayChangeNote) + '）' : (t.dayNotes ? '（' + esc(t.dayNotes) + '）' : '')) + (t.isRest ? ' ・ 休み' : '') + (t.dayOverride && !t.dayChange ? ' ・ 手動' : '') + ' ›</h1>';
+  const dayChangeNote = t.dayChange ? '差し替え・本来は Day ' + t.dayChange.from + ' ' + ((ST.plan_days[String(t.dayChange.from)] || {}).name || '') : '';
+  let h = '<h1 class="tap" id="dayHead">Day ' + t.dayNo + ' ・ ' + esc(t.dayName) + (dayChangeNote ? '（' + esc(dayChangeNote) + '）' : (t.dayNotes ? '（' + esc(t.dayNotes) + '）' : '')) + (t.isRest ? ' ・ 休み' : '') + ' ›</h1>';
+  if (t.carriedFrom) { const note = t.carriedFromDisplacedNote ? md(t.carriedFrom) + ' は Day ' + t.carriedFromDisplacedNote + ' に差し替えたため持ち越し' : md(t.carriedFrom) + ' にできなかったため持ち越し'; h += '<div class="mute small" style="margin:-6px 0 10px">' + esc(note) + '</div>'; }
+  if (t.pendingList.length >= 2) h += '<div class="pending-banner tap" id="pendingBanner">未実施が ' + t.pendingList.length + ' つ溜まっています（' + esc(t.pendingList.map(p => 'Day ' + p.dayNo).join('・')) + '）</div>';
   h += '<p class="date"><button class="nav" data-shift="-1" aria-label="前日">‹</button><span>' + md(UI.date) + ' <b>' + wd(UI.date) + '</b>' + (UI.date === todayYmd() ? '' : ' <span class="mute" style="font-size:16px">' + (UI.date < todayYmd() ? '過去' : '未来') + '</span>') + '</span><button class="nav" data-shift="1" aria-label="翌日">›</button></p>';
   if (ST.mode === 'mock') h += '<div class="mode">モックモード ・ 保存されていません</div>';
   h += '<div class="now' + (t.now.kind === 'done' ? ' done' : '') + '" id="now"></div>';
@@ -1344,6 +1377,7 @@ function renderToday(t) {
   view.innerHTML = h;
   $$('[data-shift]').forEach(b => { b.onclick = () => { UI.date = addDays(UI.date, Number(b.dataset.shift)); UI.wk = null; UI.rest = null; UI.reviewDate = null; render(); }; });
   $('#dayHead').onclick = () => openDayPicker(t.date);
+  const pbn = $('#pendingBanner'); if (pbn) pbn.onclick = () => openDayPicker(t.date);
   renderNow(t);
   $$('[data-chk]').forEach(b => { b.onclick = e => { e.stopPropagation(); stepAction(t, b.dataset.chk, true); }; });
   $$('[data-time]').forEach(el => { el.onclick = e => { e.stopPropagation(); openTimeSheet(t, el.dataset.time); }; });
@@ -1393,8 +1427,7 @@ function stepAction(t, id, chk) {
 }
 /** 筋トレできなかった: 理由 → Day をずらすか選ぶ → log_daily に保存 */
 function missWorkout(t) {
-  askReason('workout', '筋トレができなかった理由').then(r => { if (!r) return;
-    askChoice('Day はどうする？', '今日は Day' + t.dayNo + ' ' + t.dayName + ' でした', [{ label: 'Day をずらす（明日 Day' + t.dayNo + ' をやり直す）', value: true, cls: 'b-yel' }, { label: 'そのまま進む（明日は次の Day）', value: false }]).then(shift => { if (shift === null) return; act(A.workoutMissed(t.date, r.reason, r.reasonText, shift), '記録しました'); }); });
+  askReason('workout', '筋トレができなかった理由').then(r => { if (!r) return; act(A.workoutMissed(t.date, r.reason, r.reasonText), 'Day' + t.dayNo + ' は持ち越しになります。記録しました'); });
 }
 /** サプリ・ルーティンの長押し → 「今日はなし（理由）」 */
 function bindLongPress(el, fn) { let tm = null, fired = false; const start = e => { fired = false; tm = setTimeout(() => { fired = true; vibrate(30); fn(); }, 550); }; const stop = () => { clearTimeout(tm); }; el.addEventListener('pointerdown', start); ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => el.addEventListener(ev, stop)); el.addEventListener('click', e => { if (fired) { e.stopImmediatePropagation(); e.preventDefault(); fired = false; } }, true); el.addEventListener('contextmenu', e => e.preventDefault()); }
@@ -1480,46 +1513,40 @@ function openSuppSheet(t, st) {
   $('#suppClose', s).onclick = () => { closeSheet(); render(); };
 }
 /** その日にやる Day（部位）を変更する。今日画面の見出しと筋トレ画面の見出し、両方から同じシートを開く */
-function openDayPicker(date) { UI.dayPicker = { date, step: 'pick', selectedDayNo: null, mode: 'swap' }; renderDayPicker(); }
+function openDayPicker(date) { UI.dayPicker = { date, step: 'pick', selectedDayNo: null }; renderDayPicker(); }
 function renderDayPicker() {
   const st = UI.dayPicker; if (!st) return;
   if (st.step === 'confirm') return renderDayPickerConfirm();
-  const date = st.date, curDayNo = dayNoFor(date), isRest = isRestDay(date), days = sortedVals('plan_days', 'dayNo'), pivot = activeDayChangePivot(date);
-  const curName = (ST.plan_days[String(curDayNo)] || {}).name || '';
+  const date = st.date, curDayNo = dayNoFor(date), isRest = isRestDay(date), days = sortedVals('plan_days', 'dayNo');
+  const curName = (ST.plan_days[String(curDayNo)] || {}).name || '', pending = pendingDaysAsOf(date), pendingMap = {}; pending.forEach(p => { pendingMap[p.dayNo] = p.since; });
+  // 並び順: 今日の予定（未実施なら [未実施] を添える）→ その他の未実施（持ち越しが古い順）→ 残りは Day 番号順
+  const rows = days.map(x => { const isToday = x.dayNo === curDayNo, since = pendingMap[x.dayNo];
+    let tag; if (since) tag = '[未実施] ' + md(since) + ' から持ち越し' + (isToday ? '　← 今日の予定' : ''); else if (isToday) tag = '← 今日の予定'; else { const last = lastDayOccurrence(x.dayNo, date); tag = last ? '前回 ' + md(last) + '（' + diffDays(last, date) + '日前）' : 'まだ'; }
+    return { x, isToday, since, tag }; });
+  rows.sort((a, b) => { if (a.isToday !== b.isToday) return a.isToday ? -1 : 1; if (!!a.since !== !!b.since) return a.since ? -1 : 1; if (a.since && b.since && a.since !== b.since) return a.since < b.since ? -1 : 1; return a.x.dayNo - b.x.dayNo; });
   let h = '<h3>Day を変更</h3><div class="mute small" style="margin-bottom:10px">今日の予定：Day ' + curDayNo + ' ・ ' + esc(curName) + '</div><div class="list">' +
-    days.map(x => { const last = x.dayNo === curDayNo ? null : lastDayOccurrence(x.dayNo, date); const tag = x.dayNo === curDayNo ? '← 今日の予定' : (last ? '前回 ' + md(last) + '（' + diffDays(last, date) + '日前）' : 'まだ');
-      return '<div class="it"><button class="b-sub" style="width:100%;text-align:left" data-pickday="' + x.dayNo + '"' + (x.dayNo === curDayNo ? ' disabled' : '') + '><b>Day ' + x.dayNo + '</b> ' + esc(x.name) + (x.notes ? '（' + esc(x.notes) + '）' : '') + '<span class="mute small" style="display:block;margin-top:2px">' + esc(tag) + '</span></button></div>'; }).join('') + '</div>' +
-    '<div class="btns" style="margin-top:12px"><button class="b-sub" id="restToggle">' + (isRest ? '休みを解除' : '今日を休みにする') + '</button>' + (pivot ? '<button class="b-sub" id="dayReset">予定どおりに戻す</button>' : '') + '</div>';
+    rows.map(r => '<div class="it"><button class="b-sub' + (r.since ? ' pend' : '') + '" style="width:100%;text-align:left" data-pickday="' + r.x.dayNo + '"' + (r.isToday ? ' disabled' : '') + '><b>Day ' + r.x.dayNo + '</b> ' + esc(r.x.name) + (r.x.notes ? '（' + esc(r.x.notes) + '）' : '') + '<span class="mute small" style="display:block;margin-top:2px' + (r.since ? ';color:var(--yellow)' : '') + '">' + esc(r.tag) + '</span></button></div>').join('') + '</div>' +
+    '<div class="btns" style="margin-top:12px"><button class="b-sub" id="restToggle">' + (isRest ? '休みを解除' : '今日を休みにする') + '</button>' + (dayDoc(date).dayNo ? '<button class="b-sub" id="dayReset">予定どおりに戻す</button>' : '') + '</div>';
   const s = openSheet(h);
   $$('[data-pickday]', s).forEach(b => { b.onclick = () => { st.selectedDayNo = Number(b.dataset.pickday); st.step = 'confirm'; renderDayPicker(); }; });
   $('#restToggle', s).onclick = () => { UI.dayPicker = null; closeSheet(); act(A.setDaily(date, { isRestOverride: !isRest })); };
-  const rb = $('#dayReset', s); if (rb) rb.onclick = () => handleDayReset(date, pivot);
+  const rb = $('#dayReset', s); if (rb) rb.onclick = () => { UI.dayPicker = null; closeSheet(); act(A.resetDayPlan(date), '元に戻しました'); };
 }
 function renderDayPickerConfirm() {
   const st = UI.dayPicker, date = st.date, selDay = st.selectedDayNo, info = ST.plan_days[String(selDay)] || {};
   const last = lastDayOccurrence(selDay, date), warnConsecutive = last === addDays(date, -1);
-  const descs = { swap: '今日 Day' + selDay + ' ' + info.name + ' をやりますが、明日は予定どおりに戻ります。', shift: '今日 Day' + selDay + ' ' + info.name + ' をやったら、明日以降もこの順番で続きます。' };
-  let h = '<h3>Day ' + selDay + ' ・ ' + esc(info.name) + '</h3>';
+  let h = '<h3>Day ' + selDay + ' ・ ' + esc(info.name) + '</h3><div class="mute small" style="margin-bottom:10px">今日は Day' + selDay + ' をやります。もとの予定はキューに残るので、あとでやります。</div>';
   if (warnConsecutive) h += '<div class="mute small" style="color:var(--yellow);margin-bottom:8px">Day ' + selDay + ' ' + esc(info.name) + ' は昨日やっています。連続すると回復が足りない可能性があります</div>';
-  h += '<div class="chips" id="dcMode"><button data-mode="swap"' + (st.mode === 'swap' ? ' class="on"' : '') + '>今日だけ入れ替える</button><button data-mode="shift"' + (st.mode === 'shift' ? ' class="on"' : '') + '>ここから順番をずらす</button></div>' +
-    '<div class="mute small" style="margin-top:8px" id="dcModeDesc">' + esc(descs[st.mode]) + '</div>' +
-    '<div class="btns" style="margin-top:14px"><button class="b-sub" id="dcBack">戻る</button><button class="b-yel" id="dcSave">変更する</button></div>';
+  h += '<div class="btns" style="margin-top:14px"><button class="b-sub" id="dcBack">戻る</button><button class="b-yel" id="dcSave">変更する</button></div>';
   const s = openSheet(h);
-  $$('#dcMode button', s).forEach(b => { b.onclick = () => { st.mode = b.dataset.mode; $$('#dcMode button', s).forEach(x => x.classList.toggle('on', x === b)); $('#dcModeDesc', s).textContent = descs[st.mode]; }; });
   $('#dcBack', s).onclick = () => { st.step = 'pick'; renderDayPicker(); };
-  $('#dcSave', s).onclick = () => confirmDayChange(date, selDay, st.mode);
+  $('#dcSave', s).onclick = () => confirmDayChange(date, selDay);
 }
-async function confirmDayChange(date, newDayNo, mode) {
+async function confirmDayChange(date, newDayNo) {
   const wo = workoutDoc(date);
   const hasRecord = (wo.warmup && (wo.warmup.done || wo.warmup.startedAt)) || Object.keys(wo.sets || {}).length > 0 || ((ST.log_cardio[date] || {}).entries || []).length > 0;
   if (hasRecord) { const ok = await askConfirm('部位を変更しますか？', '今日の記録が残っています。部位を変えると記録が別の Day に紐づきます。続けますか？', '変更する'); if (!ok) return; }
-  UI.dayPicker = null; closeSheet(); act(A.changeDayPlan(date, newDayNo, mode), '部位を変更しました');
-}
-async function handleDayReset(date, pivot) {
-  const dc = dayDoc(pivot).dayChange;
-  if (pivot === date && dc && dc.mode === 'swap') { UI.dayPicker = null; closeSheet(); act(A.resetDayPlan(pivot), '元に戻しました'); return; }
-  const ok = await askConfirm('元に戻す', md(pivot) + ' からの変更を取り消して、元の順番に戻しますか？', '元に戻す'); if (!ok) return;
-  UI.dayPicker = null; closeSheet(); act(A.resetDayPlan(pivot), '元に戻しました');
+  UI.dayPicker = null; closeSheet(); act(A.changeDayPlan(date, newDayNo), '部位を変更しました');
 }
 function openCardioSheet(after) {
   const wKg = weightOnOrBefore(UI.date);
@@ -1992,7 +2019,7 @@ function renderSummary() {
     (d.days.length ? '<details style="margin-top:8px"><summary class="mute small" style="cursor:pointer">予定と実績の時刻（日別）</summary><div style="overflow-x:auto"><table class="hist"><tr><th>日</th><th>項目</th><th>予定</th><th>実績</th></tr>' + d.days.flatMap(x => x.times.map(tm => '<tr><td>' + md(x.date) + '</td><td>' + esc(tm.title) + '</td><td>' + esc(tm.planned) + '</td><td class="' + (tm.logged && !tm.late ? 'ok' : 'ng') + '" style="color:' + (tm.late ? 'var(--yellow)' : '') + '">' + esc(tm.logged || '—') + '</td></tr>')).join('') + '</table></div></details>' : '') + '</div>';
   h += '<div class="spark" id="weightSpark30"><div class="h"><span>体重（30日 ・ 点線は7日平均 ・ 欠測日は線をつながない）</span></div>' + spark(d.weights.slice(-30), d.weightsMa7.slice(-30)) + '</div>';
   h += '<div class="card" id="missedBlock"><div class="ttl small mute">できなかった項目とその理由</div>' + (d.missed.length ? '<div class="list">' + d.missed.map(m => '<div class="it"><span><span class="num mute">' + md(m.date) + '</span> ' + esc(m.item) + '</span><span class="m">' + esc(m.reason) + '</span></div>').join('') + '</div>' : '<div class="mute small" style="margin-top:6px">なし</div>') + '</div>';
-  if (d.dayChanges.length) h += '<div class="card" id="dayChangeBlock"><div class="ttl small mute">部位の変更</div><div class="list">' + d.dayChanges.map(c => '<div class="it"><span><span class="num mute">' + md(c.date) + '</span> Day' + c.from + ' → Day' + c.to + ' に変更</span><span class="m">' + (c.mode === 'shift' ? 'ここから' : '今日だけ') + '</span></div>').join('') + '</div></div>';
+  if (d.dayChanges.length) h += '<div class="card" id="dayChangeBlock"><div class="ttl small mute">部位の変更</div><div class="list">' + d.dayChanges.map(c => '<div class="it"><span><span class="num mute">' + md(c.date) + '</span> Day' + c.from + ' → Day' + c.to + ' に変更</span><span class="m">' + (c.fromDoneDate ? 'Day' + c.from + 'は' + md(c.fromDoneDate) + 'に実施' : '未実施') + '</span></div>').join('') + '</div></div>';
   h += '<div class="spark"><div class="h"><span>いちばん重かった重量（種目別・日ごと）</span></div>' + (d.topSets.length ? d.topSets.map(t => { const pts = t.points, last = pts[pts.length - 1], prev = pts.length > 1 ? pts[pts.length - 2] : null; return '<div class="r' + (prev && last.value > prev.value ? ' up' : '') + '"><span>' + esc(t.name) + '</span><span>' + (prev ? disp(prev.value) + ' → ' : '') + disp(last.value) + ' ' + unit() + ' × ' + last.reps + '</span></div>'; }).join('') : '<div class="r mute"><span>まだ記録なし</span><span>—</span></div>') + '</div>';
   h += '<div class="card"><div class="ttl" style="margin-bottom:8px">コーチに送る</div><div class="report" id="repText"></div><label class="opt"><input type="checkbox" id="optMsgr"> フォーム動画は Messenger で送った（sent via Messenger）</label><div class="btns" style="margin-top:10px"><button class="b-yel" id="copyRep">レポートをコピー</button><button class="b-sub" id="addMedia"' + (CAP.assets ? '' : ' hidden') + '>体の写真を追加</button></div>' +
     (d.media.length ? '<div class="gallery">' + d.media.map(m => { const src = m.url || ('/_blob/' + m.assetId); return '<a class="thumb" href="' + esc(src) + '" target="_blank" rel="noopener">' + (m.type === 'video' ? '<video src="' + esc(src) + '" muted playsinline preload="metadata"></video>' : '<img src="' + esc(src) + '" loading="lazy" alt="' + esc(m.category) + '">') + '<div class="cap">' + esc(m.date.slice(5)) + ' ' + esc(m.category) + (m.type === 'video' ? ' ▶' : '') + '</div></a>'; }).join('') + '</div>' : '') + '</div>';

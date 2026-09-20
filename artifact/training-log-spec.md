@@ -22,7 +22,8 @@ Claude Artifact 1 ファイル（`index.html`）。スマホの claude.ai だけ
 
 ### 週サイクル（7 日、開始日 2026-09-16）
 Day1 Push → Day2 Pull → Day3 休み（有酸素のみ） → Day4 Legs → Day5 Shoulder & Arms → Day6 Pull → Day7 休み。
-筋トレを「できなかった（Day をずらす）」にした日の翌日から Day が 1 つ繰り下がる。
+
+Day の判定は「未消化キュー」方式（カレンダー計算だけだと、差し替えた日に本来やるはずだった Day が消えてしまうため）。Day1〜7 を並べたキューの先頭がその日の Day で、完了（筋トレ完了 または 休みの日は有酸素の記録）すればキューの末尾へ、完了しなければ先頭に残したまま翌日へ持ち越す。差し替えは先頭を消費せず、選んだ Day だけをキューから取り出す（元々先頭にあった Day はそのままキューに残る＝あとで持ち越して出てくる）。休みの日が2つ連続でキューの先頭に並んだら自動で末尾へ回す。過去の日付の記録は書き換えない。
 
 ### トレーニング日の流れ（筋トレタブ）
 ウォームアップ 6 種（各 10 回 × 2 セット）→ 事前疲労 → 種目 1〜7（1 画面 1 セット）→ 腹筋 または カーフ → 「筋トレ完了」→ 完了画面（所要時間・やった内容・有酸素の記録・コーチ報告テキストのコピー）→ 今日の画面へ。
@@ -160,7 +161,7 @@ Day1 Push → Day2 Pull → Day3 休み（有酸素のみ） → Day4 Legs → D
 
 「できなかった」は体重・食事・サプリ・ルーティン・筋トレ（Day をずらす選択）・有酸素すべてに理由付きで記録し、週まとめとレポートに自動集計。
 
-**その日の Day（部位）を変更**: 今日画面上部の「Day N ・ 部位 ›」と筋トレ画面上部の Day 表示は同じ変更シートを開く。各 Day の前回実施日（○日前 or まだ）を添えた一覧から選び、「今日だけ入れ替える」（翌日以降は元の予定どおり）／「ここから順番をずらす」（この選択を起点に以降の Day を数え直す。以前の予定は履歴として残る）の2択で確定。選んだ Day の前回が前日なら確定前に連続実施の注意（止めはしない）。その日の記録が既にあれば「部位を変えると記録が別の Day に紐づく」警告。過去日の記録は書き換えない。今日画面上部に「Day 1 Push（今日だけ差し替え・本来は Day 4 Legs）」/「Day 1 Push（ここから順番を変更）」と小さく表示、週まとめに変更履歴の行、コーチ向けレポートにも自動で `Note: swapped Day 4 (Legs) → Day 1 (Push) on ...` を追記。シート下部の「予定どおりに戻す」でいつでも取り消せる（「ここから」は確認あり）。
+**その日の Day（部位）を変更**: 今日画面上部の「Day N ・ 部位 ›」と筋トレ画面上部の Day 表示は同じ変更シートを開く。一覧は 今日の予定（未実施なら「[未実施] M/D から持ち越し」を添える）→ その他の未実施（持ち越しが古い順）→ 残りは Day 番号順、で並び、各行に前回実施日（○日前 or まだ）または持ち越し開始日を表示。選んだ Day の前回が前日なら確定前に連続実施の注意（止めはしない）。その日の記録が既にあれば「部位を変えると記録が別の Day に紐づく」警告。過去日の記録は書き換えない。差し替えで後回しになった Day はキューに残り、翌日以降に自然と繰り越して出てくる（「未消化キュー」方式なので、他の日を消化するまで消えない）。今日画面上部に「Day 1 Push（差し替え・本来は Day 4 Legs）」と小さく表示、今日の Day 自体が持ち越しなら見出しの下に「M/D は Day N に差し替えたため持ち越し」または「M/D にできなかったため持ち越し」を表示。未実施が2つ以上溜まっていたら今日画面に注意バナー。週まとめに変更履歴（差し替え先が実施済みなら日付つき）と未実施の一覧、コーチ向けレポートにも自動で `Note: swapped Day 4 (Legs) -> Day 1 (Push) on ..., Day 4 done on ...` と `Pending: Day N (name) not done since ...` を追記。シート下部の「予定どおりに戻す」（差し替え済みのときだけ表示）でいつでも取り消せる（確認なし）。
 
 ## 6. データ（db、1 日 1 ドキュメント）
 
@@ -173,7 +174,7 @@ Day1 Push → Day2 Pull → Day3 休み（有酸素のみ） → Day4 Legs → D
 | `log_meals/{date}` | meals{mealNo または snack_N（間食・プラン外）: {status: plan / substitute / skip / photo, items[{foodId, grams, kcal, p, f, c, origin, eaten, deleted, planGrams, estimated}], loggedAt, photoId, reason, variant, photo{assetId, confidence, note}}} |
 | `log_supplements/{date}` `log_routine/{date}` | items{id: {done, loggedAt}}（今日はなし: na, reason）。水は value(ml) |
 | `log_cardio/{date}` | entries[{type: jog / incline / padel / other, minutes, hr, note, loggedAt, intensity（padel のみ: light/normal/hard）, kcal（padel のみ: 保存時点の体重で計算した消費kcal）}] |
-| `log_daily/{date}` | dayNo（手動上書き）, dayChange{mode: "swap"/"shift", from, loggedAt}, dayName, notes, waterMl, waterLoggedAt, skippedItems[{item, reason}], workoutMissed{reason, shift}, cardioMissed, warmupSkipped |
+| `log_daily/{date}` | dayNo（手動上書き。「未消化キュー」の差し替えはこれだけで表現し、他の日付は触らない）, dayChange{from, loggedAt}, dayName, notes, waterMl, waterLoggedAt, skippedItems[{item, reason}], workoutMissed{reason}, cardioMissed, warmupSkipped |
 | `log_media/{id}` | date, type, category(body/form/meal), assetId, mealNo, exerciseId |
 
 ## 7. 運用

@@ -97,6 +97,18 @@ async function run(mode) {
   const dlgOk = async (fillText) => { await page.waitForSelector('#dlg:not([hidden])'); if (fillText != null) { await page.fill('#dlgIn', fillText); } await page.click('#dlgOk'); await page.waitForSelector('#dlg', { state: 'hidden' }); await page.waitForTimeout(120); };
   const mark = async (id) => page.$eval('[data-step="' + id + '"]', e => e.dataset.mark + '|' + e.querySelector('.chk').className + '|' + e.querySelector('.chk').textContent);
   const pickReason = async (label) => { await page.waitForSelector('[data-reason]'); await page.click('[data-reason="' + label + '"]'); await page.waitForFunction(() => document.querySelector('#dlg').hidden || !document.querySelector('[data-reason]')); await page.waitForTimeout(80); };
+  /** 未消化キュー方式では日付を進めるだけで特定の Day に届くとは限らない（前の日を完了させていないと Day が進まない）。
+   * 内容確認だけが目的のテストでは、Day ピッカーで明示的に Day N を指定して直接そこへ飛ぶ */
+  const forceDay = async (headSel, dayNo) => {
+    const cur = (await page.locator(headSel).textContent()).trim();
+    if (cur.startsWith('Day ' + dayNo + ' ') || cur.startsWith('Day ' + dayNo + '・') || cur === 'Day ' + dayNo) return;
+    await page.click(headSel); await page.waitForSelector('[data-pickday="' + dayNo + '"]');
+    await page.click('[data-pickday="' + dayNo + '"]'); await page.waitForSelector('#dcSave'); await page.click('#dcSave');
+    await page.waitForTimeout(80);
+    if (await has('#dlg:not([hidden])')) { await page.click('#dlgOk'); await page.waitForSelector('#dlg', { state: 'hidden' }); }
+    await page.waitForFunction(() => document.querySelector('#sheet').hidden);
+    await page.waitForFunction((n) => { const h = document.querySelector('h1'); return h && h.textContent.startsWith('Day ' + n); }, dayNo);
+  };
   const G = { today: '今日画面', missed: '欠測・できなかった', workout: '筋トレ画面', meal: '食事シート', week: '週画面', common: '共通' };
 
   // ============ 共通（先に） ============
@@ -106,7 +118,14 @@ async function run(mode) {
 
   // ============ 今日画面 ============
   await T(G.today, '日付 ‹ › で前日・翌日へ移動し、今日に戻れる', async () => { await page.click('[data-shift="1"]'); assert((await text('.date')).includes('9/17'), 'next'); await page.click('[data-shift="-1"]'); await page.click('[data-shift="-1"]'); assert((await text('.date')).includes('9/15'), 'prev'); await page.click('[data-shift="1"]'); assert((await text('.date')).includes('9/16') && !(await text('.date')).includes('過去'), 'back to today'); });
-  await T(G.today, 'Day 判定: 9/16=Day1 … 9/22=Day7 → 9/23=Day1', async () => { const want = ['Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5', 'Day 6', 'Day 7', 'Day 1']; for (let i = 0; i < 8; i++) { assert((await text('h1')).startsWith(want[i]), '9/' + (16 + i) + ' → ' + (await text('h1'))); if (i < 7) await page.click('[data-shift="1"]'); } for (let i = 0; i < 7; i++) await page.click('[data-shift="-1"]'); assert((await text('h1')).startsWith('Day 1'), 'back'); });
+  await T(G.today, 'Day 判定: 9/16=Day1 は未完了のため 9/17 も Day1 を繰り越して表示（やっていない Day を飛ばさない）→ 9/18 以降は通常どおり Day2・3…と進む', async () => {
+    const want = ['Day 1', 'Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5', 'Day 6', 'Day 7'];
+    let shifted = 0;
+    try {
+      for (let i = 0; i < want.length; i++) { assert((await text('h1')).startsWith(want[i]), (16 + i) + '日目 → ' + (await text('h1'))); if (i < want.length - 1) { await page.click('[data-shift="1"]'); shifted++; } }
+    } finally { for (let i = 0; i < shifted; i++) await page.click('[data-shift="-1"]'); }
+    assert((await text('.date')).includes('9/16') && !(await text('.date')).includes('過去'), 'back to today');
+  });
   await T(G.today, '全行で「…」省略なし。サプリ名・食材が全部表示', async () => { const rows = await page.$$eval('.step', els => els.map(e => e.textContent)); assert(!rows.some(r => r.includes('…')), 'ellipsis'); assert(rows.some(r => r.includes('経口サプリ') && r.includes('B12＋D3') && r.includes('ベルベリン') && r.includes('フィッシュオイル') && r.includes('亜鉛') && !r.includes('クレアチン')), 'oral supp names, no creatine'); assert(rows.some(r => r.includes('トレ前') && r.includes('クレアチン') && r.includes('タイミング確認中')), 'creatine on its own pre-workout row'); assert(rows.some(r => r.includes('マグネシウム グリシネート 400mg 就寝前') && r.includes('アシュワガンダ 300mg 就寝前')), 'night supps with dose'); assert(rows.some(r => r.includes('腹筋（最終種目のあと') && r.includes('コーチ確認中')), 'abs row after workout'); assert(rows.some(r => r.includes('ウォームアップ') && r.includes('各10回×2セット')), 'warm-up 2 sets'); assert(rows.some(r => r.includes('全卵4個・卵白150g・塩1g')), 'meal1 items'); assert(rows.some(r => r.includes('ケーブルフライ（座位・ミッド角度）または ペックデッキ（事前疲労）・インクラインダンベルプレス・マシン インクラインプレス') && r.includes('ほか5種目') && !r.includes('アンダーハンド')), 'exercises: first 3 + ほか5種目'); });
   await T(G.today, '朝の順番: 体重 → リンゴ酢 → 1食目 → 経口サプリ → サイリウム。サプリ 07:05・サイリウム 07:20（15分後）、説明に「ゆっくり」「水500ml以上」「水1L以上」', async () => { const ids = await page.$$eval('.step', els => els.map(e => e.dataset.step)); const want = ['weight', 'routine:1', 'meal:1', 'supp:after_meal', 'routine:2']; assert(JSON.stringify(ids.slice(0, 5)) === JSON.stringify(want), 'order: ' + ids.slice(0, 6).join(',')); const tm = async id => text('[data-step="' + id + '"] .tm'); assert((await tm('weight')).includes('06:40') && (await tm('routine:1')).includes('06:45') && (await tm('meal:1')).includes('07:00') && (await tm('supp:after_meal')).includes('07:05') && (await tm('routine:2')).includes('07:20'), 'times: ' + [await tm('weight'), await tm('routine:1'), await tm('meal:1'), await tm('supp:after_meal'), await tm('routine:2')].join(' | ')); const r1 = await text('[data-step="routine:1"]'), r2 = await text('[data-step="routine:2"]'); assert(r1.includes('大さじ1') && r1.includes('水500ml以上') && r1.includes('ゆっくり飲む') && r1.includes('食事の15分前'), 'acv row: ' + r1); assert(r2.includes('サイリウムハスク 大さじ1') && r2.includes('水1L以上') && r2.includes('ゆっくり') && r2.includes('15分後'), 'psyllium row: ' + r2); assert((await text('[data-step="supp:night"]')).includes('就寝前サプリ') && (await tm('supp:night')).includes('22:30'), 'night 22:30'); const u = await page.evaluate(() => [window.__tl.warmupMinutesText(289), window.__tl.warmupMinutesText(12), window.__tl.warmupMinutesText(0)]); assert(u[0] === '完了' && u[1] === '完了 12分' && u[2] === '完了', 'warm-up minutes guard: ' + u.join(',')); });
   await T(G.today, '体重 kg⇄lb 切替で換算が正しく、保存は kg', async () => { await goTab('summary'); await page.click('#unitBtn'); await page.waitForTimeout(100); await goTab('today'); assert((await text('#now .w-in .u')) === 'lb', 'unit lb'); await page.fill('#nowW', '160'); await page.click('#nowBtn'); await page.waitForFunction(() => document.querySelector('[data-step="weight"]').className.includes('done')); const row = await text('[data-step="weight"]'); assert(row.includes('160.1lb') || row.includes('160lb'), 'lb display: ' + row); if (mode === 'db') { await page.waitForTimeout(200); assert(rt.DB.log_weight['2026-09-16'].weightKg === 72.6, 'stored kg=' + rt.DB.log_weight['2026-09-16'].weightKg); } await goTab('summary'); await page.click('#unitBtn'); await page.waitForTimeout(100); await goTab('today'); assert((await text('[data-step="weight"]')).includes('72.6kg'), 'kg display'); return '160lb → 72.6kg 保存'; });
@@ -255,11 +274,14 @@ async function run(mode) {
     await page.click('[data-shift="-1"]'); await page.click('[data-shift="-1"]');
   });
   await T(G.week, '週まとめの遵守率: ウォームアップの分母は筋トレの日（Day1・2・4・5・6）だけ。休みの日（Day3・7）は対象外', async () => { if (mode === 'mock') return 'db のみ（weekAdherence は window.__tl 経由）';
-    const days = { day1: '2026-12-02', day2: '2026-12-03', day4: '2026-12-05', day5: '2026-12-06', day6: '2026-12-07', day7end: '2026-12-08' };
+    const days = { day1: '2026-12-02', day2: '2026-12-03', day3: '2026-12-04', day4: '2026-12-05', day5: '2026-12-06', day6: '2026-12-07', day7end: '2026-12-08' };
     const range = { start: days.day1, end: days.day7end };
     const targets = [days.day1, days.day2, days.day4, days.day5, days.day6];
     const saved = {}; targets.forEach(d => { if (rt.DB.log_workout[d]) saved[d] = rt.DB.log_workout[d]; });
+    const savedDaily = {}; Object.values(days).forEach(d => { if (rt.DB.log_daily[d]) savedDaily[d] = rt.DB.log_daily[d]; });
     try {
+      // 未消化キュー方式では日付を進めるだけで特定の Day に届くとは限らないため、各日を明示的に Day1〜7 に指定する
+      Object.entries({ [days.day1]: 1, [days.day2]: 2, [days.day3]: 3, [days.day4]: 4, [days.day5]: 5, [days.day6]: 6, [days.day7end]: 7 }).forEach(([d, n]) => rt.op('set', { coll: 'log_daily', id: d, data: Object.assign({ date: d }, rt.DB.log_daily[d], { dayNo: n }) }));
       [days.day1, days.day2, days.day4].forEach(d => rt.op('set', { coll: 'log_workout', id: d, data: { date: d, sets: {}, warmup: { done: '08:00', completed: true } } }));
       const p = await newPage(); await p.clock.setFixedTime(new Date(days.day7end + 'T20:00:00+08:00')); await p.reload(); await p.waitForFunction(() => !document.querySelector('#view .loading'));
       const a = await p.evaluate((r) => window.__tl.weekAdherence(r), range);
@@ -270,86 +292,119 @@ async function run(mode) {
       assert(/ウォームアップ 3\/5/.test(statTxt), '週まとめに「ウォームアップ 3/5」と出る: ' + statTxt);
       await p.close();
       return 'ウォームアップの分母が筋トレの日5日のみになり「3/5」と表示されることを確認';
-    } finally { targets.forEach(d => { if (saved[d]) rt.op('set', { coll: 'log_workout', id: d, data: saved[d] }); else rt.op('del', { coll: 'log_workout', id: d }); }); }
+    } finally {
+      targets.forEach(d => { if (saved[d]) rt.op('set', { coll: 'log_workout', id: d, data: saved[d] }); else rt.op('del', { coll: 'log_workout', id: d }); });
+      Object.values(days).forEach(d => { if (savedDaily[d]) rt.op('set', { coll: 'log_daily', id: d, data: savedDaily[d] }); else rt.op('del', { coll: 'log_daily', id: d }); });
+    }
   });
-  await T(G.workout, 'その日の Day（部位）を変更できる: 今日だけ差し替え／ここから順番をずらす／記録済み警告／連続日の注意／休みの日への変更／週まとめとレポートへの反映／元に戻す', async () => {
-    const D = { 1: '2027-02-10', 2: '2027-02-11', 3: '2027-02-12', 4: '2027-02-13', 5: '2027-02-14', 6: '2027-02-15', 7: '2027-02-16' };
-    const p2 = await newPage(); p2.setDefaultTimeout(25000);
-    // tl.tab は localStorage 保存（同一コンテキストの全ページで共有）。直前のテストが today タブ以外で終わっていると
-    // reload 直後の最初の描画がそのタブ（例: 筋トレ）になり、ウォームアップ画面の自動 startedAt 記録が
-    // 今日タブへ切り替える前に走ってしまう（後の「記録済み警告」判定を誤って true にする）。
-    // reload は window.beforeunload で「今のページの UI.tab」を localStorage に書き戻すため、
-    // localStorage を直接書き換えても reload 時に上書きされてしまう。reload 前に実際に today タブをクリックしておく
-    await p2.click('.tabs [data-tab="today"]');
-    await p2.clock.setFixedTime(new Date(D[4] + 'T06:50:00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading'));
-    await p2.click('.tabs [data-tab="today"]'); await p2.waitForSelector('#dayHead');
-    const dlgOk2 = async () => { await p2.waitForSelector('#dlg:not([hidden])'); await p2.click('#dlgOk'); await p2.waitForSelector('#dlg', { state: 'hidden' }); await p2.waitForTimeout(120); };
-    const dlgNo2 = async () => { await p2.waitForSelector('#dlg:not([hidden])'); await p2.click('#dlgNo'); await p2.waitForSelector('#dlg', { state: 'hidden' }); await p2.waitForTimeout(120); };
-    const closeSheetP2 = async () => { if (await p2.$('#sheet:not([hidden])')) { await p2.click('#sheet', { position: { x: 5, y: 5 } }); await p2.waitForSelector('#sheet', { state: 'hidden' }); } };
+  await T(G.workout, 'Day（部位）は「未消化キュー」方式: 差し替えは翌日に持ち越して再開／できなかったも同じ Day が翌日に繰り越す／未実施バッジ・バナー／連続日の注意／週まとめ・レポート／予定どおりに戻す／差し替え後のキュー順が本番相当（[4,6,7,1,2,3,5]）', async () => {
+    if (mode === 'mock') return 'mock モードは永続化が無く複数日にまたがるキューの検証ができないため db モードのみで実施';
+    const addD = (d, n) => { const dt = new Date(d + 'T12:00:00Z'); dt.setUTCDate(dt.getUTCDate() + n); return dt.toISOString().slice(0, 10); };
+    const mdStr = (ymd) => { const p = ymd.split('-'); return Number(p[1]) + '/' + Number(p[2]); };
+    const REST_NO = new Set([3, 7]);
+    const origStartDate = ((rt.DB.settings || {}).main || {}).startDate || '2026-09-16';
+    const setStart = (nsd) => rt.op('set', { coll: 'settings', id: 'main', data: Object.assign({}, (rt.DB.settings || {}).main || {}, { startDate: nsd }) });
+    const seedDone = (d, dayNo) => { if (REST_NO.has(dayNo)) rt.op('set', { coll: 'log_cardio', id: d, data: { date: d, entries: [{ type: 'jog', minutes: 30, at: '07:00', loggedAt: d + 'T07:00:00+08:00' }] } }); else rt.op('set', { coll: 'log_workout', id: d, data: { date: d, finished: '19:00', finishedAt: d + 'T19:00:00+08:00', sets: {}, meta: {}, warmup: { done: '07:00' } } }); };
+    const clearRange = (from, to) => { for (let d = from; d <= to; d = addD(d, 1)) { rt.op('del', { coll: 'log_daily', id: d }); rt.op('del', { coll: 'log_workout', id: d }); rt.op('del', { coll: 'log_cardio', id: d }); } };
+    // 開始日（settings.startDate）を一時的にテスト専用の過去日へ差し替える。「未消化キュー」はイベントソーシングで
+    // startDate から今日まで毎日読み直すため、本番の startDate（2026-09-16）のまま未来日へ飛ぶと、他のテストが
+    // 埋めた日々ぶんの実績データが無い区間が「未実施のまま」扱いになり、キューが正しく進まない。過去日に退避すれば
+    // 少ない日数の仕込みだけで検証でき、他のテストの日付（2026-09〜2027-03 台）とも衝突しない
+    const A0 = '2020-01-06', AD = {}; for (let i = 1; i <= 9; i++) AD[i] = addD(A0, i - 1);
+    const B0 = '2021-03-01', BD = {}; for (let i = 1; i <= 8; i++) BD[i] = addD(B0, i - 1);
     try {
-      // 1. 前回やった日の表示（Day1=3日前、Day5=まだ）
-      assert((await p2.locator('#dayHead').textContent()).startsWith('Day 4'), '今日はDay4: ' + (await p2.locator('#dayHead').textContent()));
-      await p2.click('#dayHead'); await p2.waitForSelector('[data-pickday="1"]');
-      const day1Txt = await p2.$eval('[data-pickday="1"]', e => e.textContent);
-      assert(day1Txt.includes('前回') && day1Txt.includes('2/10') && day1Txt.includes('3日前'), 'Day1の前回表示（3日前）: ' + day1Txt);
-      const day5Txt = await p2.$eval('[data-pickday="5"]', e => e.textContent);
-      assert(day5Txt.includes('前回') && day5Txt.includes('2/7') && day5Txt.includes('6日前'), '7日周期なので前の週のDay5（6日前）が前回になる: ' + day5Txt);
-      // 2. 休みの日（Day3）に「今日だけ」変更 → 筋トレ画面が有酸素だけになる。元に戻すで復帰
-      await p2.click('[data-pickday="3"]'); await p2.waitForSelector('#dcSave'); await p2.click('#dcSave'); await p2.waitForSelector('#sheet', { state: 'hidden' });
-      await p2.click('.tabs [data-tab="workout"]'); await p2.waitForSelector('#rcType');
-      assert(!(await p2.$('#wuStart')), '休みの日（Day3）に変更→有酸素だけの画面（ウォームアップ無し）');
-      await p2.click('#wkDayHead'); await p2.waitForSelector('#dayReset'); await p2.click('#dayReset'); await p2.waitForSelector('#sheet', { state: 'hidden' });
-      await p2.waitForSelector('#wuStart');
-      assert((await p2.locator('#wkDayHead').textContent()).startsWith('Day 4'), '予定どおりに戻すとDay4に戻る');
-      // 3. 記録済み（ウォームアップ画面を開くと自動で開始扱いになる）なら警告。「やめる」で変更されない、「変更する」で確定
-      await p2.click('#wkDayHead'); await p2.waitForSelector('[data-pickday="1"]');
-      await p2.click('[data-pickday="1"]'); await p2.waitForSelector('#dcSave'); await p2.click('#dcSave');
-      await dlgNo2(); await closeSheetP2();
-      assert((await p2.locator('#wkDayHead').textContent()).startsWith('Day 4'), '警告で「やめる」→変更されない');
-      await p2.click('#wkDayHead'); await p2.waitForSelector('[data-pickday="1"]');
-      await p2.click('[data-pickday="1"]'); await p2.waitForSelector('#dcSave'); await p2.click('#dcSave');
+      // ---- 回帰チェック: 本番同等の「Day4→Day5 差し替え」後のキュー順が仕様どおり [4,6,7,1,2,3,5] になることを確認 ----
+      setStart(A0);
+      seedDone(AD[1], 1); seedDone(AD[2], 2); seedDone(AD[3], 3);
+      rt.op('set', { coll: 'log_daily', id: AD[4], data: { date: AD[4], dayNo: 5, dayChange: { from: 4, loggedAt: AD[4] + 'T09:00:00+08:00' } } });
+      seedDone(AD[4], 5);
+      const p3 = await newPage(); p3.setDefaultTimeout(25000);
+      await p3.clock.setFixedTime(new Date(AD[9] + 'T06:50:00+08:00')); await p3.waitForTimeout(350);
+      const dn = (d) => p3.evaluate(ds => window.__tl.dayNoFor(ds), d);
+      assert(await dn(AD[5]) === 4, '差し替え翌日は繰り越しでDay4: ' + await dn(AD[5]));
+      seedDone(AD[5], 4); await p3.waitForTimeout(300);
+      assert(await dn(AD[6]) === 6, 'キュー順どおりDay6: ' + await dn(AD[6]));
+      seedDone(AD[6], 6); await p3.waitForTimeout(300);
+      assert(await dn(AD[7]) === 7, 'キュー順どおりDay7（休み）: ' + await dn(AD[7]));
+      seedDone(AD[7], 7); await p3.waitForTimeout(300);
+      assert(await dn(AD[8]) === 1, 'キュー順どおりDay1: ' + await dn(AD[8]));
+      seedDone(AD[8], 1); await p3.waitForTimeout(300);
+      assert(await dn(AD[9]) === 2, 'キュー順どおりDay2（差し替え後のキューが [4,6,7,1,2,3,5] であることを確認）: ' + await dn(AD[9]));
+      await p3.close();
+      clearRange(A0, AD[9]);
+
+      // ---- 実際の UI 操作: 差し替え・持ち越し表示・できなかった・未実施バッジ/バナー・連続日の注意・週まとめ/レポート・元に戻す ----
+      setStart(B0);
+      seedDone(BD[1], 1); seedDone(BD[2], 2); seedDone(BD[3], 3);
+      const p2 = await newPage(); p2.setDefaultTimeout(25000);
+      const dlgOk2 = async () => { await p2.waitForSelector('#dlg:not([hidden])'); await p2.click('#dlgOk'); await p2.waitForSelector('#dlg', { state: 'hidden' }); await p2.waitForTimeout(120); };
+      const closeSheetP2 = async () => { if (await p2.$('#sheet:not([hidden])')) { await p2.click('#sheet', { position: { x: 5, y: 5 } }); await p2.waitForSelector('#sheet', { state: 'hidden' }); } };
+      const pickReasonP2 = async (label) => { await p2.waitForSelector('[data-reason]'); await p2.click('[data-reason="' + label + '"]'); await p2.waitForFunction(() => document.querySelector('#dlg').hidden || !document.querySelector('[data-reason]')); await p2.waitForTimeout(80); };
+      const gotoP2 = async (d) => { await p2.click('.tabs [data-tab="today"]'); await p2.clock.setFixedTime(new Date(d + 'T06:50:00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading')); await p2.click('.tabs [data-tab="today"]'); await p2.waitForSelector('#dayHead'); };
+      await gotoP2(BD[4]);
+      // B1. 差し替え前は Day4
+      assert((await p2.locator('#dayHead').textContent()).startsWith('Day 4'), '差し替え前はDay4: ' + (await p2.locator('#dayHead').textContent()));
+      // B2. 記録が残っている状態で差し替える（ウォームアップ画面を開くと自動で記録扱いになる）。Day5 に差し替え、完了させる
+      await p2.click('.tabs [data-tab="workout"]'); await p2.waitForSelector('#wuStart');
+      await p2.click('#wkDayHead'); await p2.waitForSelector('[data-pickday="5"]');
+      await p2.click('[data-pickday="5"]'); await p2.waitForSelector('#dcSave'); await p2.click('#dcSave');
       await dlgOk2();
-      await p2.waitForFunction(() => document.querySelector('#wkDayHead').textContent.startsWith('Day 1'));
-      assert((await p2.locator('#wkDayHead').textContent()).includes('Push'), '変更後、筋トレ画面に選んだDayの種目が出る（Push）: ' + (await p2.locator('#wkDayHead').textContent()));
-      // 4. 「今日だけ」なので明日（2/14）は元の予定（Day5）のまま
-      let dno = await p2.evaluate(ds => window.__tl.dayNoFor(ds), D[5]);
-      assert(dno === 5, '今日だけ変更なので明日はDay5のまま: ' + dno);
-      await p2.click('#wkDayHead'); await p2.waitForSelector('#dayReset'); await p2.click('#dayReset'); await p2.waitForSelector('#sheet', { state: 'hidden' });
-      await p2.waitForFunction(() => document.querySelector('#wkDayHead').textContent.startsWith('Day 4'));
-      // 5. 「ここから順番をずらす」。以降の日はこの選択から数え直す。基準日より前の日付は変わらない
-      await p2.click('#wkDayHead'); await p2.waitForSelector('[data-pickday="1"]');
-      await p2.click('[data-pickday="1"]'); await p2.waitForSelector('#dcMode');
-      await p2.click('#dcMode button[data-mode="shift"]'); await p2.click('#dcSave');
-      await dlgOk2(); // 直前の警告確認で既にウォームアップ開始済みのため、この変更でも記録警告が出る
-      await p2.waitForFunction(() => document.querySelector('#wkDayHead').textContent.startsWith('Day 1'));
-      const after = await p2.evaluate((ds) => ({ d5: window.__tl.dayNoFor(ds.d5), d6: window.__tl.dayNoFor(ds.d6), d3: window.__tl.dayNoFor(ds.d3) }), { d5: D[5], d6: D[6], d3: D[3] });
-      assert(after.d5 === 2, 'ここからずらす→明日はDay2: ' + after.d5);
-      assert(after.d6 === 3, 'ここからずらす→明後日はDay3: ' + after.d6);
-      assert(after.d3 === 3, '基準日より前の日付は変わらない: ' + after.d3);
-      // 6. 前日と同じ部位を選ぶと注意が出る（変更はしない）
-      await p2.click('.tabs [data-tab="today"]'); await p2.click('[data-shift="-1"]'); await p2.click('[data-shift="-1"]');
-      assert((await p2.locator('.date').textContent()).includes('2/11'), '2/11に移動');
-      await p2.click('#dayHead'); await p2.waitForSelector('[data-pickday="1"]');
-      await p2.click('[data-pickday="1"]'); await p2.waitForSelector('#dcMode');
+      await p2.waitForFunction(() => document.querySelector('#wkDayHead').textContent.startsWith('Day 5'));
+      seedDone(BD[4], 5); await p2.waitForTimeout(300);
+      // B3. 翌日は繰り越しで Day4 が出て、差し替えた旨のメモが出る
+      await gotoP2(BD[5]);
+      assert((await p2.locator('#dayHead').textContent()).startsWith('Day 4'), '差し替え翌日は繰り越しでDay4: ' + (await p2.locator('#dayHead').textContent()));
+      let viewTxt = await p2.locator('#view').textContent();
+      assert(viewTxt.includes(mdStr(BD[4])) && viewTxt.includes('Day 5') && viewTxt.includes('持ち越し'), '差し替えで持ち越しになった旨のメモが出る: ' + viewTxt.slice(0, 400));
+      // B4. Day ピッカーで Day4 が先頭に並び [未実施] バッジが付く
+      await p2.click('#dayHead'); await p2.waitForSelector('[data-pickday]');
+      let rows = await p2.$$eval('[data-pickday]', els => els.map(e => e.closest('.it').textContent));
+      assert(rows[0].includes('Day 4') && rows[0].includes('[未実施]') && rows[0].includes(mdStr(BD[4])) && rows[0].includes('今日の予定'), '先頭行はDay4の持ち越し: ' + rows[0]);
+      // B5. 連続日の注意: 前日にやった Day5 を選ぶと警告が出る（保存はしない）
+      await p2.click('[data-pickday="5"]'); await p2.waitForSelector('#dcSave');
       const warnTxt = await p2.locator('#sheet .sheet-body').textContent();
       assert(warnTxt.includes('連続') && warnTxt.includes('昨日'), '前日と同じ部位を選ぶと注意が出る: ' + warnTxt);
+      await p2.click('#dcBack'); await closeSheetP2();
+      // B6. Day4 を完了せず「できなかった」で記録 → 翌日も Day4 が繰り越して出る
+      await p2.click('[data-chk="workout"]'); await p2.waitForSelector('[data-choice]');
+      await p2.click('[data-choice="1"]');
+      await pickReasonP2('仕事');
+      await p2.waitForFunction(() => document.querySelector('[data-step="workout"]').dataset.mark === 'na');
+      const missedTxt = await p2.locator('[data-step="workout"]').textContent();
+      assert(missedTxt.includes('できなかった') && missedTxt.includes('持ち越し'), 'できなかったの表示: ' + missedTxt);
+      await gotoP2(BD[6]);
+      assert((await p2.locator('#dayHead').textContent()).startsWith('Day 4'), 'できなかった翌日もDay4が繰り越し: ' + (await p2.locator('#dayHead').textContent()));
+      let viewTxt2 = await p2.locator('#view').textContent();
+      // 持ち越し開始日は最初にずれた 3/4（Day5 への差し替え）のまま。3/5 の「できなかった」で日付が上書きされるわけではない
+      assert(viewTxt2.includes(mdStr(BD[4])) && viewTxt2.includes('Day 5 に差し替えたため持ち越し'), '持ち越しメモは元の差し替え日（3/4）のまま: ' + viewTxt2.slice(0, 400));
+      // B7. さらに Day6 に差し替えて未完了のままにすると、未実施が2件になりバナーが出る
+      await p2.click('#dayHead'); await p2.waitForSelector('[data-pickday="6"]');
+      await p2.click('[data-pickday="6"]'); await p2.waitForSelector('#dcSave'); await p2.click('#dcSave');
+      await p2.waitForFunction(() => document.querySelector('#dayHead').textContent.startsWith('Day 6'));
+      await gotoP2(BD[7]);
+      await p2.waitForSelector('#pendingBanner');
+      const bannerTxt = await p2.locator('#pendingBanner').textContent();
+      assert(bannerTxt.includes('未実施が 2 つ') && bannerTxt.includes('Day 4') && bannerTxt.includes('Day 6'), '未実施バナー: ' + bannerTxt);
+      // B8. バナーからピッカーを開くと、今日の予定（Day6）が先頭、次に古い持ち越し（Day4）の順で並ぶ
+      await p2.click('#pendingBanner'); await p2.waitForSelector('[data-pickday]');
+      const rows2 = await p2.$$eval('[data-pickday]', els => els.map(e => e.closest('.it').textContent));
+      const pend = rows2.filter(r => r.includes('[未実施]'));
+      assert(pend.length === 2 && pend[0].includes('Day 6') && pend[0].includes('今日の予定') && pend[1].includes('Day 4'), '未実施2件（今日の予定が先頭）: ' + JSON.stringify(pend));
       await closeSheetP2();
-      await p2.click('[data-shift="1"]'); await p2.click('[data-shift="1"]');
-      // 7. 週まとめとコーチ向けレポートに変更履歴が出る
-      await p2.click('.tabs [data-tab="summary"]'); await p2.waitForSelector('#dayChangeBlock');
-      const blockTxt = await p2.locator('#dayChangeBlock').textContent();
-      assert(blockTxt.includes('2/13') && blockTxt.includes('Day4') && blockTxt.includes('Day1') && blockTxt.includes('ここから'), '週まとめに変更履歴: ' + blockTxt);
-      const rep = await p2.locator('#repText').textContent();
-      assert(rep.includes('swapped Day 4') && rep.includes('Day 1 (Push)'), 'コーチ向けレポートに変更履歴: ' + rep);
-      // 8. 「予定どおりに戻す」で元の順番に戻る（ここからずらすは確認が必要）
-      await p2.click('.tabs [data-tab="today"]'); await p2.click('#dayHead'); await p2.waitForSelector('#dayReset'); await p2.click('#dayReset');
-      await dlgOk2();
-      await p2.waitForFunction(ds => window.__tl.dayNoFor(ds) === 5, D[5]);
-      const afterReset = await p2.evaluate((ds) => ({ d4: window.__tl.dayNoFor(ds.d4), d5: window.__tl.dayNoFor(ds.d5) }), { d4: D[4], d5: D[5] });
-      assert(afterReset.d4 === 4 && afterReset.d5 === 5, '元に戻すと元の順番（Day4・Day5）に戻る: ' + JSON.stringify(afterReset));
+      // B9. 週まとめ・コーチ向けレポートに差し替え履歴と未実施の一覧が出る
+      const rep = await p2.evaluate(wn => window.__tl.weeklyReport(wn, {}), 1);
+      assert(rep.includes('swapped Day 4') && /Day 5 \(Shoulder/.test(rep) && /Day 6 \(Pull/.test(rep), 'レポートに差し替え履歴: ' + rep);
+      assert(/Pending: Day 4 \(Legs\) not done since/.test(rep) && /Pending: Day 6 \(Pull\) not done since/.test(rep), 'レポートに未実施の一覧: ' + rep);
+      // B10. 予定どおりに戻す（Day6 への差し替えを取り消す。確認ダイアログは不要）
+      await p2.click('[data-shift="-1"]'); await p2.waitForTimeout(100);
+      await p2.click('#dayHead'); await p2.waitForSelector('#dayReset');
+      await p2.click('#dayReset'); await p2.waitForSelector('#sheet', { state: 'hidden' });
+      await p2.click('#dayHead'); await p2.waitForSelector('[data-pickday]');
+      assert(!(await p2.$('#dayReset')), '予定どおりに戻すと差し替え記録が消える');
+      await closeSheetP2();
       await p2.close();
-      return '今日だけ差し替え・ここから順番をずらす・記録済み警告・連続日の注意・休みの日への変更・週まとめ/レポートへの反映・元に戻す、すべて確認';
-    } finally { Object.values(D).forEach(d => { rt.op('del', { coll: 'log_daily', id: d }); rt.op('del', { coll: 'log_workout', id: d }); rt.op('del', { coll: 'log_cardio', id: d }); }); }
+      return '差し替えの持ち越し・できなかったの持ち越し・未実施バッジ/バナー・連続日の注意・週まとめ/レポート・元に戻す・差し替え後のキュー順、すべて確認';
+    } finally { setStart(origStartDate); clearRange(A0, AD[9]); clearRange(B0, BD[8]); }
   });
   await T(G.meal, '追加した2品（Selecta Adult Active・Soya Protein Hoops）が「よく使う差替え」チップに常時表示され、単品・セットどちらも正しい量とカロリーで追加できる', async () => {
     // clock.setFixedTime はブラウザコンテキスト全体（共有 page 含む）の時計を変えるため、
@@ -418,10 +473,14 @@ async function run(mode) {
     } finally { rt.op('del', { coll: 'log_meals', id: D }); }
   });
   await T(G.workout, 'スーパーセットの①②は重量・提案・休憩・記録を完全に別々に管理する（Day5 ダンベルショルダープレス＋フロントレイズ）', async () => {
-    const D = '2027-05-09'; // Day5
+    const D = '2027-05-09'; // 他のテストと日付が衝突しない、履歴の無い孤立した日
     const p2 = await newPage(); p2.setDefaultTimeout(20000);
     await p2.click('.tabs [data-tab="today"]');
     await p2.clock.setFixedTime(new Date(D + 'T06:50:00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading'));
+    // 未消化キュー方式では日付を進めるだけで特定の Day に届くとは限らないため、Day ピッカーで直接 Day5 を指定する
+    await p2.click('#dayHead'); await p2.waitForSelector('[data-pickday="5"]'); await p2.click('[data-pickday="5"]'); await p2.waitForSelector('#dcSave'); await p2.click('#dcSave');
+    await p2.waitForTimeout(80); if (await p2.$('#dlg:not([hidden])')) { await p2.click('#dlgOk'); await p2.waitForSelector('#dlg', { state: 'hidden' }); }
+    await p2.waitForFunction(() => document.querySelector('h1') && document.querySelector('h1').textContent.startsWith('Day 5'));
     const dlgOk2 = async (fillText) => { await p2.waitForSelector('#dlg:not([hidden])'); if (fillText != null) await p2.fill('#dlgIn', fillText); await p2.click('#dlgOk'); await p2.waitForSelector('#dlg', { state: 'hidden' }); await p2.waitForTimeout(120); };
     try {
       await p2.click('.tabs [data-tab="workout"]'); await p2.waitForSelector('#wuStart');
@@ -549,6 +608,13 @@ async function run(mode) {
     const enterDay = async (date) => {
       await p2.click('.tabs [data-tab="today"]');
       await p2.clock.setFixedTime(new Date(date + 'T06:50:00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading'));
+      // 未消化キュー方式では日付を進めるだけで特定の Day に届くとは限らないため、Day ピッカーで直接 Day5 を指定する
+      // （前回のセットを完了させていないので Day5 は未実施のまま繰り越しており、既に Day5 のことも多い＝その場合ピッカーは不要）
+      if (!(await p2.locator('h1').textContent()).startsWith('Day 5')) {
+        await p2.click('#dayHead'); await p2.waitForSelector('[data-pickday="5"]'); await p2.click('[data-pickday="5"]'); await p2.waitForSelector('#dcSave'); await p2.click('#dcSave');
+        await p2.waitForTimeout(80); if (await p2.$('#dlg:not([hidden])')) { await p2.click('#dlgOk'); await p2.waitForSelector('#dlg', { state: 'hidden' }); }
+        await p2.waitForFunction(() => document.querySelector('h1') && document.querySelector('h1').textContent.startsWith('Day 5'));
+      }
       await p2.click('.tabs [data-tab="workout"]'); await p2.waitForSelector('#wuStart');
       for (let id = 1; id <= 6; id++) { await p2.click('[data-wuset="' + id + '"]'); await p2.click('[data-wuset="' + id + '"]'); }
       await p2.click('#wuStart'); await p2.waitForSelector('#setDone');
@@ -618,16 +684,35 @@ async function run(mode) {
       return '全種目で前回値（日付・何日前・直近3回の履歴・タップで全履歴グラフ）を表示。TOP/BOで別々の履歴、代替種目名の履歴も拾う、未記録は初回表示、セット一覧の未実施行にも前回値';
     } finally { dates.forEach(d => { rt.op('del', { coll: 'log_workout', id: d }); rt.op('del', { coll: 'log_daily', id: d }); rt.op('del', { coll: 'log_cardio', id: d }); }); }
   });
-  await T(G.workout, '全7日確定版: Day2 Pull 8種目＋カーフ / Day4 Legs 8種目＋腹筋 / Day5 Shoulder & Arms 8種目＋カーフ / Day6 Pull 8種目＋腹筋。ドロップ「限界まで」とスーパーセットの組展開', async () => { await goTab('today'); const wk = async () => text('[data-step="workout"]'); try {
-    await page.click('[data-shift="1"]'); assert((await text('[data-step="accessory"]')).includes('カーフ: スミス カーフレイズ'), 'Day2 calves'); assert((await text('h1')).startsWith('Day 2') && (await wk()).includes('Pull ・ 8種目') && (await wk()).includes('Vバー ロウ（事前疲労）・ベントオーバーロウ') && (await wk()).includes('ほか5種目') && !(await wk()).includes('ラックプル'), 'Day2: ' + (await wk()));
-    await page.click('[data-shift="1"]'); await page.click('[data-shift="1"]'); assert((await text('[data-step="accessory"]')).includes('腹筋'), 'Day4 abs'); assert((await text('h1')).startsWith('Day 4') && (await wk()).includes('Legs ・ 8種目') && (await wk()).includes('ダンベル RDL（事前疲労）・自重スクワット（事前疲労）') && (await wk()).includes('ほか5種目'), 'Day4: ' + (await wk()));
-    await page.click('[data-shift="1"]'); assert((await text('[data-step="accessory"]')).includes('カーフ'), 'Day5 calves'); assert((await text('h1')).startsWith('Day 5') && (await wk()).includes('Shoulder & Arms ・ 8種目') && (await wk()).includes('ウォームアップ: フロントレイズ') && (await wk()).includes('ほか5種目'), 'Day5: ' + (await wk()));
-    await page.click('[data-shift="1"]'); assert((await text('[data-step="accessory"]')).includes('腹筋'), 'Day6 abs'); assert((await text('h1')).startsWith('Day 6') && (await wk()).includes('Pull ・ 8種目') && (await wk()).includes('ストレートアーム ラットエクステンション（事前疲労）') && (await wk()).includes('ホリゾンタルロウ ＋ フェイスプル（スーパーセット）') && (await wk()).includes('ほか5種目'), 'Day6: ' + (await wk()));
-    } finally { for (let k = 0; k < 8 && !(await text('.date')).includes('9/16'); k++) await page.click('[data-shift="-1"]'); } assert((await text('h1')).startsWith('Day 1'), 'back to Day1');
+  await T(G.workout, '全7日確定版: Day2 Pull 8種目＋カーフ / Day4 Legs 8種目＋腹筋 / Day5 Shoulder & Arms 8種目＋カーフ / Day6 Pull 8種目＋腹筋。ドロップ「限界まで」とスーパーセットの組展開', async () => {
+    // 9/16 は他の多数のテストが依存する既存データ（Day1 完了済みなど）を持つため、ここで Day を差し替えて壊さないよう
+    // 履歴の無い孤立した日付に移ってから Day ピッカーで直接指定する
+    const p2 = await newPage(); p2.setDefaultTimeout(20000);
+    await p2.click('.tabs [data-tab="today"]');
+    await p2.clock.setFixedTime(new Date('2027-07-01T06:50:00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading'));
+    const wk = async () => (await p2.locator('[data-step="workout"]').textContent());
+    const forceDayP2 = async (dayNo) => {
+      await p2.click('#dayHead'); await p2.waitForSelector('[data-pickday="' + dayNo + '"]'); await p2.click('[data-pickday="' + dayNo + '"]'); await p2.waitForSelector('#dcSave'); await p2.click('#dcSave');
+      await p2.waitForTimeout(80); if (await p2.$('#dlg:not([hidden])')) { await p2.click('#dlgOk'); await p2.waitForSelector('#dlg', { state: 'hidden' }); }
+      await p2.waitForFunction((n) => document.querySelector('h1') && document.querySelector('h1').textContent.startsWith('Day ' + n), dayNo);
+    };
+    await forceDayP2(2); assert((await p2.locator('[data-step="accessory"]').textContent()).includes('カーフ: スミス カーフレイズ'), 'Day2 calves'); assert((await p2.locator('h1').textContent()).startsWith('Day 2') && (await wk()).includes('Pull ・ 8種目') && (await wk()).includes('Vバー ロウ（事前疲労）・ベントオーバーロウ') && (await wk()).includes('ほか5種目') && !(await wk()).includes('ラックプル'), 'Day2: ' + (await wk()));
+    await forceDayP2(4); assert((await p2.locator('[data-step="accessory"]').textContent()).includes('腹筋'), 'Day4 abs'); assert((await p2.locator('h1').textContent()).startsWith('Day 4') && (await wk()).includes('Legs ・ 8種目') && (await wk()).includes('ダンベル RDL（事前疲労）・自重スクワット（事前疲労）') && (await wk()).includes('ほか5種目'), 'Day4: ' + (await wk()));
+    await forceDayP2(5); assert((await p2.locator('[data-step="accessory"]').textContent()).includes('カーフ'), 'Day5 calves'); assert((await p2.locator('h1').textContent()).startsWith('Day 5') && (await wk()).includes('Shoulder & Arms ・ 8種目') && (await wk()).includes('ウォームアップ: フロントレイズ') && (await wk()).includes('ほか5種目'), 'Day5: ' + (await wk()));
+    await forceDayP2(6); assert((await p2.locator('[data-step="accessory"]').textContent()).includes('腹筋'), 'Day6 abs'); assert((await p2.locator('h1').textContent()).startsWith('Day 6') && (await wk()).includes('Pull ・ 8種目') && (await wk()).includes('ストレートアーム ラットエクステンション（事前疲労）') && (await wk()).includes('ホリゾンタルロウ ＋ フェイスプル（スーパーセット）') && (await wk()).includes('ほか5種目'), 'Day6: ' + (await wk()));
+    // clock はブラウザコンテキスト全体で共有されるため、孤立した日付へ飛ばした分をここで元（今日 T0）に戻す
+    await p2.clock.setFixedTime(new Date(T0));
+    await p2.close();
     const r = await page.evaluate(() => { const t = window.__tl; const d = t.parseSetScheme('MAIN10-15x3,DROP*'); const p = t.expandPairSets(t.parseSetScheme('MAIN8,MAIN10,MAIN12'), ['A動作', 'B動作']); return { n: d.length, last: d[3], lastTxt: t.repsText(d[3]), pn: p.length, labels: p.map(x => t.setLabel(x)), moves: p.map(x => x.move).join('') }; });
     assert(r.n === 4 && r.last.setType === 'DROP' && r.last.min === 0 && r.lastTxt === '限界まで', 'DROP*: ' + JSON.stringify(r)); assert(r.pn === 6 && r.moves === 'ababab' && r.labels[0] === '1セット目 ① A動作' && r.labels[5] === '3セット目 ② B動作', 'pairs: ' + JSON.stringify(r.labels)); return 'Day2/4/5/6 の種目数と代表種目、DROP*=限界まで、スーパーセット 3組→6セット'; });
   await T(G.workout, '不具合修正: 最終種目（Day2 カーフ）に自然に到達しても、1セット目は「このセット完了」。最終セットまで進んで初めて「筋トレ完了」になる。遷移のたびに最上部へスクロール', async () => {
-    const p2 = await newPage(); await p2.click('.tabs [data-tab="today"]'); await p2.click('[data-shift="1"]'); assert((await p2.locator('.date').textContent()).includes('9/17'), 'on 9/17 = Day2');
+    const p2 = await newPage(); await p2.click('.tabs [data-tab="today"]');
+    // 9/16 は他の多数のテストが依存する既存データ（Day1 完了済みなど）を持つため、Day を差し替えて壊さないよう
+    // 履歴の無い孤立した日付に移ってから Day ピッカーで直接指定する
+    await p2.clock.setFixedTime(new Date('2027-07-08T06:50:00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading'));
+    await p2.click('#dayHead'); await p2.waitForSelector('[data-pickday="2"]'); await p2.click('[data-pickday="2"]'); await p2.waitForSelector('#dcSave'); await p2.click('#dcSave');
+    await p2.waitForTimeout(80); if (await p2.$('#dlg:not([hidden])')) { await p2.click('#dlgOk'); await p2.waitForSelector('#dlg', { state: 'hidden' }); }
+    await p2.waitForFunction(() => document.querySelector('h1') && document.querySelector('h1').textContent.startsWith('Day 2'));
     await p2.click('.tabs [data-tab="workout"]'); await p2.waitForSelector('#wuStart');
     for (let id = 1; id <= 6; id++) { await p2.click('[data-wuset="' + id + '"]'); await p2.click('[data-wuset="' + id + '"]'); }
     await p2.click('#wuStart'); await p2.waitForSelector('#setDone');
@@ -658,6 +743,8 @@ async function run(mode) {
     assert((await p2text('#setDone')).includes('筋トレ完了'), '最終種目・最終セットを終えて初めて「筋トレ完了」: ' + (await p2text('#setDone')));
     const rv = await p2.$$eval('.setrows .sr .rv', els => els.map(e => e.textContent)); assert(rv.length === 3 && rv.every(t => t !== '未記録' && t !== ''), '3セットとも記録済み: ' + rv.join(','));
     await p2.click('#setDone'); await p2.waitForSelector('#repDay'); const body = await p2.locator('#view').innerText(); assert(!/未記録|0kg×0/.test(body.split('コーチ報告用テキスト')[0]), '完了画面のやった内容に未記録が残っていない');
+    // clock はブラウザコンテキスト全体で共有されるため、孤立した日付へ飛ばした分をここで元（今日 T0）に戻す
+    await p2.clock.setFixedTime(new Date(T0));
     await p2.close();
   });
 
@@ -791,12 +878,49 @@ async function run(mode) {
   await T(G.missed, 'サプリ「今日はなし（理由）」→ 灰色−・理由表示。再タップで取り消し', async () => { await page.click('[data-open="supp:after_meal"]'); await page.waitForSelector('#suppNA'); await page.click('#suppNA'); await pickReason('切れていた'); await page.waitForTimeout(150); const m = await mark('supp:after_meal'); assert(m.startsWith('na|chk na|−'), 'supp mark ' + m); assert((await text('[data-step="supp:after_meal"]')).includes('今日はなし（切れていた）'), 'reason line'); await page.click('[data-chk="supp:after_meal"]'); await page.waitForFunction(() => document.querySelector('[data-step="supp:after_meal"]').dataset.mark === ''); assert((await text('#toast')).includes('取り消しました'), 'undo toast');
     // ルーティンは長押し
     await page.dispatchEvent('[data-chk="routine:1"]', 'pointerdown'); await page.waitForTimeout(700); await page.dispatchEvent('[data-chk="routine:1"]', 'pointerup'); await pickReason('忘れた'); await page.waitForTimeout(150); assert((await mark('routine:1')).startsWith('na|'), 'routine long-press NA'); assert((await text('[data-step="routine:1"]')).includes('今日はなし（忘れた）'), 'routine reason'); });
-  await T(G.missed, '筋トレ「できなかった（理由）」→ Day をずらすと翌日以降の Day が 1 つ戻る。取り消しで元に戻る', async () => { await setTime('2026-09-19T08:00:00+08:00'); await page.click('[data-shift="1"]'); await page.click('[data-shift="1"]'); assert((await text('h1')).startsWith('Day 4'), '9/19 = Day4'); await page.click('[data-chk="workout"]'); await page.waitForSelector('[data-choice="1"]'); await page.click('[data-choice="1"]'); await pickReason('仕事'); await page.waitForSelector('[data-choice="0"]'); await page.click('[data-choice="0"]'); await page.waitForTimeout(150);
-    assert((await mark('workout')).startsWith('na|chk na|−'), 'workout na'); assert((await text('[data-step="workout"]')).includes('できなかった（仕事）') && (await text('[data-step="workout"]')).includes('Day をずらす'), 'row'); if (mode === 'db') { await page.waitForTimeout(150); const dd = rt.DB.log_daily['2026-09-19']; assert(dd.workoutMissed && dd.workoutMissed.shift === true && dd.workoutMissed.reason === '仕事', 'log_daily ' + JSON.stringify(dd.workoutMissed)); }
-    await page.click('[data-shift="1"]'); assert((await text('h1')).startsWith('Day 4'), '9/20 → Day4 (shifted)'); await page.click('[data-shift="1"]'); assert((await text('h1')).startsWith('Day 5'), '9/21 → Day5'); await page.click('[data-shift="-1"]'); await page.click('[data-shift="-1"]');
-    await page.click('[data-chk="workout"]'); await page.waitForFunction(() => document.querySelector('[data-step="workout"]').dataset.mark === ''); await page.click('[data-shift="1"]'); assert((await text('h1')).startsWith('Day 5'), '取り消し後 9/20 → Day5'); await page.click('[data-shift="-1"]');
-    await page.click('[data-chk="cardio"]'); await page.waitForSelector('[data-choice="1"]'); await page.click('[data-choice="1"]'); await pickReason('体調不良'); await page.waitForTimeout(150); assert((await text('[data-step="cardio"]')).includes('できなかった（体調不良）'), 'cardio missed');
-    await goTab('summary'); await page.waitForSelector('#missedBlock'); const mb = await text('#missedBlock'); assert(mb.includes('有酸素') && mb.includes('体調不良') && mb.includes('忘れた') && !mb.includes('切れていた'), 'missed block lists cardio + routine (cancelled supp NA excluded): ' + mb); assert((await text('#repText')).includes('cardio missed (sick)'), 'report notes cardio'); for (let i = 0; i < 3; i++) { await goTab('today'); await page.click('[data-shift="-1"]'); } await setTime('2026-09-16T08:40:00+08:00'); });
+  await T(G.missed, '筋トレ「できなかった（理由）」→ 完了していないので翌日も同じ Day が繰り越して出る（未消化キュー方式）。取り消しで「できなかった」の記録は消える', async () => {
+    const addD = (d, n) => { const dt = new Date(d + 'T12:00:00Z'); dt.setUTCDate(dt.getUTCDate() + n); return dt.toISOString().slice(0, 10); };
+    await goTab('today');
+    // 9/16・9/17 は他のテストが依存する既存データ（Day1 完了済み・体重の欠測など）を持つため、Day を差し替えて壊さないよう、
+    // 同じ週の中の既存データが無い日（9/19以降）へ移ってから Day ピッカーで直接指定する
+    let awayShifts = 0;
+    for (let i = 0; i < 6 && (/9\/16|9\/17|9\/18/.test(await text('.date'))); i++) { await page.click('[data-shift="1"]'); awayShifts++; }
+    const dateTxt = await text('.date');
+    assert(!(/9\/16|9\/17|9\/18/.test(dateTxt)), '9/16〜9/18 以外に移動: ' + dateTxt);
+    // TD は awayShifts からの推測ではなく、実際に表示されている月日から直接組み立てる（このテストの前に
+    // 別のテストが日付を 9/16 以外に残していた場合でも awayShifts だけではズレることがあるため）
+    const md = /(\d+)\/(\d+)/.exec(dateTxt); const TD = '2026-' + String(md[1]).padStart(2, '0') + '-' + String(md[2]).padStart(2, '0'), TD1 = addD(TD, 1);
+    await forceDay('#dayHead', 4);
+    assert((await text('h1')).startsWith('Day 4'), 'Day4 に変更: ' + (await text('h1')));
+    await page.click('[data-chk="workout"]'); await page.waitForSelector('[data-choice="1"]'); await page.click('[data-choice="1"]'); await pickReason('仕事'); await page.waitForTimeout(150);
+    assert((await mark('workout')).startsWith('na|chk na|−'), 'workout na');
+    assert((await text('[data-step="workout"]')).includes('できなかった（仕事）') && (await text('[data-step="workout"]')).includes('持ち越しになります'), 'row: ' + (await text('[data-step="workout"]')));
+    if (mode === 'db') {
+      // mock モードは reload をまたいだ永続化が無いため、実際に時計を翌日へ進めての繰り越し確認は db モードのみで行う
+      // （クロックはブラウザコンテキスト全体を進めるため、reload 前に today タブへ切り替えておく）
+      await page.waitForTimeout(150);
+      await setTime(TD1 + 'T08:00:00+08:00'); await page.reload(); await page.waitForFunction(() => !document.querySelector('#view .loading')); await goTab('today');
+      assert((await text('h1')).startsWith('Day 4'), '完了していない Day4 は翌日も繰り越して出る（先の Day には進まない）: ' + (await text('h1')));
+      await page.click('[data-shift="-1"]');
+    }
+    // 取り消し（できなかったの記録が消える。wo.finished は元々未設定のままなので Day の繰り越し自体には影響しない）
+    await page.click('[data-chk="workout"]'); await page.waitForFunction(() => document.querySelector('[data-step="workout"]').dataset.mark === '');
+    assert(!(await text('[data-step="workout"]')).includes('できなかった'), '取り消し後は「できなかった」表示が消える');
+    // 有酸素の「できなかった」も同様に記録できる
+    await page.click('[data-chk="cardio"]'); await page.waitForSelector('[data-choice="1"]'); await page.click('[data-choice="1"]'); await pickReason('体調不良'); await page.waitForTimeout(150);
+    assert((await text('[data-step="cardio"]')).includes('できなかった（体調不良）'), 'cardio missed');
+    if (mode === 'db') {
+      // 週まとめ／レポートの「できなかった一覧」は today（実クロック）以前の日だけを集計するため、
+      // 実際に時計を進めていない mock モードでは今回の記録日（未来扱い）が反映されない。db モードのみで検証する
+      await goTab('summary'); await page.waitForSelector('#missedBlock'); const mb = await text('#missedBlock');
+      assert(mb.includes('有酸素') && mb.includes('体調不良') && mb.includes('忘れた') && !mb.includes('切れていた'), 'missed block lists cardio + routine (cancelled supp NA excluded): ' + mb);
+      assert((await text('#repText')).includes('cardio missed (sick)'), 'report notes cardio');
+    }
+    // 後始末: Day4 への差し替えを取り消し、日付と時計をもとに戻す
+    await goTab('today'); await page.click('#dayHead'); await page.waitForSelector('#dayReset'); await page.click('#dayReset'); await page.waitForSelector('#sheet', { state: 'hidden' });
+    await goTab('today'); await setTime(T0); await page.reload(); await page.waitForFunction(() => !document.querySelector('#view .loading')); await goTab('today');
+    assert((await text('.date')).includes('9/16') && !(await text('.date')).includes('過去'), 'back to 9/16');
+  });
 
   await T(G.common, 'db スキーマ: log_weight{value,unit,skipped,skipReason,loggedAt} / warmup{completed,minutes,loggedAt} / meals{status: plan|substitute|skip|photo, photoId, reason} / log_daily{dayNo,dayName,notes,skippedItems[]}', async () => { if (mode === 'mock') return 'db のみ';
     const w = rt.DB.log_weight['2026-09-16']; assert(w.value === 72.6 && w.unit === 'kg' && w.skipped === false && w.loggedAt, 'weight ' + JSON.stringify(w));
@@ -910,6 +1034,7 @@ async function run(mode) {
 | 26 | 差替えチップの追加テストで、\`#mReset\`（プランの内容に戻す）のあとにもう一度 \`#mChange\` を押すと、逆に「変更・追加」欄が閉じてチップが消え \`[data-q]\` 待ちがタイムアウトする | \`UI.sheetMeal.sub\`（欄の開閉状態）はシートを開いたままの操作では保持されるため、\`#mReset\` 後も欄は開いたまま再描画される。そこへ \`#mChange\` をもう一度押すとトグルが反転して閉じてしまう（アプリの仕様どおりで、テスト側の押しすぎが原因） | \`#mReset\` のあとは \`#mChange\` を押し直さず、そのまま \`[data-q]\` を待つようにテストを修正 |
 | 27 | スーパーセット①②の重量・前回値・提案が種目内で共有された rolling state（topKg/prevSetKg/heaviest）を通じて混ざっていた。①で記録した重量が②のプログレッシブ提案の元になってしまう、②の入力欄初期値が①の値を引きずる、など | \`suggestSets()\` が①②を区別せず1つの state で提案を計算していた。セット一覧・いまのセットカード・コーチ報告テキストも①②を1行に結合していて、どちらの実績か読み取りにくかった | \`suggestSets()\` の rolling state を move（①/②、無ければ共通）ごとに分離。いまのセットカードとセット一覧を①②を色分けして入れ子表示するUIに変更（\`setLabel\` に①/②のあとの半角スペースを追加）。完了画面とコーチ報告テキスト（\`pairEnNames()\` で nameEn を \`A + B (superset)\` から分解）も①②を別行に分離。既存テスト（Day1確定版・完了画面レポート・pure function の setLabel）は旧フォーマット（結合1行・スペース無し）を前提にしていたため新フォーマットに合わせて更新 |
 | 28 | 「前回の重量」テストを書く過程で3つのテスト側の思い違いに気づいた: (1) \`weeklyReport()\` は行配列ではなく \`.join('\n')\` 済みの1本の文字列を返す（\`repLines.some\`/\`.v.some\` が関数ではないエラー）。(2) mock モードは \`window.claude\` が無くページ内メモリのみで動くため、reload をまたいだ複数日ぶんの記録の永続化を前提にしたテストは mock では原理的に成立しない。(3) バックオフ種目は自分自身の前回記録が無くても、同じ種目のトップセットの重量から目安を出す（\`suggestSets()\` の既存仕様）ため、一度も記録していないバックオフのセットに「初回です」を期待するのは誤り | (1) 関数の戻り値を確認せずに配列だと決め打った。(2) mock/db のデータ永続化の仕組みの違いを見落としていた。(3) バックオフの提案が \`S.topKg\`（同種目のトップの実効重量）を優先し、自分の \`prevWeightKg\` は「前回」表示にしか使われないことを把握していなかった | (1) \`weeklyReport()\` の戻り値をそのまま文字列として \`.includes()\` で検証するよう修正。(2) mock モードでは reload 間の永続化が無い前提の軽い検証（初回表示の確認のみ）に切り替え、複数日の履歴検証は db モードのみで行うようにした。(3) 「初回です」の検証はセット自体に一切の記録・提案根拠が無いトップセットの初回セット（このテストでは日1の記録前）で行い、トップから目安が出るバックオフのセットは「前回は無いが目安は出る」ことを検証するよう修正 |
+| 29 | 「やっていない Day が飛ばされてしまう」修正（カレンダー計算 \`calcDayNo\` → イベントソーシングの未消化キュー \`replayQueue\`）で、Day 判定・全7日確定版・前回の重量・不具合修正・できなかった 等、日付を進めるだけで特定の Day を表示できる前提のテストが軒並み壊れた。原因を追ううちに3つの根本的な発見があった: (1) \`dayNoFor\` に startDate より前の日付を渡すと \`replayQueue\` のループが一度も回らず \`assignments[date]\` が \`undefined\` になり \`.dayNo\` 参照でクラッシュ（前日・翌日ナビゲーションのような基本操作で即発生）。(2) 「今日」自身が未完了だと、その日の完了判定を「今日以降は自動消化」にするか「実績どおり」にするかで、翌日プレビュー（クロックを進めずに \`[data-shift]\` だけで先を覗く）の挙動が大きく変わる。今日ちょうどの \`date > today\` だけを自動消化にすると、今日が未完了な限り明日のプレビューも同じ Day のまま止まり、\`want=['Day1',...,'Day7']\` のような素朴な周回テストが壊れる。逆に \`date >= today\` まで自動消化にすると、今日画面自身の「未実施」バッジ／バナー（\`pendingSince\`）まで誤って消えてしまう。(3) Playwright の \`page.clock\` はページ単位ではなくブラウザコンテキスト全体で共有される（\`newPage()\` で作った子ページの \`clock.setFixedTime()\` が共有 \`page\` の時計まで進めてしまう）。旧 \`calcDayNo\` は \`today\` に一切依存しない純粋な \`(startDate, date)\` 関数だったためこの共有に気づかれていなかったが、\`replayQueue\` は \`today\` に強く依存するため、孤立日付へ飛ばした \`p2\` のテストの直後に \`newPage()\` を挟まない限り時計が戻らず、9/16 に依存する後続テスト（週まとめ・db スキーマ等）まで連鎖的に壊れた | (1) 過去日を弾くガードが無かった。(2) 「今日はまだ終わっていない」という現実の時間経過と、未消化キューが要求する「完了実績の有無」を区別せずに1つの比較式で済まそうとした。(3) \`clock.setFixedTime\` のスコープを確認せずに、各テストが独立して安全だと思い込んでいた | (1) \`dayNoFor\` の先頭で \`date < ST.settings.startDate\` ならカレンダー計算にフォールバックするガードを追加。(2) 完了判定は \`date > today\`（今日自身は実績どおり、未来だけ自動消化）に統一し、翌日プレビューが素朴に進むことを求める既存テストの方を「未完了なら翌日プレビューも同じ Day のまま」という新仕様に書き換えた。(3) 9/16・9/17 は他のテストが依存する既存データを持つため Day ピッカーで直接指定するテストはすべて孤立した日付（過去は 2020/2021年、未来は 2027年）に一時移動する \`forceDay\` ヘルパーに統一し、\`newPage()\` を挟まずに \`p2.clock\` を進めたテストは終了直前に \`p2.clock.setFixedTime(new Date(T0))\` で明示的に戻すようにした。新しい「できなかった」テストは、翌日への本当の繰り越し確認（クロックを実際に進めて reload）は db モードのみで行い、mock モードは reload をまたげないため当日内で完結する縮小版の確認にとどめた |
 
 ## 実行方法
 
