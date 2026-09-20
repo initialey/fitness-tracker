@@ -578,17 +578,17 @@ async function run(mode) {
       // 30分単位のボタンで時間が入る
       await p2.click('#cPadelMin [data-pmin="60"]');
       assert((await p2.$eval('#cMin', e => e.value)) === '60', '60分ボタンで分数が入る');
-      assert((await p2.locator('#cKcalPreview').textContent()) === '約 504 kcal', '体重72kg・ふつう(METs7.0)・60分 → 504kcal: ' + (await p2.locator('#cKcalPreview').textContent()));
+      { const t = await p2.locator('#cKcalPreview').textContent(); assert(t.includes('約 504 kcal') && t.includes('体重 72kg'), '体重72kg・ふつう(METs7.0)・60分 → 504kcal＋計算に使った体重: ' + t); }
       // 「+30分」ボタンで加算
       await p2.click('#cPadelMin [data-pmin="+30"]');
       assert((await p2.$eval('#cMin', e => e.value)) === '90', '+30分ボタンで加算される');
-      assert((await p2.locator('#cKcalPreview').textContent()) === '約 756 kcal', '90分 → 756kcal: ' + (await p2.locator('#cKcalPreview').textContent()));
+      assert((await p2.locator('#cKcalPreview').textContent()).includes('約 756 kcal'), '90分 → 756kcal: ' + (await p2.locator('#cKcalPreview').textContent()));
       // 強度3段階で数値が変わる（激しめ METs8.5）
       await p2.click('#cIntensity [data-int="hard"]');
-      assert((await p2.locator('#cKcalPreview').textContent()) === '約 918 kcal', '強度「激しめ」(8.5)で90分 → 918kcal: ' + (await p2.locator('#cKcalPreview').textContent()));
+      assert((await p2.locator('#cKcalPreview').textContent()).includes('約 918 kcal'), '強度「激しめ」(8.5)で90分 → 918kcal: ' + (await p2.locator('#cKcalPreview').textContent()));
       // 自由入力（分）でも再計算される（軽め METs5.5・120分）
       await p2.click('#cIntensity [data-int="light"]'); await p2.fill('#cMin', '120');
-      assert((await p2.locator('#cKcalPreview').textContent()) === '約 792 kcal', '自由入力120分・軽め(5.5) → 792kcal: ' + (await p2.locator('#cKcalPreview').textContent()));
+      assert((await p2.locator('#cKcalPreview').textContent()).includes('約 792 kcal'), '自由入力120分・軽め(5.5) → 792kcal: ' + (await p2.locator('#cKcalPreview').textContent()));
       // ふつう・90分で保存
       await p2.click('#cIntensity [data-int="normal"]'); await p2.fill('#cMin', '90');
       await p2.click('#cSave'); await p2.waitForTimeout(200);
@@ -603,9 +603,79 @@ async function run(mode) {
       const wa = await p2.evaluate(ds => window.__tl.weekAdherence({ start: ds, end: ds }).cardio, D);
       assert(wa.padel.count === 1 && wa.padel.minutes === 90 && wa.zone2.count === 0, 'weekAdherence でパデルと Zone 2 が分離: ' + JSON.stringify(wa));
       const rep = await p2.evaluate(() => window.__tl.weeklyReport());
-      assert(rep.includes('Cardio:') && rep.includes('Padel x1 (90 min)') && !rep.includes('Zone 2'), 'コーチ向けレポートにパデルが Zone 2 と分けて出る（この週は Zone 2 の記録が無い）: ' + rep);
+      assert(rep.includes('Cardio:') && rep.includes('Padel x1 (90 min, 1.5 hrs, ~756 kcal)') && !rep.includes('Zone 2'), 'コーチ向けレポートにパデルが Zone 2 と分けて出る（この週は Zone 2 の記録が無い）: ' + rep);
       await p2.close();
       return 'パデル追加：30分単位・強度3段階(5.5/7.0/8.5)・kcal自動計算・今日画面/脂肪計算/週まとめでZone2と分離、すべて確認';
+    } finally { await resetClock(); rt.op('del', { coll: 'log_weight', id: D }); rt.op('del', { coll: 'log_cardio', id: D }); rt.op('del', { coll: 'log_daily', id: D }); }
+  });
+  await T(G.workout, 'ピックルボールを有酸素の選択肢に追加：30分単位・強度3段階（4.5/5.5/7.0、初期値ふつう）・体重未測定でも初期値で計算・Zone2/パデルと3つに分けて集計', async () => {
+    const D = '2027-06-08';
+    const p2 = await newPage(); p2.setDefaultTimeout(20000);
+    await p2.click('.tabs [data-tab="today"]');
+    await p2.clock.setFixedTime(new Date(D + 'T06:50:00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading'));
+    await p2.click('.tabs [data-tab="today"]');
+    const prev = async () => (await p2.locator('#cKcalPreview').textContent());
+    try {
+      // 体重を一度も測っていない日でも、プロフィールの初期値 72.4kg にフォールバックして計算できる（エラーにならない）
+      const fb = await p2.evaluate(() => ({ w: window.__tl.cardioWeightKg('2020-01-01'), k: window.__tl.racketKcal('pickleball', 60, 'normal', window.__tl.cardioWeightKg('2020-01-01')) }));
+      assert(fb.w === 72.4 && Math.round(fb.k) === 398, '体重未測定なら初期値72.4kgで計算（60分・ふつう5.5 → 398kcal）: ' + JSON.stringify(fb));
+      // 体重 72kg を記録 → 以後は実測値で計算し、計算に使った体重を画面に出す
+      await p2.click('[data-open="weight"]'); await p2.waitForSelector('#shSave');
+      await p2.fill('#shW', '72'); await p2.click('#shSave'); await p2.waitForFunction(() => document.querySelector('[data-step="weight"]').className.includes('done'));
+      await p2.click('[data-open="cardio"]'); await p2.waitForSelector('#cType');
+      const chips = await p2.$$eval('#cType button', els => els.map(e => e.textContent));
+      assert(chips.includes('ピックルボール') && chips.includes('パデル') && !chips.join('').includes('…'), '有酸素の選択肢にピックルボールとパデルが名前で出る: ' + chips.join(','));
+      assert(await p2.$eval('#cPadelBlock', e => e.hidden), 'デフォルト（傾斜歩き）では時間・強度の欄は隠れている');
+      await p2.click('#cType [data-t="pickleball"]');
+      assert(!(await p2.$eval('#cPadelBlock', e => e.hidden)), 'ピックルボールを選ぶと時間プリセット・強度・kcalプレビューが出る');
+      // 時間ボタンは 30/60/90/120＋30分、自由入力は分数欄
+      const mins = await p2.$$eval('#cPadelMin button', els => els.map(e => e.textContent));
+      assert(mins.join(',') === '30分,60分,90分,120分,＋30分', '30分単位の時間ボタン: ' + mins.join(','));
+      // 強度は3択で初期値が「ふつう」
+      const ints = await p2.$$eval('#cIntensity button', els => els.map(e => e.textContent + (e.className.includes('on') ? '*' : '')));
+      assert(ints.length === 3 && ints[0].startsWith('軽め') && ints[1].startsWith('ふつう') && ints[1].endsWith('*') && ints[2].startsWith('激しめ'), '強度3択・初期値はふつう: ' + ints.join(' / '));
+      // 時間・強度を変えるたびに消費カロリーが更新される（体重72kg）
+      await p2.click('#cPadelMin [data-pmin="60"]');
+      { const t = await prev(); assert(t.includes('約 396 kcal') && t.includes('体重 72kg') && !t.includes('初期値'), '72kg・ふつう(5.5)・60分 → 396kcal＋実測体重: ' + t); }
+      await p2.click('#cIntensity [data-int="light"]');
+      assert((await prev()).includes('約 324 kcal'), '軽め(4.5)・60分 → 324kcal: ' + (await prev()));
+      await p2.click('#cIntensity [data-int="hard"]');
+      assert((await prev()).includes('約 504 kcal'), '激しめ(7.0)・60分 → 504kcal: ' + (await prev()));
+      await p2.click('#cPadelMin [data-pmin="+30"]');
+      assert((await p2.$eval('#cMin', e => e.value)) === '90' && (await prev()).includes('約 756 kcal'), '＋30分で90分・激しめ → 756kcal: ' + (await prev()));
+      // 自由入力（その他）でも再計算される
+      await p2.click('#cIntensity [data-int="normal"]'); await p2.fill('#cMin', '90');
+      assert((await prev()).includes('約 594 kcal'), '自由入力90分・ふつう(5.5) → 594kcal: ' + (await prev()));
+      // パデルに切り替えると METs が変わり、強度は「ふつう」に戻る（ピックルボールの選択を引きずらない）
+      await p2.click('#cType [data-t="padel"]');
+      assert((await p2.$$eval('#cIntensity button', els => els.filter(e => e.className.includes('on')).map(e => e.textContent)))[0].startsWith('ふつう'), 'パデルに切り替えても初期値はふつう');
+      assert((await prev()).includes('約 756 kcal'), 'パデルのふつう(7.0)・90分 → 756kcal: ' + (await prev()));
+      // ピックルボール ふつう 90分（594kcal）で保存
+      await p2.click('#cType [data-t="pickleball"]'); await p2.fill('#cMin', '90');
+      await p2.click('#cSave'); await p2.waitForTimeout(250);
+      // 同じ日に Zone 2（傾斜歩き40分）とパデル（ふつう60分＝504kcal）も記録して、3つが混ざらないことを見る
+      await p2.click('[data-open="cardio"]'); await p2.waitForSelector('#cType'); await p2.fill('#cMin', '40'); await p2.click('#cSave'); await p2.waitForTimeout(250);
+      await p2.click('[data-open="cardio"]'); await p2.waitForSelector('#cType'); await p2.click('#cType [data-t="padel"]'); await p2.click('#cPadelMin [data-pmin="60"]'); await p2.click('#cSave'); await p2.waitForTimeout(250);
+      // 今日画面: 種目名を省略せず全部出し、Zone 2 とは別物だと伝える
+      const cardioRow = await p2.locator('[data-step="cardio"]').textContent();
+      assert(cardioRow.includes('ピックルボール 90分') && cardioRow.includes('約594 kcal') && cardioRow.includes('パデル 60分') && cardioRow.includes('約504 kcal') && cardioRow.includes('傾斜歩き 40分'), '今日画面に3種すべてが名前と実績で出る: ' + cardioRow);
+      assert(cardioRow.includes('パデル・ピックルボールは強度が変動するので、Zone 2 とは別物です'), 'Zone 2 と別物である注意書きに種目名が出る: ' + cardioRow);
+      // 脂肪の計算（TDEEの運動分）と1日の収支に加算される
+      const exVal = await p2.evaluate(ds => window.__tl.exerciseKcalFor(ds, 72), D);
+      assert(Math.round(exVal) === 594 + 504 + Math.round(6.5 * 72 * 40 / 60), '運動消費kcalにピックルボールも加算される: ' + exVal);
+      const bal = await p2.evaluate(ds => window.__tl.dayCalorieBalance(ds), D);
+      assert(bal === null || Math.round(bal.exVal) === Math.round(exVal), '1日の収支の運動分と一致: ' + JSON.stringify(bal));
+      // 週まとめ: Zone 2・パデル・ピックルボールの3つに分かれる（ピックルボールは Zone 2 の遵守率に入れない）
+      const wa = await p2.evaluate(ds => window.__tl.weekAdherence({ start: ds, end: ds }).cardio, D);
+      assert(wa.zone2.count === 1 && wa.padel.count === 1 && wa.pickleball.count === 1 && wa.pickleball.minutes === 90 && Math.round(wa.pickleball.kcal) === 594, 'weekAdherence で3つに分離: ' + JSON.stringify(wa));
+      await p2.click('.tabs [data-tab="summary"]'); await p2.waitForSelector('#cardioBreak');
+      const brk = await p2.locator('#cardioBreak').textContent();
+      assert(brk.includes('Zone 2') && brk.includes('パデル') && brk.includes('ピックルボール') && brk.includes('1回 ・ 合計1.5時間 ・ 594 kcal') && !brk.includes('…'), '週まとめの有酸素が3つに分かれて名前つきで出る: ' + brk);
+      // コーチ向けレポート
+      const rep = await p2.evaluate(() => window.__tl.weeklyReport());
+      assert(rep.includes('Zone 2 x1 (40 min)') && rep.includes('Padel x1 (60 min, 1.0 hrs, ~504 kcal)') && rep.includes('Pickleball x1 (90 min, 1.5 hrs, ~594 kcal)'), 'レポートで Zone 2・パデル・ピックルボールが分かれて出る: ' + rep);
+      await p2.close();
+      return 'ピックルボール追加：30分単位・強度3段階(4.5/5.5/7.0、初期値ふつう)・体重未測定は初期値72.4kg・72kg×ふつう×60分=396kcal・今日画面/脂肪計算/1日収支/週まとめ/レポートで Zone2・パデルと3分割、すべて確認';
     } finally { await resetClock(); rt.op('del', { coll: 'log_weight', id: D }); rt.op('del', { coll: 'log_cardio', id: D }); rt.op('del', { coll: 'log_daily', id: D }); }
   });
   await T(G.workout, '前回の重量を全種目で必ず表示する：日付・何日前・直近3回の履歴・セット種類ごとの分離・代替種目名の履歴・セット一覧の未実施行', async () => {
@@ -1225,6 +1295,8 @@ async function run(mode) {
 | 29 | 「やっていない Day が飛ばされてしまう」修正（カレンダー計算 \`calcDayNo\` → イベントソーシングの未消化キュー \`replayQueue\`）で、Day 判定・全7日確定版・前回の重量・不具合修正・できなかった 等、日付を進めるだけで特定の Day を表示できる前提のテストが軒並み壊れた。原因を追ううちに3つの根本的な発見があった: (1) \`dayNoFor\` に startDate より前の日付を渡すと \`replayQueue\` のループが一度も回らず \`assignments[date]\` が \`undefined\` になり \`.dayNo\` 参照でクラッシュ（前日・翌日ナビゲーションのような基本操作で即発生）。(2) 「今日」自身が未完了だと、その日の完了判定を「今日以降は自動消化」にするか「実績どおり」にするかで、翌日プレビュー（クロックを進めずに \`[data-shift]\` だけで先を覗く）の挙動が大きく変わる。今日ちょうどの \`date > today\` だけを自動消化にすると、今日が未完了な限り明日のプレビューも同じ Day のまま止まり、\`want=['Day1',...,'Day7']\` のような素朴な周回テストが壊れる。逆に \`date >= today\` まで自動消化にすると、今日画面自身の「未実施」バッジ／バナー（\`pendingSince\`）まで誤って消えてしまう。(3) Playwright の \`page.clock\` はページ単位ではなくブラウザコンテキスト全体で共有される（\`newPage()\` で作った子ページの \`clock.setFixedTime()\` が共有 \`page\` の時計まで進めてしまう）。旧 \`calcDayNo\` は \`today\` に一切依存しない純粋な \`(startDate, date)\` 関数だったためこの共有に気づかれていなかったが、\`replayQueue\` は \`today\` に強く依存するため、孤立日付へ飛ばした \`p2\` のテストの直後に \`newPage()\` を挟まない限り時計が戻らず、9/16 に依存する後続テスト（週まとめ・db スキーマ等）まで連鎖的に壊れた | (1) 過去日を弾くガードが無かった。(2) 「今日はまだ終わっていない」という現実の時間経過と、未消化キューが要求する「完了実績の有無」を区別せずに1つの比較式で済まそうとした。(3) \`clock.setFixedTime\` のスコープを確認せずに、各テストが独立して安全だと思い込んでいた | (1) \`dayNoFor\` の先頭で \`date < ST.settings.startDate\` ならカレンダー計算にフォールバックするガードを追加。(2) 完了判定は \`date > today\`（今日自身は実績どおり、未来だけ自動消化）に統一し、翌日プレビューが素朴に進むことを求める既存テストの方を「未完了なら翌日プレビューも同じ Day のまま」という新仕様に書き換えた。(3) 9/16・9/17 は他のテストが依存する既存データを持つため Day ピッカーで直接指定するテストはすべて孤立した日付（過去は 2020/2021年、未来は 2027年）に一時移動する \`forceDay\` ヘルパーに統一し、\`newPage()\` を挟まずに \`p2.clock\` を進めたテストは終了直前に \`p2.clock.setFixedTime(new Date(T0))\` で明示的に戻すようにした。新しい「できなかった」テストは、翌日への本当の繰り越し確認（クロックを実際に進めて reload）は db モードのみで行い、mock モードは reload をまたげないため当日内で完結する縮小版の確認にとどめた |
 
 | 30 | Round 6（Day4 差し替え・「A または B」の選択式・入力ポップアップ統一・腹筋/カーフ確定）で、選択カードのボタンに \`data-choice\` を使ったところ、食事の差替えチップ（\`[data-choice]\`）と属性名が衝突し、\`locator('[data-choice]').first()\` が非表示の食事チップに解決して「element is not visible」で 8 秒タイムアウトした。筋トレ系のテストが原因不明のクリックタイムアウトで軒並み落ちた | 新しい DOM 属性を足すとき、既存のアプリ全体で同じ属性名が使われていないか確認していなかった。セレクタがページ内で一意である保証が無いのにテスト側は \`.first()\` を使っていた | 種目の選択カードを \`data-exchoice\` に改名。あわせて (a) 末尾 \`?\` の任意セットを開いている間はボタンを「このセット完了」のままにし（未記録のまま完了画面へ飛ばない）、最後の任意セットを「飛ばす」と筋トレ完了へ進むようにした。(b) 漸増の伸び幅は仕様の +2.5kg を既定にしつつ、ダンベルは既存の「1個 +1kg」ルールを引き継ぐ（2.5kg 刻みのダンベルは無いため）。(c) 孤立した日付へ飛ばすテストはすべて \`try { … } finally { await resetClock(); }\` で囲み、途中で落ちてもブラウザコンテキスト共有の時計が今日（T0）に戻るようにした（#29 で見つけた \`page.clock\` の共有が、失敗時にだけ後続テストへ漏れていた） |
+
+| 31 | 有酸素にピックルボールを追加したとき、今日画面の注意書きが「ピックルボール・パデルは…」と**記録した順**で並び、文言が日によって変わってしまった | 注意書きの種目名を \`entries\` を舐めた出現順で組み立てていた。同じ画面でも記録の順番次第で文言が変わり、テストからも見た目からも安定しない | \`racketNote()\` は \`RACKET_INTENSITY\` のキー順（パデル → ピックルボール）で並べるようにした。あわせて、消費カロリーの計算に使う体重を \`cardioWeightKg()\`（直近の実測値 → 無ければ \`settings.bioWeightKg\` 72.4kg）に一本化し、体重を一度も測っていなくても「計算できません」にならないようにした |
 
 ## 実行方法
 

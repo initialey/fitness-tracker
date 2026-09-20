@@ -25,7 +25,7 @@
 
 | コレクション | doc id | 内容 |
 |---|---|---|
-| `settings` | `main` | startDate, unit(kg/lb), tz, waterGoalMl, restMainSec(150), restTopSec, restOtherSec(90), restAccessorySec(90: 腹筋・カーフ), incDbKg(1), incBarKg(2), weeklyGainPct(5), timerMorningMin, timerAfterMealMin, riceBasis("raw"/"cooked"), workoutMin, warmupMin, cardioLabel, times{weight,morning,meal1..5,after_meal,warmup,workout,cardio,night}, seedVersion |
+| `settings` | `main` | startDate, unit(kg/lb), tz, waterGoalMl, restMainSec(150), restTopSec, restOtherSec(90), restAccessorySec(90: 腹筋・カーフ), incDbKg(1), incBarKg(2), weeklyGainPct(5), timerMorningMin, timerAfterMealMin, riceBasis("raw"/"cooked"), workoutMin, warmupMin, bioWeightKg(72.4: 体重未記録のときの有酸素kcal計算の初期値), cardioLabel, times{weight,morning,meal1..5,after_meal,warmup,workout,cardio,night}, seedVersion |
 | `plan_days` | dayNo | name, isRest, cardioRequired, notes |
 | `plan_exercises` | id | dayNo（数値 または 複数日の配列。腹筋は `[1,4,6]`、カーフは `[2,5]` で 1 つの exerciseId を共有し履歴が途切れない）, order, seq（SEED の並び順。order が同じ選択肢の表示順に使う）, nameJa, nameEn, isPreexhaust, supersetGroup("SS"), pair[2 動作名]（スーパーセット: 各セットを 1-1/1-2 に展開、1-1 の後は休憩なし）, progressive（セットごとに少しずつ重くする）, accessory("abs"/"calves": 最終種目のあとの枠、order 99〜101), choiceGroup（同じ値の種目はその日どれか 1 つだけを選ぶ＝「A または B」）, bodyweight（自重。重量欄を出さない）, setScheme（例 `WU10-12,TOP6-8,BO10-12` / `MAIN8-12x3` / `MAIN10-15x3,DROP*` / `TOP6-8,MID16-20` / `MID12-15x2,MID12-15?`。`*` = 限界まで、`MID` = 中重量、末尾 `?` = 任意のセット）, howTo, videoQuery, active, **sets[]**（展開済み。move/moveName/pairNo/optional） |
 | `plan_warmup` | id | name, nameEn, anim(swing/alt/cross/circle/hips/toe), reps, targetSets(3), minSets(2), steps[3]（コーチ指定 6 種、毎回必須） |
@@ -35,7 +35,7 @@
 | `foods` | foodId | nameJa, nameEn, per(100g/100ml/1pc/1scoop), kcal, p, f, c, source(plan/user/ai/ai_photo), note |
 | `log_weight` | YYYY-MM-DD | value, unit("kg"), skipped(bool), skipReason, loggedAt(ISO 8601), bodyFatPct（互換: weightKg, time, reason, reasonText） |
 | `log_workout` | YYYY-MM-DD | sets{ "exId_setNo": {exerciseId, setNo, setType(WU/MAIN/FINAL/PRE/TOP/BO/DROP/MID), weightKg, reps, loggedAt} }, choices{ choiceGroup: exerciseId }（その日「A または B」でどれを選んだか。選び直すと選択とその日の記録を消す）, meta{ exId: {note, rpe, subName} }, **warmup{completed, minutes, sets{id:n}, startedAt(ms), done(HH:mm), loggedAt, skipped, skipReason}**, finished(HH:mm), finishedAt(ISO。完了画面の所要時間 = warmup.startedAtIso → finishedAt) |
-| `log_cardio` | YYYY-MM-DD | entries[{type(jog/incline/padel/other。旧 walk/stairs も表示可), minutes, hr, note, at, loggedAt, intensity(padel のみ: light/normal/hard、既定 normal), kcal(padel のみ: 保存時点の体重×METs(5.5/7.0/8.5)×時間で計算)}] |
+| `log_cardio` | YYYY-MM-DD | entries[{type(jog/incline/padel/pickleball/other。旧 walk/stairs も表示可), minutes, hr, note, at, loggedAt, intensity(パデル・ピックルボールのみ: light/normal/hard、既定 normal), kcal(同上: 保存時点の体重×METs×時間で計算。パデル 5.5/7.0/8.5、ピックルボール 4.5/5.5/7.0)}] |
 | `log_meals` | YYYY-MM-DD | meals{ mealNo: {status(plan / substitute / skip / photo: 品目から自動判定して保存), items[{foodId, grams, kcal, p, f, c, origin(plan/add), eaten, deleted(ソフト削除・シートを閉じると確定), planGrams, estimated}], loggedAt, photoId, reason(スキップ理由), variant(""/"alt"), photo{assetId, confidence, note}, skip{reason, reasonText}} } |
 | `log_supplements` | YYYY-MM-DD | items{ id: {done, loggedAt} }、今日はなし: {done:false, na:true, reason, reasonText, loggedAt} |
 | `log_routine` | YYYY-MM-DD | items{ id: {done, loggedAt} }、水は {done, value(ml), loggedAt}、今日はなし: {na, reason} |
@@ -71,7 +71,7 @@
 
 前回の重量は全種目・全セット位置（トップ／バックオフ／ウォームアップ、スーパーセット①②）で常に表示する。`exerciseHistory(exId, setNos, beforeDate, limit)` が位置（setNo）ごとに過去日付を遡って直近 `limit` 件（無制限も可）の実施履歴を集め、`workoutModel()` の各セットに `prevWeightKg`/`prevReps`/`prevDate`/`prevSubName`/`history[]` として持たせる（単に「その種目を最後に触った日」ではなく位置ごとに独立して遡るため、途中で終えたセッションがあっても以前の記録を見失わない）。入力欄の下に「前回 M/D（N日前） ・ Xkg×Y → 今日は Zkg を提案（理由）」、履歴が2件以上あれば「履歴 …」の行（タップで `openExerciseHistorySheet()` の全履歴＋グラフ）。代替種目（subName）で実施した履歴も同じ exerciseId で拾い、当日と違うときだけ「〜で実施」を添える。未記録のセット一覧行にも薄く前回値。
 
-有酸素にパデル（Padel）を追加。強度3段階（軽め METs5.5 / ふつう 7.0 / 激しめ 8.5、既定ふつう）と 30分単位ボタン（30/60/90/120・＋30分）・自由入力を両方の記録画面（今日画面の `openCardioSheet()`、休みの日の `renderRestDay()`）に用意し、`padelKcal(minutes, intensity, weightKg)` でその場に kcal プレビューを出す。保存時にも同じ式で `entry.kcal` を確定して保存（体重未記録なら省略）。今日画面・完了画面には記録した種類に応じて「パデル 90分 ・ 約756 kcal」と Zone2 とは別物という注意書きを1行出す。`weekAdherence()` の `cardio` は `zone2`/`padel` を件数・分数で別集計し、コーチ向けレポートの Cardio 行も `Zone 2 x2 (76 min) ・ Padel x1 (90 min)` のように分けて出す（`exerciseKcalFor()` の TDEE 運動分にもそのまま加算）。
+有酸素にラケット競技（パデル・ピックルボール）を追加。強度3段階を `RACKET_INTENSITY` にまとめて持ち、パデルは 軽め 5.5 / ふつう 7.0 / 激しめ 8.5、ピックルボールは 4.5 / 5.5 / 7.0（コートが狭く移動距離が短いぶん1段階低い）。既定はどちらも「ふつう」で、種目を選び直すたびに強度チップを出し直して「ふつう」に戻す（前の種目の選択を引きずらない）。30分単位ボタン（30/60/90/120・＋30分）・分数の自由入力を両方の記録画面（今日画面の `openCardioSheet()`、休みの日の `renderRestDay()`）に用意し、`racketKcal(type, minutes, intensity, weightKg)` でその場に「消費カロリー 約 594 kcal（体重 72kg で計算）」とプレビューを出す（`kcalPreviewText()`）。計算に使う体重は `cardioWeightKg(date)` = 直近の実測値、まだ一度も測っていなければ `settings.bioWeightKg`（初期値 72.4kg）にフォールバックするので、体重未記録でもエラーにならない。保存時にも同じ式で `entry.kcal` を確定して保存する。今日画面・完了画面には記録した種目名を出して「パデル・ピックルボールは強度が変動するので、Zone 2 とは別物です」という注意書きを1行出す（`racketNote()`）。`weekAdherence()` の `cardio` は `zone2` / `padel` / `pickleball` を件数・分数・kcal で別集計し、週タブには `#cardioBreak` として「Zone 2 4回 / 目標5回」「パデル 2回 ・ 合計3.0時間 ・ 1,188 kcal」「ピックルボール 1回 ・ 合計1.5時間 ・ 594 kcal」と種目名つきで並べる（Zone 2 の遵守率にはラケット競技を入れない）。コーチ向けレポートの Cardio 行も `Zone 2 x4 (150 min) ・ Padel x2 (180 min, 3.0 hrs, ~1,188 kcal) ・ Pickleball x1 (90 min, 1.5 hrs, ~594 kcal)` のように分けて出す（`exerciseKcalFor()` の TDEE 運動分にもそのまま加算）。
 
 ## 画面
 
@@ -124,7 +124,7 @@ BMR（Mifflin-St Jeor）×活動レベル＋運動消費 を TDEE とし、日�
 
 ## テスト
 
-`npm run e2e:artifact` で mock / db（疑似ランタイム）両モードの 74 項目を実行し、結果を [TEST.md](TEST.md) に書き出す。
+`npm run e2e:artifact` で mock / db（疑似ランタイム）両モードの 75 項目を実行し、結果を [TEST.md](TEST.md) に書き出す。
 
 ## モックモード
 

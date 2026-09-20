@@ -404,7 +404,7 @@ const DEFAULT_SETTINGS = {
   times: { weight: '06:40', morning: '06:45', meal1: '07:00', after_meal: '07:05', psyllium: '07:20', warmup: '08:30', workout: '08:35',
     meal2: '10:30', meal3: '13:30', meal4: '16:30', meal5: '19:30', cardio: '21:00', night: '22:30' },
   // 「落ちた脂肪」機能: BMR(Mifflin-St Jeor) の体格情報、活動レベル、実物大表示の較正倍率
-  bioHeightCm: 170, bioAge: 31, bioSex: 'male', activityBase: 1.35, rulerScale: 1, activityAdjustedWeek: 0, activityBasePrev: 0
+  bioHeightCm: 170, bioAge: 31, bioSex: 'male', bioWeightKg: 72.4, activityBase: 1.35, rulerScale: 1, activityAdjustedWeek: 0, activityBasePrev: 0
 };
 const FOOD_ALIASES = {
   '米': 'rice', 'ご飯': 'rice', 'ごはん': 'rice', '白米': 'rice', 'rice': 'rice',
@@ -769,14 +769,35 @@ function itemLabel(it, full) {
 function macrosOfItems(items) { const t = { kcal: 0, p: 0, f: 0, c: 0 }; items.forEach(i => ['kcal', 'p', 'f', 'c'].forEach(k => { t[k] += Number(i[k]) || 0; })); ['kcal', 'p', 'f', 'c'].forEach(k => { t[k] = r1(t[k]); }); return t; }
 const macroLine = m => '約' + Math.round(m.kcal) + 'kcal ・ P' + Math.round(m.p) + ' F' + Math.round(m.f) + ' C' + Math.round(m.c);
 function latestWeightBefore(date) { const ds = Object.keys(ST.log_weight).filter(d => d < date && !ST.log_weight[d].skipped).sort(); return ds.length ? ST.log_weight[ds[ds.length - 1]] : null; }
-const CARDIO_TYPES = { jog: ['ゆっくりジョグ', 'slow jog'], incline: ['傾斜歩き', 'incline walk'], walk: ['ウォーキング', 'walk'], stairs: ['階段', 'stairs'], padel: ['パデル', 'padel'], other: ['その他', 'other'] };
+const CARDIO_TYPES = { jog: ['ゆっくりジョグ', 'slow jog'], incline: ['傾斜歩き', 'incline walk'], walk: ['ウォーキング', 'walk'], stairs: ['階段', 'stairs'], padel: ['パデル', 'padel'], pickleball: ['ピックルボール', 'pickleball'], other: ['その他', 'other'] };
 const cardioTypeJa = t => (CARDIO_TYPES[t] || [t])[0];
 const cardioTypeEn = t => (CARDIO_TYPES[t] || [t, t])[1];
-const cardioLine = c => cardioTypeJa(c.type) + ' ' + c.minutes + '分' + (c.type === 'padel' && c.kcal != null ? ' ・ 約' + Math.round(c.kcal) + ' kcal' : '') + (c.hr ? ' ・ 心拍 ' + c.hr : '') + (c.note ? '（' + c.note + '）' : '');
-// パデルは強度で METs が変わる（テニスのシングルス〜ダブルスの中間、ラリーが続き動き続ける特性から「ふつう」を 7.0 に設定）
-const PADEL_INTENSITY = [['light', '軽め（練習・ラリー中心）', 5.5], ['normal', 'ふつう（ゲーム）', 7.0], ['hard', '激しめ（試合・休みなく動く）', 8.5]];
-const padelMets = key => (PADEL_INTENSITY.find(x => x[0] === key) || PADEL_INTENSITY[1])[2];
-const padelKcal = (minutes, intensity, weightKg) => weightKg == null ? null : r1(padelMets(intensity) * weightKg * (Number(minutes) || 0) / 60);
+const cardioLine = c => cardioTypeJa(c.type) + ' ' + c.minutes + '分' + (isRacket(c.type) && c.kcal != null ? ' ・ 約' + Math.round(c.kcal) + ' kcal' : '') + (c.hr ? ' ・ 心拍 ' + c.hr : '') + (c.note ? '（' + c.note + '）' : '');
+// ラケット競技（パデル・ピックルボール）は強度で METs が変わる。Zone 2 とは別枠で集計する。
+// パデル: テニスのシングルス〜ダブルスの中間、ラリーが続き動き続ける特性から「ふつう」を 7.0 に設定。
+// ピックルボール: コートが狭く移動距離が短いぶん、パデルより1段階低い 4.5 / 5.5 / 7.0。
+const RACKET_INTENSITY = {
+  padel: [['light', '軽め（練習・ラリー中心）', 5.5], ['normal', 'ふつう（ゲーム）', 7.0], ['hard', '激しめ（試合・休みなく動く）', 8.5]],
+  pickleball: [['light', '軽め（ダブルス・ラリー中心）', 4.5], ['normal', 'ふつう（ダブルスで普通に動く）', 5.5], ['hard', '激しめ（シングルス・試合形式）', 7.0]]
+};
+const PADEL_INTENSITY = RACKET_INTENSITY.padel;
+const isRacket = t => !!RACKET_INTENSITY[t];
+const racketMets = (type, key) => { const tbl = RACKET_INTENSITY[type] || RACKET_INTENSITY.padel; return (tbl.find(x => x[0] === key) || tbl[1])[2]; };
+const racketKcal = (type, minutes, intensity, weightKg) => weightKg == null ? null : r1(racketMets(type, intensity) * weightKg * (Number(minutes) || 0) / 60);
+const padelMets = key => racketMets('padel', key);
+const padelKcal = (minutes, intensity, weightKg) => racketKcal('padel', minutes, intensity, weightKg);
+/** 記録にラケット競技が含まれていたら、Zone 2 とは別物だと種目名を出して伝える（「有酸素2種」のような数だけの表示はしない） */
+function racketNote(entries) { const has = {}; (entries || []).forEach(c => { if (isRacket(c.type)) has[c.type] = true; });
+  const names = Object.keys(RACKET_INTENSITY).filter(t => has[t]).map(cardioTypeJa); // 記録順ではなく決まった順（パデル → ピックルボール）で並べる
+  return names.length ? [names.join('・') + 'は強度が変動するので、Zone 2 とは別物です。コーチに伝えておくと調整してもらえます'] : []; }
+/** 消費カロリーの計算に使う体重: 直近の実測値。まだ一度も測っていなければプロフィールの初期値 */
+function cardioWeightKg(date) { const w = weightOnOrBefore(date); return w != null ? w : (Number(ST.settings.bioWeightKg) || 72.4); }
+/** 記録画面のカロリープレビュー: 時間・強度を変えるたびに出し直し、計算に使った体重も添える */
+function kcalPreviewText(type, minutes, intensity, weightKg) {
+  if (!(minutes > 0)) return '時間を選ぶと消費カロリーが出ます（体重 ' + r1(weightKg) + 'kg で計算）';
+  const measured = weightOnOrBefore(UI.date) != null;
+  return '消費カロリー 約 ' + Math.round(racketKcal(type, minutes, intensity, weightKg)) + ' kcal（体重 ' + r1(weightKg) + 'kg' + (measured ? '' : '・まだ測っていないので初期値') + ' で計算）';
+}
 function waterItem() { return Object.values(ST.plan_routine).find(r => r.isWater || /^水/.test(r.name)); }
 /** 水は log_daily.waterMl に保存（旧データは log_routine の水ルーティン値を読む） */
 function waterMl(date) { const dd = ST.log_daily[date]; if (dd && dd.waterMl != null) return Number(dd.waterMl) || 0; const w = waterItem(), l = ST.log_routine[date]; return w && l && l.items && l.items[w.id] ? Number(l.items[w.id].value) || 0 : 0; }
@@ -949,7 +970,7 @@ function buildTimeline(t) {
   [2, 3, 4, 5].forEach(n => { const m = mealStep(n); if (m) steps.push(m); });
   if (t.isRest) { routineSteps('post').forEach(x => { x.planned = T.cardio; steps.push(x); }); }
   const lastC = t.cardio.length ? t.cardio[t.cardio.length - 1] : null, cm = t.cardioMissed;
-  const cardioLines = t.cardio.length ? [t.cardio.map(cardioLine).join('・')].concat(t.cardio.some(c => c.type === 'padel') ? ['パデルは強度が変動するので、Zone 2 とは別物です。コーチに伝えておくと調整してもらえます'] : []) : cm ? ['できなかった（' + reasonJa(cm) + '）'] : [];
+  const cardioLines = t.cardio.length ? [t.cardio.map(cardioLine).join('・')].concat(racketNote(t.cardio)) : cm ? ['できなかった（' + reasonJa(cm) + '）'] : [];
   steps.push({ id: 'cardio', kind: 'cardio', title: '有酸素 ' + s.cardioLabel, lines: cardioLines, planned: T.cardio, done: t.cardio.length > 0, handled: t.cardio.length > 0 || !!cm, mark: t.cardio.length ? 'ok' : cm ? 'na' : '', loggedAt: lastC ? (lastC.loggedAt || legacyIso(t.date, lastC.at)) : (cm ? cm.loggedAt : ''), na: !!cm });
   const ng = suppGroup('night', T.night); if (ng) steps.push(ng);
   routineSteps('night').forEach(x => steps.push(x));
@@ -1138,11 +1159,11 @@ function movingAvgByDate(vals, days) { return vals.map(v => { const from = addDa
 function bmr(weightKg, heightCm, age, sex) { const b = 10 * Number(weightKg) + 6.25 * Number(heightCm) - 5 * Number(age); return r1(sex === 'female' ? b - 161 : b + 5); }
 /** 指定日以前でいちばん新しい実測体重（欠測日は直近の実測値を使う） */
 function weightOnOrBefore(date) { const ds = Object.keys(ST.log_weight).filter(d => d <= date && !ST.log_weight[d].skipped).sort(); return ds.length ? Number(ST.log_weight[ds[ds.length - 1]].weightKg) : null; }
-/** 運動による追加消費（kcal）: 筋トレ所要時間×6 METs、有酸素は種目ごとの METs（傾斜歩き 6.5 / ジョグ 8 / その他 5、パデルは強度3段階 5.5〜8.5、目安） */
+/** 運動による追加消費（kcal）: 筋トレ所要時間×6 METs、有酸素は種目ごとの METs（傾斜歩き 6.5 / ジョグ 8 / その他 5、パデルは強度3段階 5.5〜8.5、ピックルボールは 4.5〜7.0、目安） */
 function exerciseKcalFor(date, weightKg) {
   let kcal = 0; const wo = ST.log_workout[date];
   if (wo && wo.finished) { const w = wo.warmup || {}, start = w.startedAtIso || '', end = wo.finishedAt || ''; const min = start && end ? (new Date(end) - new Date(start)) / 60000 : 0; if (min > 0 && min <= 240) kcal += 6 * weightKg * (min / 60); }
-  ((ST.log_cardio[date] || {}).entries || []).forEach(c => { if (c.type === 'padel') { kcal += c.kcal != null ? Number(c.kcal) : padelMets(c.intensity) * weightKg * (Number(c.minutes) || 0) / 60; return; } const mets = c.type === 'jog' ? 8 : c.type === 'incline' ? 6.5 : 5; kcal += mets * weightKg * (Number(c.minutes) || 0) / 60; });
+  ((ST.log_cardio[date] || {}).entries || []).forEach(c => { if (isRacket(c.type)) { kcal += c.kcal != null ? Number(c.kcal) : racketMets(c.type, c.intensity) * weightKg * (Number(c.minutes) || 0) / 60; return; } const mets = c.type === 'jog' ? 8 : c.type === 'incline' ? 6.5 : 5; kcal += mets * weightKg * (Number(c.minutes) || 0) / 60; });
   return r1(kcal);
 }
 /** その日の消費・摂取・収支。体重の記録が一度もない、またはその日食事を1件も記録していなければ null（ゼロ扱いにしない） */
@@ -1171,14 +1192,15 @@ function missedItems(range) {
 function dayTimes(d) { const t = todayModel(d); return t.timeline.filter(x => x.planned).map(x => ({ id: x.id, title: x.title.replace(/ ・.*$/, ''), planned: x.planned, logged: x.handled && x.loggedAt ? fmtHm(x.loggedAt) : '', late: x.handled && isLate(x.loggedAt, x.planned) })); }
 function weekAdherence(range) {
   const s = ST.settings, today = todayYmd(), goal = Number(s.waterGoalMl) || 5000, activeSup = Object.values(ST.plan_supplements).filter(x => x.active !== false).length, mealsPerDay = Object.keys(ST.plan_meals).length;
-  const a = { daysElapsed: 0, workouts: { done: 0, planned: 0 }, warmup: { done: 0, planned: 0 }, cardio: { done: 0, planned: 0, minutes: 0, zone2: { count: 0, minutes: 0 }, padel: { count: 0, minutes: 0 } }, meals: { onPlan: 0, planned: 0, subs: 0, skips: 0, subFoods: {} }, supplements: { done: 0, planned: 0, pct: 0 }, water: { ok: 0, days: 0 } };
+  const a = { daysElapsed: 0, workouts: { done: 0, planned: 0 }, warmup: { done: 0, planned: 0 }, cardio: { done: 0, planned: 0, minutes: 0, zone2: { count: 0, minutes: 0, kcal: 0 }, padel: { count: 0, minutes: 0, kcal: 0 }, pickleball: { count: 0, minutes: 0, kcal: 0 } }, meals: { onPlan: 0, planned: 0, subs: 0, skips: 0, subFoods: {} }, supplements: { done: 0, planned: 0, pct: 0 }, water: { ok: 0, days: 0 } };
   for (let d = range.start; d <= range.end; d = addDays(d, 1)) {
     if (d > today) continue;
     a.daysElapsed++; const pd = planDay(d), rest = isRestDay(d), wo = ST.log_workout[d];
     if (!rest) { a.workouts.planned++; if (wo && Object.keys(wo.sets || {}).length) a.workouts.done++; a.warmup.planned++; if (wo && wo.warmup && wo.warmup.done) a.warmup.done++; }
     const cardio = (ST.log_cardio[d] || {}).entries || []; if (pd.cardioRequired !== false) { a.cardio.planned++; if (cardio.length) a.cardio.done++; } a.cardio.minutes += cardio.reduce((x, c) => x + Number(c.minutes || 0), 0);
-    // パデルはコーチ指定の Zone 2 とは別物として週まとめ・レポートで分けて出す
-    cardio.forEach(c => { const bucket = c.type === 'padel' ? a.cardio.padel : a.cardio.zone2; bucket.count++; bucket.minutes += Number(c.minutes) || 0; });
+    // パデル・ピックルボールはコーチ指定の Zone 2 とは別物として週まとめ・レポートで分けて出す
+    cardio.forEach(c => { const bucket = a.cardio[c.type] || a.cardio.zone2; bucket.count++; bucket.minutes += Number(c.minutes) || 0;
+      bucket.kcal += c.kcal != null ? Number(c.kcal) : (isRacket(c.type) ? racketMets(c.type, c.intensity) * cardioWeightKg(d) * (Number(c.minutes) || 0) / 60 : 0); });
     a.meals.planned += mealsPerDay;
     Object.values((ST.log_meals[d] || {}).meals || {}).forEach(m => { const ms = normStatus(m.status); if (ms === 'plan' || ms === 'sub') a.meals.onPlan++; else if (ms === 'skip') a.meals.skips++; if (ms === 'sub') { a.meals.subs++; (m.items || []).forEach(it => { a.meals.subFoods[it.foodId] = (a.meals.subFoods[it.foodId] || 0) + 1; }); } });
     a.supplements.planned += activeSup; Object.values((ST.log_supplements[d] || {}).items || {}).forEach(x => { if (x.done) a.supplements.done++; });
@@ -1204,8 +1226,13 @@ function weeklyReport(weekNo, opts) {
   const link = (label, items, via) => via ? label + ': sent via Messenger' : label + ': ' + (items.length ? items.map(m => m.url || ('/_blob/' + m.assetId)).join(' ') : 'none');
   const tl = []; let onTime = 0, logged = 0; sm.days.forEach(x => x.times.forEach(tm => { if (!tm.logged) return; logged++; if (!tm.late) onTime++; else tl.push(x.date.slice(5) + ' ' + tm.title + ' ' + tm.logged + ' (plan ' + tm.planned + ')'); }));
   const timeLine = 'Timing: ' + onTime + '/' + logged + ' logged within 60 min of plan' + (tl.length ? '; late: ' + tl.join(', ') : '');
-  // パデルを一度もやっていない週は今までどおり「X/Y done (min)」。パデルがある週だけ Zone 2 と分けた内訳に切り替える
-  const cardioSeg = a.cardio.padel.count ? [a.cardio.zone2.count ? 'Zone 2 x' + a.cardio.zone2.count + ' (' + a.cardio.zone2.minutes + ' min)' : '', 'Padel x' + a.cardio.padel.count + ' (' + a.cardio.padel.minutes + ' min)'].filter(Boolean).join(' ・ ') : a.cardio.done + '/' + a.cardio.planned + (a.cardio.minutes ? ' (' + a.cardio.minutes + ' min)' : '');
+  // パデルもピックルボールもやっていない週は今までどおり「X/Y done (min)」。どちらかがある週だけ Zone 2 と分けた内訳に切り替える
+  const hrs = m => r1(m / 60).toFixed(1);
+  const racketSeg = (label, b) => label + ' x' + b.count + ' (' + b.minutes + ' min, ' + hrs(b.minutes) + ' hrs, ~' + fmtN(Math.round(b.kcal)) + ' kcal)';
+  const anyRacket = a.cardio.padel.count || a.cardio.pickleball.count;
+  const cardioSeg = anyRacket ? [a.cardio.zone2.count ? 'Zone 2 x' + a.cardio.zone2.count + ' (' + a.cardio.zone2.minutes + ' min)' : '',
+    a.cardio.padel.count ? racketSeg('Padel', a.cardio.padel) : '',
+    a.cardio.pickleball.count ? racketSeg('Pickleball', a.cardio.pickleball) : ''].filter(Boolean).join(' ・ ') : a.cardio.done + '/' + a.cardio.planned + (a.cardio.minutes ? ' (' + a.cardio.minutes + ' min)' : '');
   return ['Week ' + sm.weekNo + ' (' + shortRange(r.start, r.end) + ') Report', wLine,
     'Workouts: ' + a.workouts.done + '/' + a.workouts.planned + ' done, Warm-up: ' + a.warmup.done + '/' + a.warmup.planned + ', Cardio: ' + cardioSeg,
     'Heaviest sets: ' + (topParts.length ? topParts.join(' / ') : 'n/a'),
@@ -1317,7 +1344,7 @@ const A = {
   async warmupSkip(date, reason) { const doc = workoutDoc(date); await store.set('log_workout', date, Object.assign({}, doc, { warmup: Object.assign({}, doc.warmup, { skipped: true, completed: false, skipReason: reason, done: '' }) })); await A.setDaily(date, { warmupSkipped: { reason, at: nowHm() } }); },
   async saveCardio(date, type, minutes, note, hr, intensity) { if (!minutes || isNaN(Number(minutes))) throw new Error('分数を入力してください'); const doc = Object.assign({ date, entries: [] }, ST.log_cardio[date]); const at = isoNow();
     const entry = { type, minutes: Number(minutes), note: note || '', hr: hr ? Number(hr) : '', at: fmtHm(at), loggedAt: at };
-    if (type === 'padel') { entry.intensity = intensity || 'normal'; const k = padelKcal(entry.minutes, entry.intensity, weightOnOrBefore(date)); if (k != null) entry.kcal = k; }
+    if (isRacket(type)) { entry.intensity = intensity || 'normal'; const k = racketKcal(type, entry.minutes, entry.intensity, cardioWeightKg(date)); if (k != null) entry.kcal = k; }
     await store.set('log_cardio', date, { date, entries: doc.entries.concat([entry]) }); },
   async addMedia(m) { const id = (m.date + '_' + Date.now().toString(36)).replace(/[^A-Za-z0-9_\-.~:@+]/g, '_'); await store.set('log_media', id, Object.assign({ id, loggedAt: isoNow() }, m)); return id; },
   async setSuppDose(id, dose) { const cur = ST.plan_supplements[String(id)]; if (!cur) throw new Error('サプリがありません'); await store.set('plan_supplements', String(id), Object.assign({}, cur, { dose, pending: !dose })); },
@@ -1646,15 +1673,18 @@ async function confirmDayChange(date, newDayNo) {
   UI.dayPicker = null; closeSheet(); act(A.changeDayPlan(date, newDayNo), '部位を変更しました');
 }
 function openCardioSheet(after) {
-  const wKg = weightOnOrBefore(UI.date);
-  const s = openSheet('<h3>有酸素を記録</h3><div class="mute small" style="margin-bottom:8px">' + esc(ST.settings.cardioLabel) + '</div><div class="chips" id="cType"><button data-t="jog">ゆっくりジョグ</button><button class="on" data-t="incline">傾斜歩き</button><button data-t="padel">パデル</button><button data-t="other">その他</button></div>' +
-    '<div id="cPadelBlock" hidden><div class="chips" id="cPadelMin"><button data-pmin="30">30分</button><button data-pmin="60">60分</button><button data-pmin="90">90分</button><button data-pmin="120">120分</button><button data-pmin="+30">＋30分</button></div><div class="chips" id="cIntensity">' + PADEL_INTENSITY.map(x => '<button data-int="' + x[0] + '"' + (x[0] === 'normal' ? ' class="on"' : '') + '>' + esc(x[1]) + '</button>').join('') + '</div><div class="mute small" id="cKcalPreview" style="margin-top:4px"></div></div>' +
+  const wKg = cardioWeightKg(UI.date);
+  const s = openSheet('<h3>有酸素を記録</h3><div class="mute small" style="margin-bottom:8px">' + esc(ST.settings.cardioLabel) + '</div><div class="chips" id="cType"><button data-t="jog">ゆっくりジョグ</button><button class="on" data-t="incline">傾斜歩き</button><button data-t="padel">パデル</button><button data-t="pickleball">ピックルボール</button><button data-t="other">その他</button></div>' +
+    '<div id="cPadelBlock" hidden><div class="chips" id="cPadelMin"><button data-pmin="30">30分</button><button data-pmin="60">60分</button><button data-pmin="90">90分</button><button data-pmin="120">120分</button><button data-pmin="+30">＋30分</button></div><div class="chips" id="cIntensity"></div><div class="mute small" id="cKcalPreview" style="margin-top:4px"></div></div>' +
     '<label class="lbl" for="cMin">分数</label><div class="w-in"><input type="number" inputmode="numeric" id="cMin" placeholder="40"><span class="u">分</span></div><label class="lbl" for="cHr">平均心拍数（任意）</label><div class="w-in"><input type="number" inputmode="numeric" id="cHr" placeholder="130"><span class="u">bpm</span></div><label class="lbl" for="cNote">メモ</label><input type="text" class="txt" id="cNote"><div class="btns" style="margin-top:12px"><button class="b-sub" id="cSkip">' + (after ? 'あとで' : 'キャンセル') + '</button><button class="b-yel" id="cSave">保存</button></div>');
   let type = 'incline', intensity = 'normal';
-  const updateKcal = () => { if (type !== 'padel') return; const min = Number($('#cMin', s).value) || 0, k = padelKcal(min, intensity, wKg), el = $('#cKcalPreview', s); el.textContent = wKg == null ? '体重の記録が無いのでカロリーは計算できません' : min > 0 ? '約 ' + Math.round(k) + ' kcal' : ''; };
-  $$('#cType button', s).forEach(b => { b.onclick = () => { type = b.dataset.t; $$('#cType button', s).forEach(x => x.classList.toggle('on', x === b)); $('#cPadelBlock', s).hidden = type !== 'padel'; updateKcal(); }; });
+  const updateKcal = () => { if (!isRacket(type)) return; const min = Number($('#cMin', s).value) || 0; $('#cKcalPreview', s).textContent = kcalPreviewText(type, min, intensity, wKg); };
+  // 強度の選択肢は種目ごとに METs が違うので、種目を選び直すたびに出し直す（初期値はいつも「ふつう」）
+  const drawIntensity = () => { if (!isRacket(type)) return; intensity = 'normal';
+    $('#cIntensity', s).innerHTML = RACKET_INTENSITY[type].map(x => '<button data-int="' + x[0] + '"' + (x[0] === 'normal' ? ' class="on"' : '') + '>' + esc(x[1]) + '</button>').join('');
+    $$('#cIntensity button', s).forEach(b => { b.onclick = () => { intensity = b.dataset.int; $$('#cIntensity button', s).forEach(x => x.classList.toggle('on', x === b)); updateKcal(); }; }); };
+  $$('#cType button', s).forEach(b => { b.onclick = () => { type = b.dataset.t; $$('#cType button', s).forEach(x => x.classList.toggle('on', x === b)); $('#cPadelBlock', s).hidden = !isRacket(type); drawIntensity(); updateKcal(); }; });
   $$('#cPadelMin button', s).forEach(b => { b.onclick = () => { const v = b.dataset.pmin, cur = Number($('#cMin', s).value) || 0; $('#cMin', s).value = v[0] === '+' ? cur + Number(v.slice(1)) : Number(v); updateKcal(); }; });
-  $$('#cIntensity button', s).forEach(b => { b.onclick = () => { intensity = b.dataset.int; $$('#cIntensity button', s).forEach(x => x.classList.toggle('on', x === b)); updateKcal(); }; });
   $('#cMin', s).oninput = updateKcal;
   $('#cMin', s).focus();
   $('#cSkip', s).onclick = () => { closeSheet(); if (after) after(); else render(); };
@@ -1950,11 +1980,11 @@ function stickSvg(anim) {
 }
 /** 休みの日（Day 3・7）: ウォームアップなしでいきなり有酸素の記録画面。記録 or 「今日はやらない」で完了画面へ */
 function renderRestDay(d) {
-  const wKg = weightOnOrBefore(d.date);
+  const wKg = cardioWeightKg(d.date);
   let h = '<h1 class="tap" id="wkDayHead">Day ' + d.dayNo + ' ・ 休み（有酸素のみ）</h1>';
   h += '<div class="cur-set"><div class="k">今日は有酸素のみ</div><div class="n">' + esc(ST.settings.cardioLabel) + '</div></div>';
-  h += '<div class="chips" id="rcType"><button data-t="jog">ゆっくりジョグ</button><button class="on" data-t="incline">傾斜歩き</button><button data-t="padel">パデル</button><button data-t="other">その他</button></div>';
-  h += '<div id="rcPadelBlock" hidden><div class="chips" id="rcPadelMin"><button data-pmin="30">30分</button><button data-pmin="60">60分</button><button data-pmin="90">90分</button><button data-pmin="120">120分</button><button data-pmin="+30">＋30分</button></div><div class="chips" id="rcIntensity">' + PADEL_INTENSITY.map(x => '<button data-int="' + x[0] + '"' + (x[0] === 'normal' ? ' class="on"' : '') + '>' + esc(x[1]) + '</button>').join('') + '</div><div class="mute small" id="rcKcalPreview" style="margin-top:4px"></div></div>';
+  h += '<div class="chips" id="rcType"><button data-t="jog">ゆっくりジョグ</button><button class="on" data-t="incline">傾斜歩き</button><button data-t="padel">パデル</button><button data-t="pickleball">ピックルボール</button><button data-t="other">その他</button></div>';
+  h += '<div id="rcPadelBlock" hidden><div class="chips" id="rcPadelMin"><button data-pmin="30">30分</button><button data-pmin="60">60分</button><button data-pmin="90">90分</button><button data-pmin="120">120分</button><button data-pmin="+30">＋30分</button></div><div class="chips" id="rcIntensity"></div><div class="mute small" id="rcKcalPreview" style="margin-top:4px"></div></div>';
   h += '<label class="lbl" for="rcMin">時間（分）</label><div class="w-in"><input type="number" inputmode="numeric" id="rcMin" placeholder="40"><span class="u">分</span></div>';
   h += '<label class="lbl" for="rcHr">平均心拍数（任意）</label><div class="w-in"><input type="number" inputmode="numeric" id="rcHr" placeholder="130"><span class="u">bpm</span></div>';
   h += '<button class="done-btn" id="rcSave">記録する</button>';
@@ -1962,10 +1992,12 @@ function renderRestDay(d) {
   view.innerHTML = h;
   $('#wkDayHead').onclick = () => openDayPicker(d.date);
   let type = 'incline', intensity = 'normal';
-  const updateKcal = () => { if (type !== 'padel') return; const min = Number($('#rcMin').value) || 0, k = padelKcal(min, intensity, wKg), el = $('#rcKcalPreview'); el.textContent = wKg == null ? '体重の記録が無いのでカロリーは計算できません' : min > 0 ? '約 ' + Math.round(k) + ' kcal' : ''; };
-  $$('#rcType button', view).forEach(b => { b.onclick = () => { type = b.dataset.t; $$('#rcType button', view).forEach(x => x.classList.toggle('on', x === b)); $('#rcPadelBlock').hidden = type !== 'padel'; updateKcal(); }; });
+  const updateKcal = () => { if (!isRacket(type)) return; const min = Number($('#rcMin').value) || 0; $('#rcKcalPreview').textContent = kcalPreviewText(type, min, intensity, wKg); };
+  const drawIntensity = () => { if (!isRacket(type)) return; intensity = 'normal';
+    $('#rcIntensity').innerHTML = RACKET_INTENSITY[type].map(x => '<button data-int="' + x[0] + '"' + (x[0] === 'normal' ? ' class="on"' : '') + '>' + esc(x[1]) + '</button>').join('');
+    $$('#rcIntensity button', view).forEach(b => { b.onclick = () => { intensity = b.dataset.int; $$('#rcIntensity button', view).forEach(x => x.classList.toggle('on', x === b)); updateKcal(); }; }); };
+  $$('#rcType button', view).forEach(b => { b.onclick = () => { type = b.dataset.t; $$('#rcType button', view).forEach(x => x.classList.toggle('on', x === b)); $('#rcPadelBlock').hidden = !isRacket(type); drawIntensity(); updateKcal(); }; });
   $$('#rcPadelMin button', view).forEach(b => { b.onclick = () => { const v = b.dataset.pmin, cur = Number($('#rcMin').value) || 0; $('#rcMin').value = v[0] === '+' ? cur + Number(v.slice(1)) : Number(v); updateKcal(); }; });
-  $$('#rcIntensity button', view).forEach(b => { b.onclick = () => { intensity = b.dataset.int; $$('#rcIntensity button', view).forEach(x => x.classList.toggle('on', x === b)); updateKcal(); }; });
   $('#rcMin').oninput = updateKcal;
   $('#rcSave').onclick = () => { const min = $('#rcMin').value; if (!min || isNaN(Number(min))) return toast('時間（分）を入力してください', true); const hr = $('#rcHr').value; vibrate(80); act(A.saveCardio(d.date, type, min, '', hr, intensity).then(() => A.finishWorkout(d.date)), '記録しました').then(() => window.scrollTo(0, 0)); };
   $('#rcSkip').onclick = () => askReason('workout', '今日はやらない', '有酸素ができなかった理由').then(r => { if (r) act(A.cardioMissed(d.date, r.reason, r.reasonText).then(() => A.finishWorkout(d.date)), '記録しました').then(() => window.scrollTo(0, 0)); });
@@ -2139,7 +2171,7 @@ function renderComplete(d) {
     }
     let v; if (!done.length) v = '— スキップ'; else v = done.map(x => setActual(x) + (x.setType === 'DROP' ? '（ドロップ）' : x.setType === 'TOP' ? '（トップ）' : '')).join('、');
     return ['<div class="cmp-row"><span>' + esc(ex.subName || ex.nameJa) + '</span><span class="v">' + esc(v) + '</span></div>']; }).join('') + '</div>';
-  h += '<div class="card"><div class="ttl">有酸素 <span class="mute small">' + esc(ST.settings.cardioLabel) + '</span></div>' + (cd.length ? '<div class="cmp-row"><span>' + esc(cd.map(cardioLine).join('、')) + '</span><span class="v">記録済み</span></div>' + (cd.some(c => c.type === 'padel') ? '<div class="mute small" style="margin-top:6px">パデルは強度が変動するので、Zone 2 とは別物です。コーチに伝えておくと調整してもらえます</div>' : '') : cm ? '<div class="cmp-row"><span>今日はやらない（' + esc(reasonJa(cm)) + '）</span></div>' : '<div class="btns"><button class="b-yel" id="cmpCardio">有酸素を記録</button><button class="b-sub" id="cmpCardioNo">今日はやらない（理由）</button></div><div class="mute small" style="margin-top:6px">あとで今日画面の有酸素行からも入力できます</div>') + '</div>';
+  h += '<div class="card"><div class="ttl">有酸素 <span class="mute small">' + esc(ST.settings.cardioLabel) + '</span></div>' + (cd.length ? '<div class="cmp-row"><span>' + esc(cd.map(cardioLine).join('、')) + '</span><span class="v">記録済み</span></div>' + racketNote(cd).map(x => '<div class="mute small" style="margin-top:6px">' + esc(x) + '</div>').join('') : cm ? '<div class="cmp-row"><span>今日はやらない（' + esc(reasonJa(cm)) + '）</span></div>' : '<div class="btns"><button class="b-yel" id="cmpCardio">有酸素を記録</button><button class="b-sub" id="cmpCardioNo">今日はやらない（理由）</button></div><div class="mute small" style="margin-top:6px">あとで今日画面の有酸素行からも入力できます</div>') + '</div>';
   const txt = UI.reportDraft && UI.reportDraft.date === d.date ? UI.reportDraft.text : dayReport(d.date);
   h += '<div class="card"><div class="ttl">コーチ報告用テキスト <span class="mute small">英語 ・ Messenger 貼り付け用 ・ 編集できます</span></div><textarea class="rep-ta" id="repDay">' + esc(txt) + '</textarea><div class="btns" style="margin-top:8px"><button class="b-yel" id="repCopy">コピー</button><button class="b-sub" id="repRegen">実データから作り直す</button></div></div>';
   h += '<div class="btns" style="margin-top:12px">' + (d.isRest ? '' : '<button class="b-sub" id="cmpReview">セットを見直す</button>') + '<button class="b-main" id="cmpBack">今日の画面に戻る</button></div>';
@@ -2191,6 +2223,12 @@ function renderSummary() {
     '<div><div class="n">' + a.workouts.done + '<span> / ' + a.workouts.planned + '</span></div><div class="l">筋トレ ・ ウォームアップ ' + a.warmup.done + '/' + a.warmup.planned + '</div></div>' +
     '<div><div class="n">' + a.meals.onPlan + '<span> / ' + a.meals.planned + '</span></div><div class="l">食事 プラン通り' + (a.meals.subs ? '（差替え ' + a.meals.subs + '）' : '') + (d.photoMeals ? ' ・ 写真記録 ' + d.photoMeals + '回（推定値含む）' : '') + '</div></div>' +
     '<div><div class="n">' + a.cardio.done + '<span> / ' + a.cardio.planned + '</span></div><div class="l">有酸素 ・ サプリ ' + a.supplements.pct + '% ・ 水 ' + a.water.ok + '/' + a.water.days + '</div></div></div>';
+  // 有酸素の内訳。Zone 2 とラケット競技（パデル・ピックルボール）は別枠なので、種目名を出して分けて並べる
+  { const c = a.cardio, hrs = m => r1(m / 60).toFixed(1);
+    const rows = [['Zone 2', c.zone2.count + '回 / 目標' + c.planned + '回']];
+    [['パデル', c.padel], ['ピックルボール', c.pickleball]].forEach(([nm, b]) => { if (b.count) rows.push([nm, b.count + '回 ・ 合計' + hrs(b.minutes) + '時間 ・ ' + fmtN(b.kcal) + ' kcal']); });
+    h += '<div class="spark" id="cardioBreak"><div class="h"><span>有酸素</span></div>' + rows.map(r => '<div class="r"><span>' + esc(r[0]) + '</span><span>' + esc(r[1]) + '</span></div>').join('') +
+      (c.padel.count || c.pickleball.count ? '<div class="mute small" style="margin-top:6px">パデル・ピックルボールは Zone 2 の遵守率には入れていません</div>' : '') + '</div>'; }
   h += '<div class="spark"><div class="h"><span>日別の合計と遵守</span></div><div style="overflow-x:auto"><table class="hist"><tr><th>日</th><th>kcal</th><th>食事</th><th>ウォームアップ</th><th>筋トレ</th><th>有酸素</th><th>水</th><th>サプリ</th><th>遅れ</th></tr>' +
     (d.days.length ? d.days.map(x => '<tr><td>' + md(x.date) + ' Day' + x.dayNo + '</td><td>' + fmtN(x.kcal) + '<span class="mute">/' + fmtN(x.planKcal) + '</span></td><td class="' + (x.mealsOk === x.mealsN ? 'ok' : 'ng') + '">' + x.mealsOk + '/' + x.mealsN + '</td><td class="' + (x.warmup ? 'ok' : 'ng') + '">' + (x.warmup ? '✓' : '—') + '</td><td class="' + (x.workout === null ? 'ng' : x.workout ? 'ok' : 'ng') + '">' + (x.workout === null ? '休' : x.workout ? '✓' : '—') + '</td><td class="' + (x.cardio ? 'ok' : 'ng') + '">' + (x.cardio ? '✓' : '—') + '</td><td class="' + (x.water ? 'ok' : 'ng') + '">' + (x.water ? '✓' : '—') + '</td><td>' + x.supps + '%</td><td style="color:' + (x.times.some(tm => tm.late) ? 'var(--yellow)' : 'var(--done)') + '">' + x.times.filter(tm => tm.late).length + '</td></tr>').join('') : '<tr><td colspan="9" class="ng">まだ記録なし</td></tr>') + '</table></div>' +
     (d.days.length ? '<details style="margin-top:8px"><summary class="mute small" style="cursor:pointer">予定と実績の時刻（日別）</summary><div style="overflow-x:auto"><table class="hist"><tr><th>日</th><th>項目</th><th>予定</th><th>実績</th></tr>' + d.days.flatMap(x => x.times.map(tm => '<tr><td>' + md(x.date) + '</td><td>' + esc(tm.title) + '</td><td>' + esc(tm.planned) + '</td><td class="' + (tm.logged && !tm.late ? 'ok' : 'ng') + '" style="color:' + (tm.late ? 'var(--yellow)' : '') + '">' + esc(tm.logged || '—') + '</td></tr>')).join('') + '</table></div></details>' : '') + '</div>';
@@ -2336,7 +2374,7 @@ async function boot() {
   use('downloads').then(dl => { CAP.downloads = dl; scheduleRender(); });
 }
 window.addEventListener('beforeunload', () => { try { localStorage.setItem('tl.tab', UI.tab); } catch (e) { /* ignore */ } });
-window.__tl = { resizeImage, validateEstimate, isSnack, mealLabel, parseSetScheme, expandPairSets, repsText, setLabel, setActual, dayReport, bumpKg, warmupMinutesText, setUnits, shortExerciseList, bmr, exerciseKcalFor, dayCalorieBalance, fatModel, fatVisual, suggestActivityBase, weightOnOrBefore, weekAdherence, matchFood, dayNoFor, padelKcal, padelMets, weeklyReport }; // テスト用フック（純粋関数のみ）
+window.__tl = { resizeImage, validateEstimate, isSnack, mealLabel, parseSetScheme, expandPairSets, repsText, setLabel, setActual, dayReport, bumpKg, warmupMinutesText, setUnits, shortExerciseList, bmr, exerciseKcalFor, dayCalorieBalance, fatModel, fatVisual, suggestActivityBase, weightOnOrBefore, cardioWeightKg, weekAdherence, matchFood, dayNoFor, padelKcal, padelMets, racketKcal, racketMets, isRacket, weeklyReport }; // テスト用フック（純粋関数のみ）
 boot();
 })();
 </script>

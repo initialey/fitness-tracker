@@ -21,7 +21,7 @@ Claude Artifact 1 ファイル（`index.html`）。スマホの claude.ai だけ
 | ウォームアップ | 毎回 6 種（腕前後振り・交互振り・胸クロス・腕回し・腰回し・つま先タッチ）各 10 回 × 2 セット。完了しないと先に進めない |
 | 腹筋（確定） | 週 3 回 = Day 1・4・6、その日の最終種目のあと。3 種すべてをこの順番で（選択式ではない）: ①ケーブルクランチ 3 × 15〜20 ②ケーブル 片手 オブリーククランチ 3 × 15〜20（左右の両方をやって 1 セット、回数は片側あたり）③ハンギングニーレイズ 3 × 15〜20（自重・重量欄なし、回数だけ記録）。休憩 60〜90 秒。提案は前回と同じ重量、前回 20 回に届いたら +2.5kg。Day 3・7 には出さない。画面・レポートとも種目名を省略せず全部出す（「腹筋3種」のような数だけの表示は禁止） |
 | カーフ（確定） | 週 2〜3 回 = Day 2・5、その日の最終種目のあと。3 種から 1 つだけ選ぶ（選択カード）: A スミスマシン カーフレイズ／B ドンキーカーフレイズ／C レッグプレス トープレス。2 セット必須・3 セット目は任意（飛ばせる）、15〜20 回。休憩 60〜90 秒。提案は前回と同じ重量、前回 20 回に届いたら +5kg。3 種は別々の exerciseId で、履歴・提案・グラフは混ぜない。Day 1・3・4・6・7 には出さない |
-| 有酸素 | 35〜40 分・Zone2（ゆっくりジョグ or 傾斜歩き）。夜でも OK。毎日。パデルをやった日はその代わりとして記録可（Zone2 とは別枠。METs 5.5〜8.5 の3段階、既定7.0で自動 kcal 計算） |
+| 有酸素 | 35〜40 分・Zone2（ゆっくりジョグ or 傾斜歩き）。夜でも OK。毎日。パデル・ピックルボールをやった日はその代わりとして記録可（どちらも Zone2 とは別枠で集計し、Zone2 の遵守率には入れない）。30 分単位のボタン（30/60/90/120＋30分）と分数の自由入力、強度3段階（既定「ふつう」）で消費カロリーをその場で自動計算し、計算に使った体重も表示する。METs: パデル 5.5 / 7.0 / 8.5、ピックルボール 4.5 / 5.5 / 7.0（コートが狭く移動距離が短いぶん、パデルより1段階低い）。消費カロリー = METs × 体重(kg) × 時間(h)。体重は直近の実測値、まだ一度も測っていなければプロフィールの初期値 72.4kg |
 | 前回の重量 | 全種目・全セット位置（トップ／バックオフ／ウォームアップ／スーパーセット①②）で必ず前回値を表示。「前回 M/D（N日前） ・ Xkg×Y → 今日は Zkg を提案」＋ 直近3回の履歴（タップで全履歴グラフ）。代替種目で実施した履歴も拾う。初回は「初回です」＋クイック重量ボタン |
 | 器具（Q&A） | T-bar→ベントオーバーロウ／レッグプレス→スミス ハックスクワット／シーテッドハムカール→ライイング レッグカール or RDL／アダクター→ケーブルアブダクション＋スモウスクワット（スーパーセット）／カーフ→スミスマシン カーフレイズ・ドンキーカーフレイズ・レッグプレス トープレスの3択／マシンロウ上ハンドル→ワイドグリップ・胸の高さ／ロープアタッチメント購入必須 |
 
@@ -177,13 +177,13 @@ Day の判定は「未消化キュー」方式（カレンダー計算だけだ�
 
 | コレクション | 主なフィールド |
 |---|---|
-| `settings/main` | startDate, unit, riceBasis, restTopSec 180, restMainSec 120, restOtherSec 120, restAccessorySec 90, incDbKg 1, weeklyGainPct 5, times{…}, seedVersion, bioHeightCm, bioAge, bioSex, activityBase, rulerScale, activityAdjustedWeek, activityBasePrev（落ちた脂肪の計算・較正・自動補正用） |
+| `settings/main` | startDate, unit, riceBasis, restTopSec 180, restMainSec 120, restOtherSec 120, restAccessorySec 90, incDbKg 1, weeklyGainPct 5, times{…}, seedVersion, bioHeightCm, bioAge, bioSex, bioWeightKg 72.4（体重未記録のときの有酸素kcal計算の初期値）, activityBase, rulerScale, activityAdjustedWeek, activityBasePrev（落ちた脂肪の計算・較正・自動補正用） |
 | `plan_days` / `plan_exercises` / `plan_warmup` / `plan_meals` / `plan_supplements` / `plan_routine` / `foods` | 上記マスタ（`SEED_VERSION` を上げると plan_* と plan 由来の foods を差し替え。ログは触らない）。`plan_exercises` は dayNo（数値 または 複数日の配列 = 腹筋 [1,4,6]・カーフ [2,5]）, setScheme（`WU10-12,TOP6-8,BO10-12` / `MAIN8,MAIN10,MAIN12` / `MAIN10-15x3,DROP*` / `MID12-15x2,MID12-15?` = 末尾 `?` は任意のセット）, progressive, pair[2 動作], accessory("abs"/"calves"), choiceGroup（同じ値の種目はその日どれか 1 つだけを選んでやる）, bodyweight（自重・重量欄なし）を持つ |
 | `log_weight/{date}` | value, unit "kg", skipped(bool), skipReason, loggedAt（互換: weightKg, reason） |
 | `log_workout/{date}` | sets{"exId_setNo": {exerciseId, setNo, setType, weightKg, reps, loggedAt}}（スーパーセットは 1-1/1-2 が別 setNo）, choices{choiceGroup: exerciseId}（その日「A または B」でどれを選んだか。選び直すと選択が消え、そのとき記録済みのセットも消える）, meta{exId: {note, rpe, subName}}, warmup{completed, minutes, sets, loggedAt, skipped, skipReason}, finished, finishedAt（完了画面はここから所要時間を出す） |
 | `log_meals/{date}` | meals{mealNo または snack_N（間食・プラン外）: {status: plan / substitute / skip / photo, items[{foodId, grams, kcal, p, f, c, origin, eaten, deleted, planGrams, estimated}], loggedAt, photoId, reason, variant, photo{assetId, confidence, note}}} |
 | `log_supplements/{date}` `log_routine/{date}` | items{id: {done, loggedAt}}（今日はなし: na, reason）。水は value(ml) |
-| `log_cardio/{date}` | entries[{type: jog / incline / padel / other, minutes, hr, note, loggedAt, intensity（padel のみ: light/normal/hard）, kcal（padel のみ: 保存時点の体重で計算した消費kcal）}] |
+| `log_cardio/{date}` | entries[{type: jog / incline / padel / pickleball / other, minutes, hr, note, loggedAt, intensity（パデル・ピックルボールのみ: light/normal/hard）, kcal（パデル・ピックルボールのみ: 保存時点の体重で計算した消費kcal）}] |
 | `log_daily/{date}` | dayNo（手動上書き。「未消化キュー」の差し替えはこれだけで表現し、他の日付は触らない）, dayChange{from, loggedAt}, dayName, notes, waterMl, waterLoggedAt, skippedItems[{item, reason}], workoutMissed{reason}, cardioMissed, warmupSkipped |
 | `log_media/{id}` | date, type, category(body/form/meal), assetId, mealNo, exerciseId |
 
