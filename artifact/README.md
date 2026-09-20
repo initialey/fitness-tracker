@@ -25,16 +25,16 @@
 
 | コレクション | doc id | 内容 |
 |---|---|---|
-| `settings` | `main` | startDate, unit(kg/lb), tz, waterGoalMl, restMainSec(150), restTopSec, restOtherSec(90), incDbKg(1), incBarKg(2), weeklyGainPct(5), timerMorningMin, timerAfterMealMin, riceBasis("raw"/"cooked"), workoutMin, warmupMin, cardioLabel, times{weight,morning,meal1..5,after_meal,warmup,workout,cardio,night}, seedVersion |
+| `settings` | `main` | startDate, unit(kg/lb), tz, waterGoalMl, restMainSec(150), restTopSec, restOtherSec(90), restAccessorySec(90: 腹筋・カーフ), incDbKg(1), incBarKg(2), weeklyGainPct(5), timerMorningMin, timerAfterMealMin, riceBasis("raw"/"cooked"), workoutMin, warmupMin, cardioLabel, times{weight,morning,meal1..5,after_meal,warmup,workout,cardio,night}, seedVersion |
 | `plan_days` | dayNo | name, isRest, cardioRequired, notes |
-| `plan_exercises` | id | dayNo, order, nameJa, nameEn, isPreexhaust, supersetGroup("SS"), pair[2 動作名]（スーパーセット: 各セットを 1-1/1-2 に展開、1-1 の後は休憩なし）, progressive（セットごとに少しずつ重くする、+5% 提案）, accessory("abs"/"calves": 最終種目のあとの枠、order 99), setScheme（例 `WU10-12,TOP6-8,BO10-12` / `MAIN8-12x3` / `MAIN10-15x3,DROP*`。`*` = 限界まで）, howTo, videoQuery, active, **sets[]**（展開済み。move/moveName/pairNo） |
+| `plan_exercises` | id | dayNo（数値 または 複数日の配列。腹筋は `[1,4,6]`、カーフは `[2,5]` で 1 つの exerciseId を共有し履歴が途切れない）, order, seq（SEED の並び順。order が同じ選択肢の表示順に使う）, nameJa, nameEn, isPreexhaust, supersetGroup("SS"), pair[2 動作名]（スーパーセット: 各セットを 1-1/1-2 に展開、1-1 の後は休憩なし）, progressive（セットごとに少しずつ重くする）, accessory("abs"/"calves": 最終種目のあとの枠、order 99〜101), choiceGroup（同じ値の種目はその日どれか 1 つだけを選ぶ＝「A または B」）, bodyweight（自重。重量欄を出さない）, setScheme（例 `WU10-12,TOP6-8,BO10-12` / `MAIN8-12x3` / `MAIN10-15x3,DROP*` / `TOP6-8,MID16-20` / `MID12-15x2,MID12-15?`。`*` = 限界まで、`MID` = 中重量、末尾 `?` = 任意のセット）, howTo, videoQuery, active, **sets[]**（展開済み。move/moveName/pairNo/optional） |
 | `plan_warmup` | id | name, nameEn, anim(swing/alt/cross/circle/hips/toe), reps, targetSets(3), minSets(2), steps[3]（コーチ指定 6 種、毎回必須） |
 | `plan_meals` | mealNo | label, note, items[{foodId, grams, label?, short?, choices?}], alt?{label, items}（4食目の代替案）。foodId `rice` は settings.riceBasis で rice_raw / rice_cooked に解決 |
 | `plan_supplements` | id | name, dose, timing(after_meal/night/pre), order, active, pending（量がコーチ確認中なら true。シートでタップ入力すると解除） |
 | `plan_routine` | id | name, timing(morning/after_meal/anytime), order, active, isWater（水は log_daily.waterMl に保存） |
 | `foods` | foodId | nameJa, nameEn, per(100g/100ml/1pc/1scoop), kcal, p, f, c, source(plan/user/ai/ai_photo), note |
 | `log_weight` | YYYY-MM-DD | value, unit("kg"), skipped(bool), skipReason, loggedAt(ISO 8601), bodyFatPct（互換: weightKg, time, reason, reasonText） |
-| `log_workout` | YYYY-MM-DD | sets{ "exId_setNo": {exerciseId, setNo, setType(WU/MAIN/FINAL/PRE/TOP/BO/DROP), weightKg, reps, loggedAt} }, meta{ exId: {note, rpe, subName} }, **warmup{completed, minutes, sets{id:n}, startedAt(ms), done(HH:mm), loggedAt, skipped, skipReason}**, finished(HH:mm), finishedAt(ISO。完了画面の所要時間 = warmup.startedAtIso → finishedAt) |
+| `log_workout` | YYYY-MM-DD | sets{ "exId_setNo": {exerciseId, setNo, setType(WU/MAIN/FINAL/PRE/TOP/BO/DROP/MID), weightKg, reps, loggedAt} }, choices{ choiceGroup: exerciseId }（その日「A または B」でどれを選んだか。選び直すと選択とその日の記録を消す）, meta{ exId: {note, rpe, subName} }, **warmup{completed, minutes, sets{id:n}, startedAt(ms), done(HH:mm), loggedAt, skipped, skipReason}**, finished(HH:mm), finishedAt(ISO。完了画面の所要時間 = warmup.startedAtIso → finishedAt) |
 | `log_cardio` | YYYY-MM-DD | entries[{type(jog/incline/padel/other。旧 walk/stairs も表示可), minutes, hr, note, at, loggedAt, intensity(padel のみ: light/normal/hard、既定 normal), kcal(padel のみ: 保存時点の体重×METs(5.5/7.0/8.5)×時間で計算)}] |
 | `log_meals` | YYYY-MM-DD | meals{ mealNo: {status(plan / substitute / skip / photo: 品目から自動判定して保存), items[{foodId, grams, kcal, p, f, c, origin(plan/add), eaten, deleted(ソフト削除・シートを閉じると確定), planGrams, estimated}], loggedAt, photoId, reason(スキップ理由), variant(""/"alt"), photo{assetId, confidence, note}, skip{reason, reasonText}} } |
 | `log_supplements` | YYYY-MM-DD | items{ id: {done, loggedAt} }、今日はなし: {done:false, na:true, reason, reasonText, loggedAt} |
@@ -43,7 +43,7 @@
 | `log_daily` | YYYY-MM-DD | dayNo(手動上書き), dayChange{from, loggedAt}（その日の Day/部位の差し替え。「未消化キュー」方式はこのフィールドだけで表現し、他の日付は書き換えない）, dayName, notes, waterMl, waterLoggedAt（水タブ）, skippedItems[{item, itemJa, reason, reasonJa}]（できなかった項目の自動集計）, isRestOverride, comment, warmupSkipped{reason, at}, workoutMissed{reason, reasonText, loggedAt}, cardioMissed{reason, reasonText, loggedAt} |
 
 重量は常に kg で保存。表示時のみ lb 換算（1 lb = 0.45359237 kg、小数 1 桁）。
-初回起動時に `plan_days` が空、または `settings.seedVersion` が `SEED_VERSION`（現在 8 = 朝のルーティン確定: リンゴ酢 → 1 食目 → 経口サプリ 07:05 → サイリウム 07:20、クレアチンはトレ前の行）より古ければ、`SEED` 定数（[training-log-spec.md](training-log-spec.md)）で `plan_*` と `foods`(source=plan) を投入し直す。ログは触らない。プランを変えたら `SEED_VERSION` を上げて再公開する。
+初回起動時に `plan_days` が空、または `settings.seedVersion` が `SEED_VERSION`（現在 9 = Day4 をコーチ原文どおりに差し替え、「A または B」を選択式に分割、腹筋3種・カーフ3択を確定）より古ければ、`SEED` 定数（[training-log-spec.md](training-log-spec.md)）で `plan_*` と `foods`(source=plan) を投入し直す。ログは触らない。プランを変えたら `SEED_VERSION` を上げて再公開する。
 
 ### 食事プラン（コーチ指定）
 1. 全卵4個(約200g)・卵白150g・ヒマラヤ塩1g
@@ -57,7 +57,17 @@
 
 ### 筋トレの決まり（コーチ回答）
 全セット 10〜12 回・限界 1 回手前（RIR 1）。最終セットはその日いちばん重かった重さの −30% で 16〜20 回（`suggestSets` が最重量 ×0.7 を提案）。休憩はメイン／最終 2:30、ウォームアップ後 1:30。前回 12 回できたら +1kg（ダンベル）/ +2kg（バーベル）、週 +5% 目安。腹筋は毎日（ルーティン id 4）。有酸素は 35〜40 分 Zone2。
-全 7 日確定版は [training-log-spec.md](training-log-spec.md)。スーパーセット（pair）は ① を 1 セット → 休憩なしで ② → 休憩。①②は別種目として扱い、保存キー（`exId_setNo`。setNo は①②通しで一意）・前回値・提案重量（プログレッシブ/上限到達など）はすべて①②で独立に計算する（`suggestSets()` は move ごとに別の rolling state を持つ）。いまのセットカードは①②を並べて色分け表示、セット一覧は「Nセット目」の下に①②を入れ子表示、完了画面・コーチ報告テキストも①②を別行で出す。ドロップセットは休憩なしで即開始（図付き）。腹筋（Day 1・4・6）／カーフ（Day 2・5）は最終種目のあとの枠（accessory、コーチ確認中、自由入力）。最後の種目のあと「筋トレ完了」→ 完了画面（所要時間・やった内容・有酸素・コーチ報告テキスト `dayReport()`＋コピー）。
+全 7 日確定版は [training-log-spec.md](training-log-spec.md)。スーパーセット（pair）は ① を 1 セット → 休憩なしで ② → 休憩。①②は別種目として扱い、保存キー（`exId_setNo`。setNo は①②通しで一意）・前回値・提案重量（漸増/上限到達など）はすべて①②で独立に計算する（`suggestSets()` は move ごとに別の rolling state を持つ）。いまのセットカードは①②を並べて色分け表示、セット一覧は「Nセット目」の下に①②を入れ子表示、完了画面・コーチ報告テキストも①②を別行で出す。ドロップセットは休憩なしで即開始（図付き）。最後の種目のあと「筋トレ完了」→ 完了画面（所要時間・やった内容・有酸素・コーチ報告テキスト `dayReport()`＋コピー）。
+
+**「A または B」の種目（`choiceGroup`）**: `exercisesFor(date)` が同じ `choiceGroup` の種目を 1 枠にまとめ、その日の `log_workout[date].choices[group]` で選ばれた 1 つに解決する（未選択なら `needsChoice` の仮スロット）。`renderExerciseChoice()` がセット入力の前に選択カードを出し、選択肢ごとに `lastDoneOf(exId, date)` の「前回 M/D ・ Xkg×Y回」（記録が無ければ「記録なし」、14 日以上空いていれば「しばらくやっていません」）を添える。選択肢は別々の exerciseId なので前回値・提案・履歴・週まとめ・グラフはすべて独立。種目名の横の「選び直す」（`#rePick`）は 1 セット以上記録済みなら確認ダイアログを出し、`A.setExerciseChoice(date, group, null, [exId])` で選択とその日の記録を消す。対象は Day1/2/4/5 の「or」種目とカーフ 3 択。
+
+**腹筋・カーフ（確定）**: 腹筋は Day 1・4・6 の最終種目のあとに 3 種すべて（ケーブルクランチ → ケーブル 片手 オブリーククランチ → ハンギングニーレイズ、各 3 × 15〜20。ハンギングニーレイズは `bodyweight` で重量欄なし）。カーフは Day 2・5 に 3 種から 1 つ（スミスマシン カーフレイズ／ドンキーカーフレイズ／レッグプレス トープレス、2 セット必須＋3 セット目は任意）。どちらも `dayNo` を配列にして 1 つの exerciseId を複数日で共有するので履歴が日をまたいでつながる。休憩は `restAccessorySec`（90 秒）。提案は腹筋 +2.5kg／カーフ +5kg（`bumpStep`）で、20 回に届いたときだけ伸ばす。今日画面のタイムラインも種目名を省略せずに全部出す。
+
+**入力ポップアップ（`openSetInput`）**: 重量と回数を 1 つのポップアップに左右で並べ、重量 ±2.5（ダンベルは ±1）・回数 ±1、初期値は提案重量と目標回数の下限。数字をタップすれば直接入力でき、「記録する」1 つで `commitSet()` → 休憩タイマー開始。自重種目は回数だけ。見出しは日本語（「1セット目 ・ ウォームアップ ・ 10〜12回」など。英略語は出さない）。目標回数の範囲外でも記録は止めず、「目標を超えました。次回は重量を上げてください」／「目標に届きませんでした。次回は同じ重量で」をトーストで出すだけ。
+
+**セット種類ごとの提案（`suggestSets`）**: ウォームアップ = その日のトップ予定 × 0.55（トップは後ろにあるので `topPlan` で先に見積もる）／トップ = 前回のトップ、上限到達で `bumpKg`（+5%、ダンベルは +1kg）／バックオフ = 今日のトップ × 0.85／中重量（MID）= 16〜20 回ならトップ × 0.70、10〜15 回ならトップ × 0.80／漸増 = 1 セット目は前回の 1 セット目（前回上限到達なら 1 段階重く）、2 セット目以降は前のセットから 1 段階重く（ダンベル +1kg、腹筋 +2.5kg、カーフ +5kg、それ以外 +2.5kg。前のセットを記録済みで上限に届かなかったときだけ据え置き）／ドロップ = 直前 × 0.7／最終 = 最重量 × 0.7。
+
+**任意のセット**: `setScheme` の末尾 `?` のセットは「（任意）」表示＋「このセットは飛ばす（任意）」ボタン。任意セットを開いている間はボタンが「このセット完了」のままで（未記録のまま完了画面に飛ばない）、飛ばした時点で残りが無ければ筋トレ完了に進む。遵守率のセット数も、任意セットは記録したときだけ分母に数える。
 
 前回の重量は全種目・全セット位置（トップ／バックオフ／ウォームアップ、スーパーセット①②）で常に表示する。`exerciseHistory(exId, setNos, beforeDate, limit)` が位置（setNo）ごとに過去日付を遡って直近 `limit` 件（無制限も可）の実施履歴を集め、`workoutModel()` の各セットに `prevWeightKg`/`prevReps`/`prevDate`/`prevSubName`/`history[]` として持たせる（単に「その種目を最後に触った日」ではなく位置ごとに独立して遡るため、途中で終えたセッションがあっても以前の記録を見失わない）。入力欄の下に「前回 M/D（N日前） ・ Xkg×Y → 今日は Zkg を提案（理由）」、履歴が2件以上あれば「履歴 …」の行（タップで `openExerciseHistorySheet()` の全履歴＋グラフ）。代替種目（subName）で実施した履歴も同じ exerciseId で拾い、当日と違うときだけ「〜で実施」を添える。未記録のセット一覧行にも薄く前回値。
 
@@ -114,7 +124,7 @@ BMR（Mifflin-St Jeor）×活動レベル＋運動消費 を TDEE とし、日�
 
 ## テスト
 
-`npm run e2e:artifact` で mock / db（疑似ランタイム）両モードの 71 項目を実行し、結果を [TEST.md](TEST.md) に書き出す。
+`npm run e2e:artifact` で mock / db（疑似ランタイム）両モードの 74 項目を実行し、結果を [TEST.md](TEST.md) に書き出す。
 
 ## モックモード
 
@@ -123,8 +133,8 @@ BMR（Mifflin-St Jeor）×活動レベル＋運動消費 を TDEE とし、日�
 
 ## コーチ未回答（UI の週タブに「コーチ確認中」として一覧表示）
 
-- [ ] 腹筋の種目・セット数・回数（今は「限界まで × 3」の枠、種目名は自由入力）
-- [ ] カーフ（スミス カーフレイズ）のセット数・回数（今は 10〜15 × 3 の枠）
+- [x] 腹筋の種目・セット数・回数 → 週 3 回（Day 1・4・6）・3 種すべて・各 3 × 15〜20 で確定
+- [x] カーフのセット数・回数 → 週 2〜3 回（Day 2・5）・3 種から 1 つ・2 セット必須＋任意 1 セット・15〜20 で確定
 - [ ] フィッシュオイル・亜鉛・ベルベリンの用量とタイミング
 - [ ] クレアチン 7g を飲むタイミング
 - [ ] プレワークアウト（Nitric Oxide 系）の銘柄・カフェイン量
