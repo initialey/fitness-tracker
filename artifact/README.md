@@ -45,6 +45,15 @@
 重量は常に kg で保存。表示時のみ lb 換算（1 lb = 0.45359237 kg、小数 1 桁）。
 初回起動時に `plan_days` が空、または `settings.seedVersion` が `SEED_VERSION`（現在 11 = コーチからのフォーム指摘をカーフ3種・トライセップ プッシュダウン・ショルダープレスに追加）より古ければ、`SEED` 定数（[training-log-spec.md](training-log-spec.md)）で `plan_*` と `foods`(source=plan) を投入し直す。ログは触らない。プランを変えたら `SEED_VERSION` を上げて再公開する。
 
+### 起動（読み込みが必ず終わるようにする）
+`boot()` は `try / catch / finally` で囲み、**何があっても最後に描き直す**（`LOAD.step` / `LOAD.error`）。
+
+- `use('db')` と最初のスナップショット取得は `withTimeout(…, 10000)` で 10 秒の期限つき。期限切れでも、`settings` / `plan_days` / `plan_exercises` / `plan_meals`（`ESSENTIAL_COLLS`）が届いていれば「読めた分で始めます」と知らせて先へ進む。届いていなければエラー画面へ
+- エラー画面（`renderLoadError`）は実際のエラー内容をそのまま出し、「もう一度読み込む」（再読み込み）と「記録はそのままで初期化」（`resetStateKeepingLogs`: localStorage の画面状態と `settings/main` だけを初期値に戻し、`log_*` には触らない）を置く
+- 読み込み中は「読み込み中…」の下に、いまどこを読んでいるかを 1 行出す
+- `seedIfNeeded()` は 100 件以上を書くので `inParallel()` で 8 件ずつ並列に流す。プランが既にある（＝版が上がっただけ）ときは**投入を待たずに使える状態にし**、裏で流す。プランが空の初回だけ投入を待つ
+- 壊れたデータで落ちない: `replayQueue` は開始日が不正なら既定に戻し、キューの重複・範囲外を毎日取り除き、日付ループに上限を置く。`log_daily.dayNo` は 1〜7 の整数以外を無視。`workoutCompleteFor` は例外を捕まえて「未実施」を返し、`sets` が配列でない記録や種目マスタに無い `exerciseId` は無視する
+
 ### 食事プラン（コーチ指定）
 1. 全卵4個(約200g)・卵白150g・ヒマラヤ塩1g
 2. 白米200g・鶏胸肉150g・ヒマラヤ塩1.5g・オリーブオイル3g・インゲン(バギオ豆)80g

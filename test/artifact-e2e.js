@@ -43,6 +43,9 @@ const SHIM = `(() => {
       update: async (data) => { const r = await call('get', { coll, id }); if (!r.exists) throw { code: 'invalid_argument', message: 'no doc' }; await call('set', { coll, id, data: Object.assign({}, r.data, data) }); },
       delete: async () => { (PENDING[coll] = PENDING[coll] || {})[id] = null; await call('del', { coll, id }); } }),
     onSnapshot: (next, err) => { let last = null, alive = true;
+      // テスト用: 指定したコレクションだけ「応答が返らない」「エラーになる」を再現する
+      if ((OPTS.dbHang || []).indexOf(coll) >= 0) return () => { alive = false; };
+      if ((OPTS.dbFail || []).indexOf(coll) >= 0) { setTimeout(() => err && err({ code: 'permission_denied', message: 'denied' }), 10); return () => { alive = false; }; }
       const tick = async () => { if (!alive) return; const rows = merge(coll, await call('list', { coll })); const j = JSON.stringify(rows); if (j !== last) { last = j; next({ docs: rows.map(r => snap(r.id, r.data)), size: rows.length, empty: !rows.length, docChanges: () => [], metadata: { fromCache: false, hasPendingWrites: false } }); } };
       tick(); const h = setInterval(tick, 150); return () => { alive = false; clearInterval(h); }; } });
   const db = { collection: mkColl, doc: (p) => { const seg = p.split('/'); return mkColl(seg.slice(0, -1).join('/')).doc(seg[seg.length - 1]); } };
@@ -67,7 +70,7 @@ async function run(mode) {
   const browser = await playwright.chromium.launch({ executablePath: process.env.PW_CHROMIUM || undefined });
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, timezoneId: 'Asia/Manila' });
   const errors = [];
-  const newPage = async (opts) => {
+  const newPage = async (opts, noWait) => {
     const page = await ctx.newPage();
     if (opts) await page.addInitScript('window.__rtOpts = ' + JSON.stringify(opts) + ';');
     page.setDefaultTimeout(8000);
@@ -78,7 +81,7 @@ async function run(mode) {
     await page.route('https://fonts.googleapis.com/**', r => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
     if (mode === 'db') { await page.exposeFunction('__rt', (op, a) => rt.op(op, a)); await page.addInitScript(SHIM); }
     await page.goto(FILE);
-    await page.waitForFunction(() => !document.querySelector('#view .loading'), null, { timeout: 15000 });
+    if (!noWait) await page.waitForFunction(() => !document.querySelector('#view .loading'), null, { timeout: 15000 });
     return page;
   };
   // 前回値（9/9 = Day1）を db に仕込む: インクライン トップ 22×8（上限到達）, サイドレイズ メイン 10×12（上限到達）
@@ -1650,6 +1653,52 @@ async function run(mode) {
   await T(G.common, '英略語（W/MAIN/TOP/BO/DROP/PRE/FINAL）がUIに出ない', async () => { const re = /(^|[^A-Za-z])(WU|W|MAIN|TOP|BO|DROP|PRE|FINAL)([^A-Za-z]|$)/; for (const tab of ['today', 'workout', 'summary']) { await goTab(tab); const txt = await page.$eval('#view', e => e.innerText); const m = re.exec(txt); assert(!m, tab + ': ' + (m && m[0])); } });
   await T(G.common, '数だけの表示（7種、1種）がない', async () => { for (const tab of ['today', 'workout', 'summary']) { await goTab(tab); const txt = await page.$eval('#view', e => e.innerText); const bad = txt.split('\n').filter(l => /サプリ\s*\d+種/.test(l) || /^\s*\d+種(目)?\s*$/.test(l)); assert(!bad.length, tab + ': ' + bad.join(' | ')); } });
   await T(G.common, '同日に2回開いても二重保存されない', async () => { if (mode === 'mock') return 'db のみ'; const before = JSON.stringify(rt.DB); const p2 = await newPage(); await p2.waitForTimeout(800); assert(!(await p2.$('#view .loading')), 'second page rendered'); const after = JSON.stringify(rt.DB); assert(before === after, 'second open changed db'); const counts = Object.fromEntries(Object.entries(rt.DB).map(([k, v]) => [k, Object.keys(v).length])); assert(counts.plan_days === 7 && counts.plan_exercises === 54 && counts.plan_supplements === 8 && counts.plan_warmup === 6, JSON.stringify(counts)); await p2.close(); return 'docs: ' + JSON.stringify(counts); });
+  // --- 緊急修正: 読み込みが必ず終わる（「読み込み中…」で止めない） ---
+  await T(G.common, '読み込みが終わらないときは 10 秒で打ち切ってエラー画面に進む: 実際のエラー内容を画面に出し、「もう一度読み込む」と「記録はそのままで初期化」を置く。初期化しても食事・体重・トレーニングの記録は消さない', async () => {
+    if (mode === 'mock') return 'db のみ（db の応答が返らない状況を再現する）';
+    const before = { w: JSON.parse(JSON.stringify(rt.DB.log_weight || {})), wo: JSON.parse(JSON.stringify(rt.DB.log_workout || {})), m: JSON.parse(JSON.stringify(rt.DB.log_meals || {})) };
+    const beforeSettings = JSON.parse(JSON.stringify(rt.DB.settings.main));
+    assert(Object.keys(before.wo).length > 0, '消えていないことを確かめるための記録が db にある');
+    const p2 = await newPage({ dbHang: ['plan_days'] }, true);
+    p2.setDefaultTimeout(20000);
+    try {
+      // 打ち切る前は「いまどこを読んでいるか」を出す
+      await p2.waitForSelector('#loadStep');
+      assert((await p2.locator('#loadStep').textContent()).trim().length > 0, '読み込み中に、いま読んでいるところを1行出す');
+      await p2.waitForSelector('#loadErr', { timeout: 20000 });
+      const msg = (await p2.locator('#loadErrMsg').textContent()).trim();
+      assert(msg.includes('タイムアウト') && msg.includes('記録の読み込み'), 'エラー内容をそのまま画面に出す: ' + msg);
+      assert(!(await p2.$('#view .loading')), '「読み込み中…」で止まらない');
+      assert(await p2.$('#loadRetry'), '「もう一度読み込む」がある');
+      // 「記録はそのままで初期化」: 設定だけ初期値に戻し、記録には触らない
+      await p2.click('#loadReset'); await p2.waitForSelector('#dlgOk'); await p2.click('#dlgOk');
+      for (let i = 0; i < 150 && Number((rt.DB.settings || {}).main.seedVersion) !== 0; i++) await p2.waitForTimeout(100);
+      assert(JSON.stringify(rt.DB.log_weight || {}) === JSON.stringify(before.w), '体重の記録は消えない');
+      assert(JSON.stringify(rt.DB.log_workout || {}) === JSON.stringify(before.wo), '筋トレの記録は消えない');
+      assert(JSON.stringify(rt.DB.log_meals || {}) === JSON.stringify(before.m), '食事の記録は消えない');
+      assert(Number((rt.DB.settings || {}).main.seedVersion) === 0, '設定は初期値に戻してプランを入れ直す: seedVersion=' + (rt.DB.settings || {}).main.seedVersion);
+      return '10 秒で打ち切り → エラー内容表示 → 記録を残したまま初期化';
+    } finally { await p2.close(); rt.op('set', { coll: 'settings', id: 'main', data: beforeSettings }); }
+  });
+  await T(G.common, '一部のコレクションが読めなくても「今日」は開ける（必須でないものは待たずに進む）／壊れた記録（存在しない種目・sets が配列でない・Day 番号が範囲外）があっても落ちない', async () => {
+    if (mode === 'mock') return 'db のみ';
+    const D = '2026-09-14';
+    rt.op('set', { coll: 'log_workout', id: D, data: { date: D, sets: { '9999_1': { exerciseId: 9999, setNo: 1, setType: 'MAIN', weightKg: 10, reps: 10 } } } });
+    rt.op('set', { coll: 'log_workout', id: '2026-09-13', data: { date: '2026-09-13', sets: 'こわれた値' } });
+    rt.op('set', { coll: 'log_daily', id: D, data: { date: D, dayNo: 99 } });
+    const p2 = await newPage({ dbHang: ['log_media'] });
+    p2.setDefaultTimeout(20000);
+    try {
+      assert(!(await p2.$('#loadErr')), '必須でないコレクションが遅れてもエラー画面にしない');
+      const h1 = (await p2.locator('h1').first().textContent()).trim();
+      assert(/^Day [1-7] /.test(h1), '範囲外の Day 番号は無視して 1〜7 の Day を出す: ' + h1);
+      assert((await p2.locator('#tabWorkout').textContent()).trim() !== 'Day', '下部タブの Day が出る');
+      await p2.click('.tabs [data-tab="workout"]'); await p2.waitForTimeout(200);
+      assert(!(await p2.$('.ttl:has-text("表示エラー")')), '筋トレタブも落ちない');
+      return '必須は settings・週の予定・種目・食事プランの4つ。ほかは遅れても今日画面を出す';
+    } finally { await p2.close(); ['2026-09-13', D].forEach(d => { rt.op('del', { coll: 'log_workout', id: d }); rt.op('del', { coll: 'log_daily', id: d }); }); }
+  });
+
   await browser.close();
   return errors;
 }
@@ -1710,6 +1759,8 @@ async function run(mode) {
 | 35 | 全セット記録済みの種目が「セット 1/3」のままで、スキップ扱いにもなっていた。完了とスキップを記録とは別のフラグで持ち、カーソルを返す \`firstUndoneIn()\` が「未記録なし」のとき 0（＝1セット目）を返していたのが原因。状態を \`exStarted()\`/\`exComplete()\` として記録から毎回導出し、\`firstUndoneIn()\` は全部記録済みなら最後のセットを返すようにした。完了した種目は完了カード＋「次の種目へ」にしたので、\`#setDone\` があることを前提に種目を歩いていた既存テスト（最終種目→完了画面、Day2 カーフ、\`#cmpReview\`）が壊れ、\`enterEdit()\`（セット行をタップして入力に戻す）と \`#exNext\` 分岐を足して直した。あわせて \`openDayOn()\` が \`#setDone\` だけを待っていたため、1種目目が「A または B」の Day 1 で固まっていたのを \`[data-exchoice]\` も待つようにした |
 
 | 36 | db モードで「手で入力」「サプリ」「写真」まわりのテストが実行のたびに違う場所で落ちた（\`#bbar .k1\` が無い等）。孤立した日付へ飛ばしたテストが \`page.clock.setFixedTime()\` を戻しても画面は描き直されず、「今日ではない日付」として描いた状態（＝下部の固定バーが消えたまま）が次のテストに残っていたのが原因。\`setTime()\` / \`resetClock()\` が時刻を動かしたあと必ず \`window.__tl.rerender()\` で描き直すようにした |
+
+| 37 | アプリが「読み込み中…」から進まなくなった。\`store.init()\` が最初のスナップショットに加えて \`seedIfNeeded()\` の完了まで待ってから \`ready\` を立てており、SEED_VERSION 11 で全プラン（種目54件を含む100件超）を**1件ずつ await して**書き直していたため、回線が遅いと何十秒もかかり、しかも \`seedVersion\` は最後に書くので再読み込みしても毎回最初からやり直していた。投入を \`inParallel()\` で 8 件ずつ並列にし、プランが既にあるときは投入を待たずに使える状態にして裏で流すようにした。あわせて、読み込み全体に 10 秒の期限（\`withTimeout\`）、失敗時のエラー画面（内容表示・再読み込み・記録を消さない初期化）、読み込み中の進捗表示、壊れたデータ（開始日・Day 番号・\`sets\`・種目マスタに無い id）への防御を入れた |
 
 
 ## 実行方法

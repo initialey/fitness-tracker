@@ -722,27 +722,58 @@ function setActual(x) { const w = x.weightKg === '' || x.weightKg == null ? '' :
    ===================================================================== */
 const COLLS = ['settings', 'plan_days', 'plan_exercises', 'plan_warmup', 'plan_meals', 'plan_supplements', 'plan_routine', 'foods',
   'log_weight', 'log_workout', 'log_cardio', 'log_meals', 'log_supplements', 'log_routine', 'log_media', 'log_daily'];
+// 「今日」の画面を出すのに最低限いるもの。これさえ読めていれば、残りが遅れていてもアプリは使える
+const ESSENTIAL_COLLS = ['settings', 'plan_days', 'plan_exercises', 'plan_meals'];
+const COLL_JA = c => ({ settings: '設定', plan_days: '週の予定', plan_exercises: '種目', plan_warmup: 'ウォームアップ', plan_meals: '食事プラン', plan_supplements: 'サプリ', plan_routine: 'ルーティン', foods: '食品',
+  log_weight: '体重の記録', log_workout: '筋トレの記録', log_cardio: '有酸素の記録', log_meals: '食事の記録', log_supplements: 'サプリの記録', log_routine: 'ルーティンの記録', log_media: '写真', log_daily: 'その日の記録' })[c] || c;
 const ST = { settings: Object.assign({}, DEFAULT_SETTINGS), mode: 'loading' };
 COLLS.forEach(c => { if (c !== 'settings') ST[c] = {}; });
+/** 読み込みの状態。何が起きても「読み込み中…」で止めないための土台（step = いまどこを読んでいるか、error = 失敗の中身） */
+const LOAD = { step: '起動しています', error: null };
+/** 応答が返らないまま固まらないよう、必ず期限を切る */
+function withTimeout(p, ms, what) {
+  let to; return Promise.race([
+    Promise.resolve(p).then(v => { clearTimeout(to); return v; }, e => { clearTimeout(to); throw e; }),
+    new Promise((_, rej) => { to = setTimeout(() => rej(new Error((what || '読み込み') + 'が ' + Math.round(ms / 1000) + ' 秒で終わりませんでした（タイムアウト）')), ms); })
+  ]);
+}
+/** 大量の書き込みを少しずつ並列で流す（1件ずつ await すると初期投入だけで何十秒もかかる） */
+async function inParallel(items, fn, size) {
+  const n = size || 8;
+  for (let i = 0; i < items.length; i += n) await Promise.all(items.slice(i, i + n).map(fn));
+}
 const store = {
   db: null, unsubs: [], ready: false,
-  async init(db) {
+  async init(db, say) {
+    say = say || (() => {});
     this.db = db;
-    if (!db) { ST.mode = 'mock'; await seedIfNeeded(); this.ready = true; return; }
+    if (!db) { ST.mode = 'mock'; say('初期データを用意しています'); await seedIfNeeded(say); this.ready = true; return; }
     ST.mode = 'db';
-    await new Promise(resolve => {
+    say('記録を読み込んでいます');
+    const got = {};
+    const firstSnapshots = new Promise(resolve => {
       let pending = COLLS.length;
       COLLS.forEach(c => {
         this.unsubs.push(db.collection(c).onSnapshot(snap => {
           const next = {}; snap.docs.forEach(d => { next[d.id] = d.data(); });
           const changed = JSON.stringify(next) !== JSON.stringify(c === 'settings' ? { main: ST.settings } : ST[c]);
           if (c === 'settings') { if (next.main) ST.settings = mergeSettings(next.main); } else ST[c] = next;
-          if (pending > 0) { if (--pending === 0) resolve(); } else if (changed) scheduleRender();
+          got[c] = true;
+          if (pending > 0) { say('記録を読み込んでいます（' + (COLLS.length - pending + 1) + '/' + COLLS.length + '） ' + COLL_JA(c)); if (--pending === 0) resolve(); } else if (changed) scheduleRender();
         }, e => { toast('db エラー: ' + e.code, true); if (pending > 0 && --pending === 0) resolve(); }));
       });
     });
-    await seedIfNeeded();
+    try { await withTimeout(firstSnapshots, 10000, '記録の読み込み'); }
+    catch (e) {
+      // 全部は揃わなくても、今日の画面に必要なものが読めていれば使える状態にして先へ進む
+      const missing = ESSENTIAL_COLLS.filter(c => !got[c]);
+      if (missing.length) throw e;
+      toast('一部の読み込みが遅れています（' + missing.concat(COLLS.filter(c => !got[c])).map(COLL_JA).join('・') + '）。読めた分で始めます', true);
+    }
+    // プランがまだ無い初回だけ投入を待つ。版が上がっただけなら待たずに使える状態にして、投入は裏で進める
+    if (!Object.keys(ST.plan_days).length) { say('初期データを用意しています'); await seedIfNeeded(say); this.ready = true; return; }
     this.ready = true;
+    seedIfNeeded(say).then(() => { LOAD.step = ''; scheduleRender(); }).catch(e => { console.error('プランの更新に失敗', e); toast('プランの更新に失敗: ' + (e.code || e.message), true); });
   },
   async set(coll, id, doc) {
     const clean = JSON.parse(JSON.stringify(doc));
@@ -753,12 +784,16 @@ const store = {
 };
 function mergeSettings(doc) { const s = Object.assign({}, DEFAULT_SETTINGS, doc); s.times = Object.assign({}, DEFAULT_SETTINGS.times, doc.times || {}); return s; }
 /** plan が空、または SEED_VERSION が上がっていたら plan_* と foods(source=plan) を投入し直す。ログは触らない。 */
-async function seedIfNeeded() {
+async function seedIfNeeded(say) {
+  say = say || (() => {});
   if (Object.keys(ST.plan_days).length && Number(ST.settings.seedVersion) === SEED_VERSION) return;
+  // 100件以上あるので 1 件ずつ await すると初期投入だけで何十秒もかかり、「読み込み中…」から出られなくなる
+  let wrote = 0; const total = SEED.days.length + SEED.exercises.length + SEED.warmup.length + SEED.meals.length + SEED.supplements.length + SEED.routine.length + SEED.foods.length;
+  const tick = () => { wrote++; if (wrote % 10 === 0 || wrote === total) say('プランを用意しています（' + wrote + '/' + total + '）'); };
   const replace = async (coll, docs) => {
     const keep = new Set(docs.map(d => String(d._id)));
-    for (const d of docs) { const id = String(d._id); delete d._id; await store.set(coll, id, d); }
-    for (const id of Object.keys(ST[coll])) if (!keep.has(id)) await store.del(coll, id);
+    await inParallel(docs, async d => { const id = String(d._id); delete d._id; await store.set(coll, id, d); tick(); });
+    await inParallel(Object.keys(ST[coll]).filter(id => !keep.has(id)), id => store.del(coll, id));
   };
   await replace('plan_days', SEED.days.map(d => Object.assign({ _id: d.dayNo }, d)));
   await replace('plan_exercises', SEED.exercises.map((r, i) => ({ _id: r[0], id: r[0], seq: i, dayNo: r[1], order: r[2], nameJa: r[3], nameEn: r[4], isPreexhaust: r[5], supersetGroup: r[6], setScheme: r[7], howTo: r[8], videoQuery: r[9], active: true, progressive: !!r[10], pair: r[11] || null, accessory: r[12] || '', choiceGroup: r[13] || '', bodyweight: !!r[14], formCues: (SEED.formCues[r[0]] || []).map(c => ({ date: c[0], text: c[1], videoUrl: c[2] || '' })), sets: expandPairSets(parseSetScheme(r[7]), r[11] || null) })));
@@ -766,7 +801,7 @@ async function seedIfNeeded() {
   await replace('plan_meals', SEED.meals.map(m => Object.assign({ _id: m.mealNo }, m)));
   await replace('plan_supplements', SEED.supplements.map((s, i) => ({ _id: s[0], id: s[0], name: s[1], dose: s[3] || '', timing: s[2], order: i + 1, active: true, pending: !s[3] })));
   await replace('plan_routine', SEED.routine.map(r => Object.assign({ _id: r.id }, r)));
-  for (const f of SEED.foods) { const cur = ST.foods[f[0]]; if (!cur || cur.source === 'plan') await store.set('foods', f[0], { foodId: f[0], nameJa: f[1], nameEn: f[2], per: f[3], kcal: f[4], p: f[5], f: f[6], c: f[7], unitG: f[8] || 0, unitLabel: f[9] || '', portionG: f[10] || 0, source: 'plan', note: '' }); }
+  await inParallel(SEED.foods, async f => { const cur = ST.foods[f[0]]; if (!cur || cur.source === 'plan') await store.set('foods', f[0], { foodId: f[0], nameJa: f[1], nameEn: f[2], per: f[3], kcal: f[4], p: f[5], f: f[6], c: f[7], unitG: f[8] || 0, unitLabel: f[9] || '', portionG: f[10] || 0, source: 'plan', note: '' }); tick(); });
   // v7: 休憩 トップ 180 秒／他 120 秒、ウォームアップ注記を既定に戻す（ユーザーが設定で変えていれば次回以降はそのまま）
   const migrate = Number(ST.settings.seedVersion) < 7 ? { restTopSec: 180, restMainSec: 120, restOtherSec: 120, warmupNote: DEFAULT_SETTINGS.warmupNote } : {};
   // v8: 経口サプリ 07:05、サイリウムはその 15 分後（07:20）
@@ -807,26 +842,37 @@ function restDayConsumed(date) {
 /** その日の筋トレが終わっているか。「完了」ボタンのフラグではなく、必須セットの記録から導出する
  *  （記録が入っているのに未完了扱いになる／スキップ扱いになるのを防ぐ）。任意のセットは完了を妨げない */
 function workoutCompleteFor(date, dayNo) {
-  const wo = ST.log_workout[date] || {};
-  if (wo.finished) return true;
-  const sets = wo.sets || {}; if (!Object.keys(sets).length) return false;
-  const exs = exercisesForDayNo(date, dayNo).filter(e => !e.accessory);
-  if (!exs.length) return false;
-  return exs.every(ex => { if (ex.id == null) return false; // 「A または B」を選んでいない枠は未完了
-    const defs = ex.sets && ex.sets.length ? ex.sets : parseSetScheme(ex.setScheme);
-    return defs.filter(x => !x.optional).every(x => sets[ex.id + '_' + x.setNo]); });
+  try {
+    const wo = ST.log_workout[date] || {};
+    if (wo.finished) return true;
+    const sets = wo.sets && typeof wo.sets === 'object' ? wo.sets : {};
+    if (!Object.keys(sets).length) return false;
+    const exs = exercisesForDayNo(date, dayNo).filter(e => !e.accessory);
+    if (!exs.length) return false;
+    return exs.every(ex => { if (ex.id == null) return false; // 「A または B」を選んでいない枠は未完了
+      const defs = Array.isArray(ex.sets) && ex.sets.length ? ex.sets : parseSetScheme(ex.setScheme || '');
+      if (!defs.length) return false; // セット構成が読めない種目は「未実施」扱い。ここで例外にしない
+      return defs.filter(x => !x.optional).every(x => sets[ex.id + '_' + x.setNo]); });
+  } catch (e) { console.error('完了判定に失敗（未実施として扱います）', date, e); return false; }
 }
 function replayQueue(uptoDate) {
   if (_queueCache[uptoDate]) return _queueCache[uptoDate];
   const today = todayYmd();
   let queue = [1, 2, 3, 4, 5, 6, 7];
   const assignments = {}, pendingSince = {};
+  // 開始日が壊れていると日付ループが終わらないので、読めない値は既定に戻す
+  const start = /^\d{4}-\d{2}-\d{2}$/.test(ST.settings.startDate || '') ? ST.settings.startDate : DEFAULT_SETTINGS.startDate;
   const rotateFrontRestPairs = () => { while (queue.length >= 2 && isRestDayNo(queue[0]) && isRestDayNo(queue[1])) queue.push(queue.shift()); };
-  for (let date = ST.settings.startDate; date <= uptoDate; date = addDays(date, 1)) {
+  for (let date = start, guard = 0; date <= uptoDate && guard < 4000; date = addDays(date, 1), guard++) {
+    // 何かの拍子にキューが空・重複・範囲外になっても止まらないよう、毎日ここで整える
+    queue = queue.map(Number).filter((v, i, a) => Number.isInteger(v) && v >= 1 && v <= 7 && a.indexOf(v) === i);
+    if (!queue.length) queue = [1, 2, 3, 4, 5, 6, 7];
     rotateFrontRestPairs();
     const dd = dayDoc(date), wouldHaveBeen = queue[0];
     let assigned, swapped = false;
-    if (dd.dayNo) { assigned = Number(dd.dayNo); swapped = assigned !== wouldHaveBeen; const idx = queue.indexOf(assigned); if (idx >= 0) queue.splice(idx, 1); else assigned = wouldHaveBeen; if (swapped && idx >= 0 && !pendingSince[wouldHaveBeen]) pendingSince[wouldHaveBeen] = date; }
+    // 手動で入れた Day 番号が 1〜7 以外（壊れた値）なら無視して、キューの先頭をそのまま使う
+    const picked = Number(dd.dayNo); const hasPick = Number.isInteger(picked) && picked >= 1 && picked <= 7;
+    if (hasPick) { assigned = picked; swapped = assigned !== wouldHaveBeen; const idx = queue.indexOf(assigned); if (idx >= 0) queue.splice(idx, 1); else assigned = wouldHaveBeen; if (swapped && idx >= 0 && !pendingSince[wouldHaveBeen]) pendingSince[wouldHaveBeen] = date; }
     else assigned = queue.shift();
     const carriedFrom = pendingSince[assigned] || null;
     assignments[date] = { dayNo: assigned, swapped, displaced: swapped ? wouldHaveBeen : null, carriedFrom };
@@ -838,7 +884,7 @@ function replayQueue(uptoDate) {
 }
 /** Day 判定。today より先（未来）は「今日以降も順調にこなした場合」の見込みで、real な完了データが無い分は自動消化として続きを見せる。
  * startDate より前（記録開始前）はキューが存在しないので、カレンダー計算だけで参考表示する */
-function dayNoFor(date) { if (date < ST.settings.startDate) return calcDayNo(ST.settings.startDate, date); const today = todayYmd(); return replayQueue(date > today ? date : today).assignments[date].dayNo; }
+function dayNoFor(date) { if (date < ST.settings.startDate) return calcDayNo(ST.settings.startDate, date); const today = todayYmd(); const a = replayQueue(date > today ? date : today).assignments[date]; return a ? a.dayNo : calcDayNo(ST.settings.startDate, date); }
 /** date 時点でキューに残っている「未実施」一覧（持ち越し開始日つき、古い順） */
 function pendingDaysAsOf(date) { const q = replayQueue(date); return Object.keys(q.pendingSince).map(n => ({ dayNo: Number(n), since: q.pendingSince[n] })).sort((a, b) => a.since < b.since ? -1 : a.since > b.since ? 1 : 0); }
 /** dayNo を直近（60日以内）にやった日付。beforeDate より前で探す。無ければ null */
@@ -1001,7 +1047,7 @@ function choiceOf(date, group) { const c = (ST.log_workout[date] || {}).choices 
 function exercisesFor(date) { return exercisesForDayNo(date, dayNoFor(date)); }
 function exercisesForDayNo(date, n) {
   // 同じ order（＝「A または B」の選択肢）は SEED の並び順（seq）を保つ。コーチの原文で先に書かれている方を先頭に出す
-  const all = Object.values(ST.plan_exercises).filter(e => onDayNo(e, n) && e.active !== false).sort((a, b) => (a.order - b.order) || ((a.seq || 0) - (b.seq || 0)) || (Number(a.id) - Number(b.id)));
+  const all = Object.values(ST.plan_exercises).filter(e => e && e.id != null && onDayNo(e, n) && e.active !== false).sort((a, b) => (a.order - b.order) || ((a.seq || 0) - (b.seq || 0)) || (Number(a.id) - Number(b.id)));
   const out = [], seen = {};
   all.forEach(e => {
     if (!e.choiceGroup) return void out.push(e);
@@ -1614,7 +1660,8 @@ function go(tab) { if (tab !== 'workout') flushCuesSeen(); UI.tab = tab; render(
 function render() {
   clearTimers(); _queueCache = {}; // Day キューのリプレイ結果は log_* が変わるたびに作り直す（1 レンダー内は使い回す）
   $$('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === UI.tab));
-  if (ST.mode === 'loading' || !store.ready) { view.innerHTML = '<div class="loading">読み込み中…</div>'; return; }
+  if (LOAD.error && !store.ready) return renderLoadError();
+  if (ST.mode === 'loading' || !store.ready) { view.innerHTML = '<div class="loading">読み込み中…' + (LOAD.step ? '<div class="mute small" id="loadStep" style="margin-top:6px">' + esc(LOAD.step) + '</div>' : '') + '</div>'; return; }
   try {
     const t = todayModel(UI.date);
     $('#tabWorkoutIc').textContent = t.isRest ? '有酸素' : '筋トレ';
@@ -1629,6 +1676,29 @@ function render() {
     view.innerHTML = '<div class="card"><div class="ttl">表示エラー</div><div class="mute small">' + esc(e.message || e) + '</div><button class="b b-sub" style="width:100%;margin-top:10px" id="retry">再読み込み</button></div>';
     $('#retry').onclick = () => location.reload();
   }
+}
+
+/** 読み込みに失敗したときの画面。黙って止まらず、何が起きたかを出してやり直せるようにする */
+function renderLoadError() {
+  const e = LOAD.error || {};
+  view.innerHTML = '<div class="card" id="loadErr"><div class="ttl">読み込みに失敗しました</div>' +
+    '<div class="lbl">エラー内容</div><div class="report" id="loadErrMsg">' + esc((e.code ? e.code + ': ' : '') + (e.message || String(e))) + '</div>' +
+    '<button class="b b-yel" style="width:100%;margin-top:12px" id="loadRetry">もう一度読み込む</button>' +
+    '<button class="b b-sub" style="width:100%;margin-top:8px" id="loadReset">記録はそのままで初期化</button>' +
+    '<div class="mute small" style="margin-top:8px">初期化しても食事・体重・トレーニングの記録は消しません。設定と画面の状態だけを初期値に戻します</div></div>';
+  $('#loadRetry').onclick = () => location.reload();
+  $('#loadReset').onclick = async () => {
+    const ok = await askConfirm('記録はそのままで初期化しますか？', '設定と画面の状態（開いていた種目・セットなど）だけを初期値に戻し、プランを入れ直します。\n食事・体重・トレーニングの記録は消えません。', '初期化する');
+    if (!ok) return;
+    await resetStateKeepingLogs();
+    location.reload();
+  };
+}
+/** 壊れやすい「状態」だけを初期値に戻す。log_*（食事・体重・トレーニング）には一切触らない */
+async function resetStateKeepingLogs() {
+  try { ['tl.tab', 'tl.restSkip', 'tl.cueSeen'].forEach(k => localStorage.removeItem(k));
+    Object.keys(localStorage).filter(k => k.indexOf('tl.wk.') === 0).forEach(k => localStorage.removeItem(k)); } catch (err) { /* ignore */ }
+  if (store.db) { try { await store.db.collection('settings').doc('main').set(Object.assign({}, DEFAULT_SETTINGS, { seedVersion: 0 })); } catch (err) { console.error(err); } }
 }
 
 /* =====================================================================
@@ -2728,10 +2798,19 @@ function spark(s1, s2) {
 async function use(name) { try { return window.claude && typeof window.claude.use === 'function' ? await window.claude.use(name) : null; } catch (e) { return null; } }
 async function boot() {
   try { const t = localStorage.getItem('tl.tab'); if (t && ['today', 'workout', 'summary'].includes(t)) UI.tab = t; } catch (e) { /* ignore */ }
+  LOAD.step = '起動しています'; LOAD.error = null;
   render();
-  const db = await use('db');
-  try { await store.init(db); } catch (e) { toast('初期化エラー: ' + (e.code || e.message), true); if (ST.mode !== 'mock') { ST.mode = 'mock'; await seedIfNeeded(); } }
-  render();
+  // 何が起きても「読み込み中…」のままにしない。失敗したら中身を画面に出して、やり直せるようにする
+  try {
+    const db = await withTimeout(use('db'), 10000, 'データベースの準備');
+    await store.init(db, step => { LOAD.step = step; if (!store.ready) render(); });
+  } catch (e) {
+    console.error('初期読み込みに失敗', e);
+    LOAD.error = e;
+  } finally {
+    LOAD.step = '';
+    render();
+  }
   use('assets').then(a => { CAP.assets = a; scheduleRender(); });
   use('sample').then(async s => { CAP.sample = s; CAP.images = null; if (s && typeof s.limits === 'function') { try { const lim = await s.limits(); CAP.images = lim && lim.images ? lim.images : null; } catch (e) { CAP.images = null; } } scheduleRender(); });
   use('downloads').then(dl => { CAP.downloads = dl; scheduleRender(); });
