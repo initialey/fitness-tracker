@@ -36,7 +36,7 @@
 | `log_weight` | YYYY-MM-DD | value, unit("kg"), skipped(bool), skipReason, loggedAt(ISO 8601), bodyFatPct（互換: weightKg, time, reason, reasonText） |
 | `log_workout` | YYYY-MM-DD | sets{ "exId_setNo": {exerciseId, setNo, setType(WU/MAIN/FINAL/PRE/TOP/BO/DROP/MID), weightKg, reps, loggedAt} }, choices{ choiceGroup: exerciseId }（その日「A または B」でどれを選んだか。選び直すと選択とその日の記録を消す）, meta{ exId: {note, rpe, subName} }, **warmup{completed, minutes, sets{id:n}, startedAt(ms), done(HH:mm), loggedAt, skipped, skipReason}**, finished(HH:mm), finishedAt(ISO。完了画面の所要時間 = warmup.startedAtIso → finishedAt) |
 | `log_cardio` | YYYY-MM-DD | entries[{type(jog/incline/padel/pickleball/other。旧 walk/stairs も表示可), minutes, hr, note, at, loggedAt, intensity(パデル・ピックルボールのみ: light/normal/hard、既定 normal), kcal(同上: 保存時点の体重×METs×時間で計算。パデル 5.5/7.0/8.5、ピックルボール 4.5/5.5/7.0)}] |
-| `log_meals` | YYYY-MM-DD | meals{ mealNo: {status(plan / substitute / skip / photo: 品目から自動判定して保存), items[{foodId, grams, kcal, p, f, c, origin(plan/add), eaten, deleted(ソフト削除・シートを閉じると確定), planGrams, estimated}], loggedAt, photoId, reason(スキップ理由), variant(""/"alt"), photo{assetId, confidence, note}, skip{reason, reasonText}} } |
+| `log_meals` | YYYY-MM-DD | meals{ 紐づけ先（mealNo または snack_N）: {linkedSlot(1〜5 / "snack"), linkOverride(手で紐づけ先を変えたら true。以後は自動判定で書き換えない), status(plan / substitute / skip / photo: 品目から自動判定して保存), items[{foodId, grams, kcal, p, f, c, origin(plan/add), eaten, deleted(ソフト削除・シートを閉じると確定), planGrams, estimated}], loggedAt, photoId, reason(スキップ理由), variant(""/"alt"), photo{assetId, confidence, note}, skip{reason, reasonText}} } |
 | `log_supplements` | YYYY-MM-DD | items{ id: {done, loggedAt} }、今日はなし: {done:false, na:true, reason, reasonText, loggedAt} |
 | `log_routine` | YYYY-MM-DD | items{ id: {done, loggedAt} }、水は {done, value(ml), loggedAt}、今日はなし: {na, reason} |
 | `log_media` | id | date, type(photo/video), category(body/form/meal), assetId, url, exerciseId, note |
@@ -77,7 +77,9 @@
 
 タブは **今日・筋トレ・水・週** の 4 つ。同じ情報・同じ操作を 2 か所に置かない。
 
-1. **今日**: 「いま」カード＋タイムライン。各行は全文表示（省略なし）: 食事は品目と kcal/PFC、サプリは名前を全部、筋トレは種目名を全部、ウォームアップは 6 種の内容。右端 ✓ でその場完了（食事の ✓ ＝ プラン通り食べた）。行タップで詳細（食事 → 下からのシート: プラン由来の品目はチェックで「食べた／食べなかった」、追加・差替えは × でソフト削除→「↩ 戻す」、直後に「元に戻す」トースト 5 秒、「↩ 1つ戻す」（最大 20 手）、「プランの内容に戻す」（確認あり）。差替えチップは「卵白150g → 卵白200g に置き換え」「サーモン150g を追加」と表示してから確定。自由入力 AI 計算／手入力）。最下部に 1 日合計（達成率バー＋あと N kcal）。日付の前後移動はここだけ。休みの日（Day 3・7）はウォームアップ・筋トレ・腹筋/カーフの行が無く、有酸素の行だけになる。上部の「Day N ・ 部位 ›」（筋トレ画面上部の Day 表示からも同じ）をタップすると Day ピッカー: 今日の予定（未実施なら持ち越し日付つき）→ その他の未実施（持ち越しが古い順）→ 残りは Day 番号順、の一覧から選んで確定（`log_daily.dayChange`に保存、前日と同じ部位なら注意表示・記録済みなら警告、過去日は変わらない）。「未消化キュー」方式なので差し替えで後回しになった Day はキューに残ったまま消えず、他を消化した後に自然と繰り越して出てくる（今日画面に「M/D は Day N に差し替えたため持ち越し」等の注記、未実施が2つ以上なら注意バナー）。「予定どおりに戻す」（差し替え済みのときだけ）でいつでも取り消せる（確認なし）
+1. **今日**: 「いま」カード＋**時刻順**のタイムライン。各行は全文表示（省略なし）: 食事は品目と kcal/PFC、サプリは名前を全部、筋トレは種目名を全部、ウォームアップは 6 種の内容。日付の前後移動はここだけ。休みの日（Day 3・7）はウォームアップ・筋トレ・腹筋/カーフの行が無く、有酸素の行だけになる。上部の「Day N ・ 部位 ›」（筋トレ画面上部の Day 表示からも同じ）をタップすると Day ピッカー: 今日の予定（未実施なら持ち越し日付つき）→ その他の未実施（持ち越しが古い順）→ 残りは Day 番号順、の一覧から選んで確定（`log_daily.dayChange`に保存、前日と同じ部位なら注意表示・記録済みなら警告、過去日は変わらない）。「未消化キュー」方式なので差し替えで後回しになった Day はキューに残ったまま消えず、他を消化した後に自然と繰り越して出てくる（今日画面に「M/D は Day N に差し替えたため持ち越し」等の注記、未実施が2つ以上なら注意バナー）。「予定どおりに戻す」（差し替え済みのときだけ）でいつでも取り消せる（確認なし）
+   - **画面下部の固定バー（`renderBottomBar()` → `#bbar`）**: 今日の日付を見ているときだけ出す（過去・未来では出さない＝誤って今日に入れないため）。1日合計（カロリーのバー＋タンパク質・脂質・炭水化物）と「📷 写真で記録」「✏️ 手で入力」を横並びで固定。タブバーのすぐ上に置き、スクロールしても消えない（`body:has(#bbar:not([hidden])) main` の下余白と、トーストの退避位置も合わせて調整）。合計をタップすると `UI.totalsOpen` で上に展開し、`totalsBlock()` の内訳・`renderFatMini()` の塊・「週まとめを見る」を出す
+   - **食事は「枠を埋める」ではなく「食べたら記録する」**: 未記録の枠（`planOnly`）は破線の枠だけで、`data-open` も `.chk` も付けない（タップしても記録画面は開かない）。予定時刻を 2 時間過ぎたら `overdue` で枠線をオレンジにし「まだ記録がありません」を 1 行足す（自動でスキップ扱いにはしない）。記録済みの食事の行は従来どおりで、左下に紐づけ先のチップ（`[data-relink]` → `openSlotSheet()`）が付く。記録済みの行タップは今までどおり詳細シート（プラン由来の品目はチェックで「食べた／食べなかった」、追加・差替えは × でソフト削除→「↩ 戻す」、直後に「元に戻す」トースト 5 秒、「↩ 1つ戻す」（最大 20 手）、「プランの内容に戻す」（確認あり）、差替えチップ、自由入力 AI 計算／手入力）
 2. **筋トレ**: 筋トレの日は必ず **ウォームアップ画面** から始まる。各動きは 名前＋英名 → 棒人間のインライン SVG アニメ → やり方 3 ステップ → ▶ 動画で見る → セットカウンター「セット 0/3」＋［1セット完了］（2/3 以上で完了扱い、3/3 で緑）。上部に「6種中 N種 完了」と経過時間。全種完了で「筋トレを始める」が有効になり、所要分を log_workout.warmup.minutes に保存。飛ばすには理由入力→log_daily に記録。その後 1 画面 1 セット: 「種目 1/6 ・ セット 1/3」→ 種目名＋動画／やり方／用語 → 【いまのセット】カード（番号＋種類の日本語名＋目的の一文）→ セット一覧（完了は実績値、現在は黄色）→ 大数字±（初回は目安なし＋クイック重量ボタン、前回値があれば提案）→ 完了 → 休憩タイマー → 次セット。英略語（WU/MAIN/TOP…）は UI に出さない。休みの日（Day 3・7）はウォームアップを出さず `renderRestDay()` がいきなり有酸素の記録画面（種類・時間・心拍数・「記録する」／「今日はやらない」＋理由）を出し、記録（または「今日はやらない」）で `A.finishWorkout()` を呼んで完了画面へ進む。下部タブのアイコンもこの日だけ「有酸素」になる
 3. **水**: 目標 5.0 L、累計の大数字、+500ml / +350ml / −500ml。達成で緑「5L 達成！」。`log_daily.waterMl` に保存（旧 log_routine の値は読むだけ）
 4. **週**: 履歴だけ（日別 kcal・食事・ウォームアップ・筋トレ・有酸素・水・サプリの表、体重 30 日、いちばん重かった重量（種目別・日ごと）、コーチ向けレポート→コピー、写真一覧、設定・CSV）。当日の入力操作は置かない。遵守率のウォームアップは筋トレの日（Day 1・2・4・5・6）だけを分母にし、休みの日は数えない（`weekAdherence()`）
@@ -88,6 +90,19 @@
 - 「いま」カード右上は現在時刻（1 分ごと更新）。予定時刻は「いま」の横に別表示
 - タイマー（リンゴ酢→15 分、サプリ→15 分、セット後の休憩）は loggedAt からの時刻差で算出するので、閉じて開き直しても残り時間が続く
 - 週まとめ（日別の予定/実績テーブル、遅れ列）、レポート（Timing 行）、CSV（plannedAt / loggedAt 列と times シート）に両方を出す
+
+### 食事の記録と枠の自動紐づけ
+
+食事は「食べたら記録して、アプリが枠に紐づける」方式。記録画面で「どの食事か」は一切聞かない。
+
+- `slotWindows()` がプランの予定時刻から各枠の担当時間帯を作る。境目は隣り合う予定時刻のまん中、1食目は予定の 2 時間前から、最後の食事は 24:00 まで。既定（07:00/10:30/13:30/16:30/19:30）なら 05:00–08:45 / 08:45–12:00 / 12:00–15:00 / 15:00–18:00 / 18:00–24:00
+- `slotForTime(hm)` がその時刻を担当する枠を返す（どこにも入らなければ `'snack'`）。`autoSlotFor(date)` は、さらにその枠が**すでに記録済み**なら `nextSnackKey(date)` を返す＝間食として独立して残す
+- 記録は `loggedAt` に記録した瞬間の時刻が自動で入る（入力させない）。あとから直したいときだけ行の時刻タップ（`openTimeSheet`）
+- `openSlotSheet(date, fromKey)` で紐づけ先（1食目〜5食目 / 間食）を選び直す。記録済みの枠には「（記録済み）」と添え、選ぶと `askConfirm` の確認のうえ `A.relinkMeal()` が 2 つの記録の紐づけ先を**入れ替える**。移した記録には `linkOverride: true` が付き、以後アプリの自動判定で書き換えない
+- タイムラインは `buildTimeline()` の最後で食事だけを取り出し、`insertByTime()` で「記録済みは実績時刻・未記録は予定時刻」の位置に置き直す。だから紐づけ先を変えても並びは時刻順のまま動かない
+- **写真**: 固定バーの `#photoBtn` → `photoFromToday()` が縮小して `UI.sheetMeal.photoOnly = true` で写真パネルだけのシートを開く（プランの内容も枠の選択も出さない）。紐づけ先は `autoSlotFor()` が決め、シート冒頭に「記録した時刻から、◯◯ として記録します（あとから変えられます）」と出す
+- **手入力**: `openManualCalSheet(date, null)` は枠の選択を持たず、いまの時間帯の枠の内容を「プランから入れる」チップ **1 つだけ**出す（タップで品目名と数値が入り、そのあと編集できる）。カロリーのみ必須、品目名は任意、「タンパク質・脂質・炭水化物から計算」で P×4 + F×9 + C×4。食事シートの「変更・追加」欄から開いたときだけ、その食事に固定して追加する
+- 保存形式は「1 日 1 ドキュメント」の制約を保つため **キー＝紐づけ先**（`1`〜`5` / `snack_N`）のままにし、各レコードに `linkedSlot` と `linkOverride` を明示的に持たせた。1 つの枠に紐づく記録は仕様上つねに 1 件なので、キーを別 ID にするのと情報量は同じで、既存データの移行が要らない（古いドキュメントは次に書き込んだ時点で `linkedSlot` が付く）
 
 ### 食事の 4 状態
 未記録（灰○） / プラン通り（緑✓） / 変更あり（黄✓＋ラベル） / スキップ（赤−＋ラベル）。状態は記録品目から `deriveStatus` で導く。
@@ -124,7 +139,7 @@ BMR（Mifflin-St Jeor）×活動レベル＋運動消費 を TDEE とし、日�
 
 ## テスト
 
-`npm run e2e:artifact` で mock / db（疑似ランタイム）両モードの 75 項目を実行し、結果を [TEST.md](TEST.md) に書き出す。
+`npm run e2e:artifact` で mock / db（疑似ランタイム）両モードの 76 項目を実行し、結果を [TEST.md](TEST.md) に書き出す。
 
 ## モックモード
 
