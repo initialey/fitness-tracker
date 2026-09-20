@@ -91,9 +91,13 @@ async function run(mode) {
   const T = async (group, name, fn) => { try { const note = await fn(); rec(group, name, mode, true, typeof note === 'string' ? note : ''); console.log('ok   [' + mode + '] ' + name); } catch (e) { rec(group, name, mode, false, e.message); console.error('FAIL [' + mode + '] ' + name + ': ' + e.message); if (process.env.E2E_STACK) console.error(e.stack); } await cleanup(); };
   const assert = (c, m) => { if (!c) throw new Error(m || 'assert'); };
   let curTime = T0;
-  const setTime = async (iso) => { curTime = iso; await page.clock.setFixedTime(new Date(iso)); };
+  // clock.setFixedTime だけでは画面が描き直されず、時計を戻しても「今日ではない日付」のまま描かれた状態が残る
+  // （固定バーが消えたまま等）。時刻を動かしたら必ず描き直す
+  const setTime = async (iso) => { curTime = iso; await page.clock.setFixedTime(new Date(iso)); await page.evaluate(() => { try { window.__tl.rerender(); } catch (e) { /* ignore */ } }).catch(() => {}); };
   /** 1日合計（画面下部に固定されたバー）の kcal */
-  const dayTotal = async () => Number((await page.$eval('#bbar .k1', e => e.textContent)).match(/^([\d,]+)/)[1].replace(/,/g, ''));
+  // 固定バーは「今日の日付を見ているとき」だけ出る。孤立日付へ飛んだテストの直後は描画が古いままのことがあるので、
+  // 見つからなければ今日タブを踏み直して描き直させる
+  const dayTotal = async () => { if (!(await page.$('#bbar .k1'))) { await goTab('today'); await page.waitForSelector('#bbar .k1'); } return Number((await page.$eval('#bbar .k1', e => e.textContent)).match(/^([\d,]+)/)[1].replace(/,/g, '')); };
   /** 固定バーの「くわしく」を開いて中身を読む（閉じてから戻す） */
   const totalsPanel = async () => { const open = await page.$('#bbar .panel'); if (!open) await page.click('#bbTot'); await page.waitForSelector('#bbar .panel'); const txt = await page.$eval('#bbar .panel', e => e.textContent); return txt; };
   /** 新方式（食べたら記録 → アプリが一番近い枠に自動で紐づける）では枠をタップして埋められないので、
@@ -112,15 +116,17 @@ async function run(mode) {
   const goTab = async (tab) => { await page.click('.tabs [data-tab="' + tab + '"]'); await page.waitForTimeout(120); };
   const closeSheet = async () => { if (await has('#sheet:not([hidden])')) { await page.click('#sheet', { position: { x: 5, y: 5 } }); await page.waitForSelector('#sheet', { state: 'hidden' }); await page.waitForTimeout(150); } };
   /** clock.setFixedTime はブラウザコンテキスト全体で共有されるので、孤立日付へ飛ばしたテストは必ずここで今日（T0）へ戻す */
-  const resetClock = async () => { curTime = T0; await page.clock.setFixedTime(new Date(T0)); };
+  const resetClock = async () => { await setTime(T0); };
   /** 「A または B」の選択画面が出ていたら選ぶ（既定は先頭の選択肢）。出ていなければ何もしない */
-  const pickChoice = async (idx, pg) => { pg = pg || page; await pg.waitForFunction(() => document.querySelector('[data-exchoice]') || document.querySelector('#setDone') || document.querySelector('#wuStart')); if (!(await pg.$('[data-exchoice]'))) return false; await pg.locator('[data-exchoice]').nth(idx || 0).click(); await pg.waitForSelector('#setDone'); await pg.waitForTimeout(60); return true; };
+  /** 必須セットが全部記録済みの種目は完了表示になるので、セット行をタップして入力画面（記録の修正）に戻す */
+  const enterEdit = async (pg) => { pg = pg || page; if (await pg.$('#exNext')) { await pg.click('[data-set="0"]'); await pg.waitForSelector('#setDone'); await pg.waitForTimeout(60); } };
+  const pickChoice = async (idx, pg) => { pg = pg || page; await pg.waitForFunction(() => document.querySelector('[data-exchoice]') || document.querySelector('#setDone') || document.querySelector('#exNext') || document.querySelector('#wuStart')); if (!(await pg.$('[data-exchoice]'))) return false; await pg.locator('[data-exchoice]').nth(idx || 0).click(); await pg.waitForSelector('#setDone'); await pg.waitForTimeout(60); return true; };
   /** 重量＋回数をまとめて入れるポップアップで記録する（「記録する」で確定 → 休憩へ）。w=null で自重種目 */
   const recordSet = async (w, r, pg) => { pg = pg || page; await pg.click(w == null ? '#rv' : '#wv'); await pg.waitForSelector('#siSave'); if (w != null) await pg.fill('#siW', String(w)); if (r != null) await pg.fill('#siR', String(r)); await pg.click('#siSave'); await pg.waitForFunction(() => document.querySelector('#dlg').hidden); await pg.waitForTimeout(80); };
   /** 残りのセットを提案どおりに記録して完了画面まで進める（選択式の種目は先頭を選ぶ・自重種目は重量欄なし） */
   const finishAllSets = async (pg) => { pg = pg || page;
     for (let guard = 0; guard < 80; guard++) {
-      await pickChoice(0, pg);
+      await pickChoice(0, pg); await enterEdit(pg);
       if ((await pg.locator('#setDone').textContent()).includes('完了画面へ')) { await pg.click('#setDone'); return true; }
       const w = await pg.$('#wv');
       if (w && (await pg.locator('#wv').textContent()) === '—') { const q = await pg.$('[data-qk]'); if (q) await q.click(); else await pg.click('[data-pm="w:1"]'); }
@@ -130,7 +136,7 @@ async function run(mode) {
     }
     return false;
   };
-  const gotoEx = async (i) => { for (let g = 0; g < 16; g++) { if (await has('#rest:not([hidden])')) { await page.click('#skipRest'); await page.waitForSelector('#setDone:not([hidden]), [data-exchoice]'); } const m = /種目 (\d+)\//.exec(await text('.ex-head .p')); const cur = Number(m[1]) - 1; if (cur === i) { await pickChoice(); return; } await page.click('[data-ex="' + (cur < i ? 1 : -1) + '"]'); await page.waitForTimeout(60); } throw new Error('gotoEx ' + i); };
+  const gotoEx = async (i) => { for (let g = 0; g < 16; g++) { if (await has('#rest:not([hidden])')) { await page.click('#skipRest'); await page.waitForSelector('#setDone:not([hidden]), [data-exchoice]'); } const m = /種目 (\d+)\//.exec(await text('.ex-head .p')); const cur = Number(m[1]) - 1; if (cur === i) { await pickChoice(); await enterEdit(); return; } await page.click('[data-ex="' + (cur < i ? 1 : -1) + '"]'); await page.waitForTimeout(60); } throw new Error('gotoEx ' + i); };
   const dlgOk = async (fillText) => { await page.waitForSelector('#dlg:not([hidden])'); if (fillText != null) { await page.fill('#dlgIn', fillText); } await page.click('#dlgOk'); await page.waitForSelector('#dlg', { state: 'hidden' }); await page.waitForTimeout(120); };
   const mark = async (id) => page.$eval('[data-step="' + id + '"]', e => { const c = e.querySelector('.chk'); return e.dataset.mark + '|' + (c ? c.className : '') + '|' + (c ? c.textContent : ''); });
   const pickReason = async (label) => { await page.waitForSelector('[data-reason]', { timeout: 20000 }); await page.click('[data-reason="' + label + '"]'); await page.waitForFunction(() => document.querySelector('#dlg').hidden || !document.querySelector('[data-reason]')); await page.waitForTimeout(80); };
@@ -452,12 +458,16 @@ async function run(mode) {
   await T(G.workout, 'フォーム動画アップロード（assets）と一覧。assets が null ならボタン非表示', async () => { if (mode === 'mock') { assert(!(await page.$eval('#formBtn', e => !e.hidden)), 'form button hidden'); return 'assets null → 非表示'; } assert(await page.$eval('#formBtn', e => !e.hidden), 'form button visible'); await page.click('#formBtn'); await page.waitForSelector('#mFile'); await page.setInputFiles('#mFile', { name: 'form.mp4', mimeType: 'video/mp4', buffer: Buffer.from('0123456789') }); await page.click('#mUp'); await page.waitForSelector('#sheet', { state: 'hidden' }); await page.waitForTimeout(200); assert(rt.assets.length === 1 && rt.assets[0].type === 'video/mp4', 'uploaded'); const media = Object.values(rt.DB.log_media); assert(media.length === 1 && media[0].category === 'form' && media[0].assetId === rt.assets[0].id, 'log_media'); await goTab('summary'); assert(await has('.gallery .thumb video'), 'gallery shows video'); await goTab('workout'); return 'assets.upload → log_media.assetId → 一覧'; });
   await T(G.workout, '途中で閉じて再開すると同じ種目・セットから続けられる', async () => { await gotoEx(2); const before = await text('.ex-head .p'); if (mode === 'db') { await page.waitForTimeout(300); await page.reload(); await page.waitForFunction(() => !document.querySelector('#view .loading')); await goTab('workout'); } else { await goTab('today'); await goTab('workout'); } if (await has('#rest:not([hidden])')) { await page.click('#skipRest'); } await page.waitForSelector('#setDone:not([hidden]), [data-exchoice]'); const after = await text('.ex-head .p'); assert(!(await has('#wuStart')), 'warmup not repeated'); assert(after.includes('種目 3/11'), 'resume at ex3: ' + after + ' (before ' + before + ')'); });
   await T(G.workout, '最終種目（腹筋3種）→完了画面: 所要時間・やった内容・有酸素記録・報告テキスト生成→コピー→今日へ戻る', async () => { await gotoEx(10); assert((await text('.ex-name')).includes('ハンギングニーレイズ'), 'ex 11 is hanging knee raise'); assert(!(await page.$('#wv')), '自重種目なので重量欄が出ない'); assert(!(await page.$$eval('.tag', els => els.map(e => e.textContent).join('|'))).includes('確認中'), 'no 確認中 tag'); for (let k = 0; k < 3; k++) { await page.click('[data-set="' + k + '"]'); await page.waitForTimeout(60); await page.click('#setDone'); await page.waitForTimeout(80); if (await has('#rest:not([hidden])')) { const rk = await text('#rn'); assert(rk === '1:30' || rk === '1:29', '腹筋の休憩は90秒: ' + rk); await page.click('#skipRest'); await page.waitForSelector('#setDone:not([hidden]), [data-exchoice]'); } } await gotoEx(10); { const rv = await page.$$eval('.setrows .sr .rv', els => els.map(e => e.textContent)); assert(rv.length === 3 && rv.every(t => t === '自重×15'), 'abs bodyweight rows: ' + rv.join(',')); } await gotoEx(0);
-    for (let guard = 0; guard < 60; guard++) { await pickChoice(); if ((await text('#setDone')).includes('筋トレ完了')) break; const wEl = await page.$('#wv'); if (wEl && (await text('#wv')) === '—') { const q = await page.$('[data-qk]'); if (q) await q.click(); else { await page.click('[data-pm="w:1"]'); } } await page.click('#setDone'); if (await has('#rest:not([hidden])')) { await page.click('#skipRest'); await page.waitForSelector('#setDone:not([hidden]), [data-exchoice]'); } await page.waitForTimeout(40); }
-    assert((await text('#setDone')).includes('筋トレ完了'), 'all done'); await page.click('#setDone'); await page.waitForSelector('#repDay');
+    for (let guard = 0; guard < 60; guard++) { await pickChoice();
+      // 記録済みの種目は完了表示（#exNext）になるので、次の種目へ送る
+      if (await page.$('#exNext')) { if ((await text('#exNext')).includes('筋トレ完了')) break; await page.click('#exNext'); await page.waitForTimeout(40); continue; }
+      if ((await text('#setDone')).includes('筋トレ完了')) break; const wEl = await page.$('#wv'); if (wEl && (await text('#wv')) === '—') { const q = await page.$('[data-qk]'); if (q) await q.click(); else { await page.click('[data-pm="w:1"]'); } } await page.click('#setDone'); if (await has('#rest:not([hidden])')) { await page.click('#skipRest'); await page.waitForSelector('#setDone:not([hidden]), [data-exchoice]'); } await page.waitForTimeout(40); }
+    const finBtn = (await page.$('#exNext')) ? '#exNext' : '#setDone';
+    assert((await text(finBtn)).includes('筋トレ完了'), 'all done'); await page.click(finBtn); await page.waitForSelector('#repDay');
     const body = await text('#view'); assert(body.includes('Day 1 Push 完了') && body.includes('所要'), 'complete header'); assert(body.includes('やった内容') && body.includes('インクラインダンベルプレス') && body.includes('ハンギングニーレイズ') && body.includes('自重×15'), 'list with bodyweight abs: ' + body.slice(0, 200)); assert(!/0kg×0|kg×0(?!\d)/.test(body), 'no 0kg×0');
     await page.click('#cmpCardio'); await page.waitForSelector('#cMin'); assert((await page.$eval('#cType .on', e => e.textContent)) === '傾斜歩き', 'default incline walk'); await page.fill('#cMin', '40'); await page.fill('#cHr', '128'); await page.click('#cSave'); await page.waitForSelector('#sheet', { state: 'hidden' }); await page.waitForSelector('#repDay'); assert((await text('#view')).includes('傾斜歩き 40分 ・ 心拍 128'), 'cardio recorded on complete screen');
     const rep = await page.$eval('#repDay', e => e.value); assert(rep.startsWith('Day 1 Push — Sep 16 (Wed)') && rep.includes('Duration:') && rep.includes('Warm-up: done (6 moves x 2 sets') && /Pre-exhaust: Seated cable fly/.test(rep) && /1\. Incline DB press — .*\(top\).*\(back-off\)/.test(rep) && /4\. Pec deck — [\d.]+x\d+/.test(rep) && /\n {3}\(superset with\) plate shoulder front raise — [\d.]+x\d+/.test(rep) && /5\. DB lateral raise.* \+ drop [\d.]+x\d+/.test(rep) && /Abs: Cable crunch — /.test(rep) && /Abs: Hanging knee raise — bodyweight x15/.test(rep) && rep.includes('Cardio: incline walk 40 min @ 128 bpm') && rep.includes('Notes:'), 'report: ' + rep); assert(!/\b0x0\b|0kg/.test(rep), 'report has no 0x0');
-    await page.fill('#repDay', rep + '\nextra'); await page.click('#repCopy'); await page.waitForFunction(() => /コピー/.test(document.querySelector('#toast').textContent), null, { timeout: 5000 }); assert((await text('#toast')).includes('コピー'), 'copy toast'); await page.click('#cmpBack'); await page.waitForTimeout(150); assert((await page.$eval('.tabs .on', e => e.dataset.tab)) === 'today', 'back to today'); assert((await page.$eval('[data-step="workout"]', e => e.className)).includes('done'), 'workout done'); assert((await text('[data-step="workout"]')).includes('全22セット中 22セット完了'), 'set count with denominator (superset = 1): ' + (await text('[data-step="workout"]'))); assert((await text('[data-step="cardio"]')).includes('傾斜歩き 40分'), 'cardio row'); { const bg = await page.$eval('.step.done .row', e => getComputedStyle(e).backgroundColor); assert(bg !== 'rgba(0, 0, 0, 0)' && bg !== 'rgb(0, 0, 0)', 'done row not black: ' + bg); const tmCss = await page.$eval('.step.done .tm', e => [getComputedStyle(e).display, getComputedStyle(e).alignItems, !!e.querySelector('small')]); assert(tmCss[0] === 'flex' && tmCss[1] === 'flex-end' && tmCss[2], 'time column right-aligned with planned below: ' + tmCss.join(',')); } assert((await mark('accessory')).startsWith('ok|') && (await text('[data-step="accessory"]')).includes('自重×15'), 'abs row done: ' + (await text('[data-step="accessory"]'))); await goTab('workout'); await page.waitForSelector('#repDay'); assert((await page.$eval('#repDay', e => e.value)).endsWith('extra'), 'edited report kept while open'); await page.click('#cmpReview'); await page.waitForSelector('#setDone'); await goTab('today'); });
+    await page.fill('#repDay', rep + '\nextra'); await page.click('#repCopy'); await page.waitForFunction(() => /コピー/.test(document.querySelector('#toast').textContent), null, { timeout: 5000 }); assert((await text('#toast')).includes('コピー'), 'copy toast'); await page.click('#cmpBack'); await page.waitForTimeout(150); assert((await page.$eval('.tabs .on', e => e.dataset.tab)) === 'today', 'back to today'); assert((await page.$eval('[data-step="workout"]', e => e.className)).includes('done'), 'workout done'); assert((await text('[data-step="workout"]')).includes('全22セット中 22セット完了'), 'set count with denominator (superset = 1): ' + (await text('[data-step="workout"]'))); assert((await text('[data-step="cardio"]')).includes('傾斜歩き 40分'), 'cardio row'); { const bg = await page.$eval('.step.done .row', e => getComputedStyle(e).backgroundColor); assert(bg !== 'rgba(0, 0, 0, 0)' && bg !== 'rgb(0, 0, 0)', 'done row not black: ' + bg); const tmCss = await page.$eval('.step.done .tm', e => [getComputedStyle(e).display, getComputedStyle(e).alignItems, !!e.querySelector('small')]); assert(tmCss[0] === 'flex' && tmCss[1] === 'flex-end' && tmCss[2], 'time column right-aligned with planned below: ' + tmCss.join(',')); } assert((await mark('accessory')).startsWith('ok|') && (await text('[data-step="accessory"]')).includes('自重×15'), 'abs row done: ' + (await text('[data-step="accessory"]'))); await goTab('workout'); await page.waitForSelector('#repDay'); assert((await page.$eval('#repDay', e => e.value)).endsWith('extra'), 'edited report kept while open'); await page.click('#cmpReview'); await page.waitForSelector('#setDone, #exNext'); await goTab('today'); });
   await shot('04-workout-done');
   await T(G.workout, 'Day3・Day7 は休み（有酸素のみ）: ウォームアップ画面を出さず有酸素の記録画面へ直行。記録すると完了画面に進む', async () => {
     await goTab('today'); await page.click('[data-shift="1"]'); await page.click('[data-shift="1"]'); assert((await text('h1')).startsWith('Day 3'), 'day3');
@@ -994,7 +1004,7 @@ async function run(mode) {
     await p2.click('#wuStart'); await p2.waitForSelector('#setDone');
     const p2text = async sel => (await p2.locator(sel).first().textContent()).trim();
     for (let guard = 0; guard < 60; guard++) {
-      await pickChoice(0, p2); // 「A または B」の種目は先頭を選ぶ
+      await pickChoice(0, p2); await enterEdit(p2); // 「A または B」の種目は先頭を選ぶ
       if ((await p2text('.ex-head .p')).includes('種目 9/9')) break;
       if ((await p2text('#wv')) === '—') { const q = await p2.$('[data-qk]'); if (q) await q.click(); else await p2.click('[data-pm="w:1"]'); }
       await p2.click('#setDone'); if (await p2.$('#rest:not([hidden])')) { await p2.click('#skipRest'); await p2.waitForSelector('#setDone:not([hidden]), [data-exchoice]'); } await p2.waitForTimeout(40);
@@ -1012,12 +1022,13 @@ async function run(mode) {
     // セット2完了 → まだ「このセット完了」・セット3/3
     if ((await p2text('#wv')) === '—') { const q = await p2.$('[data-qk]'); if (q) await q.click(); }
     await p2.click('#setDone'); if (await p2.$('#rest:not([hidden])')) { await p2.click('#skipRest'); await p2.waitForSelector('#setDone:not([hidden]), [data-exchoice]'); }
-    assert((await p2text('.ex-head .p')).includes('セット 3/3'), 'now on set 3/3: ' + (await p2text('.ex-head .p')));
-    assert((await p2text('#setDone')) === 'このセット完了', 'セット3/3（最終セット）に入った直後はまだ「このセット完了」（未記録のまま完了画面に飛ばない）: ' + (await p2text('#setDone')));
+    assert((await p2text('.ex-head .p')).includes('セット 2/3（任意1つ残り）'), '必須2セットが終わったら「セット 2/3（任意1つ残り）」: ' + (await p2text('.ex-head .p')));
+    assert((await p2text('#setDone')) === 'このセット完了', '任意セットを開いているあいだはまだ「このセット完了」（未記録のまま完了画面に飛ばない）: ' + (await p2text('#setDone')));
     // 最終セットを完了して初めて「筋トレ完了」
     if ((await p2text('#wv')) === '—') { const q = await p2.$('[data-qk]'); if (q) await q.click(); }
     await p2.click('#setDone'); if (await p2.$('#rest:not([hidden])')) { await p2.click('#skipRest'); await p2.waitForSelector('#setDone:not([hidden]), [data-exchoice]'); }
     assert((await p2text('#setDone')).includes('筋トレ完了'), '最終種目・最終セットを終えて初めて「筋トレ完了」: ' + (await p2text('#setDone')));
+    assert((await p2text('.ex-head .p')).includes('セット 3/3 完了'), '全セット記録済みなら「セット 3/3 完了」: ' + (await p2text('.ex-head .p')));
     const rv = await p2.$$eval('.setrows .sr .rv', els => els.map(e => e.textContent)); assert(rv.length === 3 && rv.every(t => t !== '未記録' && t !== ''), '3セットとも記録済み: ' + rv.join(','));
     await p2.click('#setDone'); await p2.waitForSelector('#repDay'); const body = await p2.locator('#view').innerText(); assert(!/未記録|0kg×0/.test(body.split('コーチ報告用テキスト')[0]), '完了画面のやった内容に未記録が残っていない');
     } finally { await resetClock(); await p2.close(); ['2027-07-08'].forEach(d => { rt.op('del', { coll: 'log_workout', id: d }); rt.op('del', { coll: 'log_daily', id: d }); rt.op('del', { coll: 'log_cardio', id: d }); }); }
@@ -1036,7 +1047,7 @@ async function run(mode) {
     }
     await p2.click('.tabs [data-tab="workout"]'); await p2.waitForSelector('#wuStart');
     for (let id = 1; id <= 6; id++) { await p2.click('[data-wuset="' + id + '"]'); await p2.click('[data-wuset="' + id + '"]'); }
-    await p2.click('#wuStart'); await p2.waitForSelector('#setDone');
+    await p2.click('#wuStart'); await p2.waitForSelector('#setDone, [data-exchoice]');
     return p2;
   };
   /** 別ページで Day ピッカーを使って dayNo を指定する（すでにその Day ならピッカーは開かない＝ボタンが無効なので） */
@@ -1050,7 +1061,7 @@ async function run(mode) {
   const gotoExOn = async (pg, i, pick) => {
     for (let g = 0; g < 20; g++) {
       const m = /種目 (\d+)\//.exec(await pg.locator('.ex-head .p').textContent()); const cur = Number(m[1]) - 1;
-      if (cur === i) { if (pick !== false) await pickChoice(0, pg); return; }
+      if (cur === i) { if (pick !== false) { await pickChoice(0, pg); await enterEdit(pg); } return; }
       await pg.click('[data-ex="' + (cur < i ? 1 : -1) + '"]'); await pg.waitForTimeout(60);
     }
     throw new Error('gotoExOn ' + i);
@@ -1261,6 +1272,104 @@ async function run(mode) {
       assert(rn === '1:30' || rn === '1:29', '腹筋の休憩は 60〜90秒（90秒）: ' + rn);
       await p2.click('#skipRest'); await p2.waitForSelector('#setDone:not([hidden]), [data-exchoice]');
       return '1つのポップアップに重量（±2.5／ダンベル±1）と回数（±1）、提案値と目標下限が入った状態、日本語の見出し、自重は回数だけ、目標外でも記録して一言、記録するで休憩開始（腹筋は90秒）';
+    } finally { await resetClock(); await p2.close(); rt.op('del', { coll: 'log_workout', id: D }); rt.op('del', { coll: 'log_daily', id: D }); }
+  });
+
+
+  // --- Round 11: 完了・スキップは記録から判定する ／ コーチのフォーム指摘 ---
+  await T(G.workout, '不具合修正: 完了・スキップは記録だけから判定する。全セット記録済みなら「セット 3/3 完了」＋完了カード＋「次の種目へ」／記録済み行をタップすると「記録を上書きする」／再訪時のカーソルは最初の未記録セット／「筋トレ完了」を押していなくても記録が揃っていれば Day は消化される', async () => {
+    const D = '2027-09-02', N = '2027-09-03';
+    const p2 = await openDayOn(D, 1);
+    const t2 = async sel => (await p2.locator(sel).first().textContent()).trim();
+    const rec = async () => {
+      if ((await p2.$('#wv')) && (await t2('#wv')) === '—') { const q = await p2.$('[data-qk]'); if (q) await q.click(); else await p2.click('[data-pm="w:1"]'); }
+      await p2.click('#setDone');
+      if (await p2.$('#rest:not([hidden])')) { await p2.click('#skipRest'); await p2.waitForSelector('#setDone:not([hidden]), [data-exchoice], #exNext'); }
+      await p2.waitForTimeout(40);
+    };
+    try {
+      await gotoExOn(p2, 1, true);
+      assert((await t2('.ex-name')).includes('インクライン'), '2種目目はインクラインダンベルプレス（3セット）: ' + (await t2('.ex-name')));
+      assert((await t2('.ex-head .p')).includes('セット 1/3'), '未記録なら「セット 1/3」: ' + (await t2('.ex-head .p')));
+      assert((await t2('#setDone')) === 'このセット完了', '未記録のセットは「このセット完了」: ' + (await t2('#setDone')));
+      for (let i = 0; i < 3; i++) await rec();
+      // 戻ってくると「いまのセット」ではなく完了表示になる
+      await p2.click('[data-ex="-1"]'); await p2.waitForSelector('#exNext');
+      assert((await t2('.ex-head .p')).includes('セット 3/3 完了'), '全セット記録済みなら「セット 3/3 完了」: ' + (await t2('.ex-head .p')));
+      assert(!(await p2.$('#setDone')), '完了した種目では「いまのセット」カードと記録ボタンを出さない');
+      const doneCard = await t2('.cur-set.done-set');
+      assert(doneCard.includes('✓ この種目は完了しました') && doneCard.includes('3セット記録済み'), '完了カード: ' + doneCard);
+      assert((await t2('#exNext')) === '次の種目へ', '最終種目でなければ「次の種目へ」: ' + (await t2('#exNext')));
+      const rows = await p2.$$eval('.setrows .sr', els => els.map(e => e.textContent));
+      assert(rows.length === 3 && rows.every(t => !/未記録/.test(t)), '完了後もセット一覧は残る: ' + rows.join(' / '));
+      // 記録済みの行をタップすると修正できる
+      await p2.click('[data-set="1"]'); await p2.waitForSelector('#setDone');
+      assert((await t2('#setDone')) === '記録を上書きする', '記録済みのセットは「記録を上書きする」: ' + (await t2('#setDone')));
+      const ghost = await t2('.ghost');
+      assert(ghost.includes('記録済み') && !ghost.includes('変えて完了で上書き'), '「（変えて完了で上書き）」は出さない: ' + ghost);
+      // 1セットだけ記録 → 離れて戻るとカーソルは最初の未記録セット
+      await p2.click('[data-ex="-1"]'); await p2.waitForTimeout(120); await pickChoice(0, p2); await enterEdit(p2);
+      assert((await t2('.ex-head .p')).includes('セット 1/2'), '1種目目は未記録なので「セット 1/2」: ' + (await t2('.ex-head .p')));
+      await rec();
+      await p2.click('[data-ex="1"]'); await p2.waitForTimeout(120); await p2.click('[data-ex="-1"]'); await p2.waitForTimeout(150);
+      assert((await t2('.ex-head .p')).includes('セット 2/2'), '戻ったら最初の未記録セット（2セット目）を開く: ' + (await t2('.ex-head .p')));
+      // 全種目を記録する。ただし「筋トレ完了」は押さない
+      for (let guard = 0; guard < 90; guard++) {
+        await pickChoice(0, p2);
+        if (await p2.$('#exNext')) { if ((await t2('#exNext')).includes('筋トレ完了')) break; await p2.click('#exNext'); await p2.waitForTimeout(40); continue; }
+        if ((await t2('#setDone')).includes('筋トレ完了')) break;
+        await rec();
+      }
+      assert(!(await p2.$('#repDay')), '「筋トレ完了」を押していないので完了画面には進んでいない');
+      if (mode === 'db') {
+        await p2.clock.setFixedTime(new Date(N + 'T06:50:00+08:00')); await p2.reload();
+        await p2.waitForFunction(() => !document.querySelector('#view .loading'));
+        await p2.click('.tabs [data-tab="today"]'); await p2.waitForTimeout(150);
+        assert(!(await t2('h1')).startsWith('Day 1'), '記録が揃っていれば「完了」を押さなくても Day 1 は消化され、翌日に持ち越さない: ' + (await t2('h1')));
+      }
+      return '記録済みセットから完了を判定（フラグを持たない）';
+    } finally { await resetClock(); await p2.close(); [D, N].forEach(d => { rt.op('del', { coll: 'log_workout', id: d }); rt.op('del', { coll: 'log_daily', id: d }); rt.op('del', { coll: 'log_cardio', id: d }); }); }
+  });
+  await T(G.workout, 'コーチのフォーム指摘: 種目名のすぐ下・セット入力の上に折りたたまずに出す（ショルダープレス・トライセップ プッシュダウン・カーフ3種）。「コーチより 9/21」・動画は別タブ・新しい指摘は最初の1回だけ強調。カーフの提案は前回20回で+10kg・18回で+5kg', async () => {
+    const D = '2027-09-09';
+    const p2 = await openDayOn(D, 5);
+    const t2 = async sel => (await p2.locator(sel).first().textContent()).trim();
+    try {
+      await p2.evaluate(() => { try { localStorage.removeItem('tl.cueSeen'); } catch (e) { /* ignore */ } });
+      await gotoExOn(p2, 1, true);
+      assert((await t2('.ex-name')).includes('ショルダープレス'), '2種目目はショルダープレス: ' + (await t2('.ex-name')));
+      const cue = await t2('#formCues');
+      assert(cue.includes('少し後ろに寄って座る') && cue.includes('肘はやや前に向ける。横に開かない（フレアさせない）'), 'ショルダープレスの指摘2つを全文表示: ' + cue);
+      assert(cue.includes('コーチより 9/21'), '日付つきの出どころ: ' + cue);
+      assert(!(await p2.$eval('#formCues', e => e.hidden)) && (await p2.$eval('#formCues', e => e.querySelectorAll('li').length)) === 2, '折りたたまず箇条書きで出す');
+      const order = await p2.$$eval('.ex-name, #formCues, .cur-set, .setrows', els => els.map(e => e.id || e.className.split(' ')[0]).join('>'));
+      assert(order.startsWith('ex-name>formCues>cur-set'), '種目名の直後・セット入力の上: ' + order);
+      assert((await p2.$eval('#formCues', e => e.className)).includes('new'), '初めて見るときは強調する: ' + (await p2.$eval('#formCues', e => e.className)));
+      const vid = await p2.$eval('.cue-vid', e => [e.textContent, e.getAttribute('href'), e.getAttribute('target')]);
+      assert(vid[0] === '動画を見る' && vid[1] === 'https://youtube.com/shorts/E7ngsffMPR0' && vid[2] === '_blank', '動画は別タブで開く: ' + vid.join(' '));
+      await p2.click('[data-ex="1"]'); await p2.waitForTimeout(150); await p2.click('[data-ex="-1"]'); await p2.waitForSelector('#formCues');
+      assert(!(await p2.$eval('#formCues', e => e.className)).includes('new'), '一度見たら通常表示に戻す: ' + (await p2.$eval('#formCues', e => e.className)));
+      await gotoExOn(p2, 4, true);
+      assert((await t2('.ex-name')).includes('トライセップ プッシュダウン'), '5種目目: ' + (await t2('.ex-name')));
+      assert((await t2('#formCues')).includes('毎回、伸ばしきったところで止めて絞る'), 'プッシュダウンの指摘: ' + (await t2('#formCues')));
+      assert(!(await p2.$('.cue-vid')), '動画の無い指摘には「動画を見る」を出さない');
+      await gotoExOn(p2, 8, true);
+      assert((await t2('.ex-name')).includes('カーフ'), '最終種目はカーフ: ' + (await t2('.ex-name')));
+      const calfCue = await t2('#formCues');
+      assert(calfCue.includes('一番上で止めて、コントロールしながら効かせる') && calfCue.includes('重量が軽すぎる。もっと重くすること'), 'カーフの指摘2つ: ' + calfCue);
+      assert(calfCue.includes('15〜20回でギリギリになる重量まで上げる'), 'カーフ画面に重量の目安を出す: ' + calfCue);
+      // 週画面に指摘の一覧
+      await p2.click('.tabs [data-tab="summary"]'); await p2.waitForSelector('#cueBlock');
+      const wk = (await p2.locator('#cueBlock').innerText());
+      ['スミスマシン カーフレイズ', 'ドンキーカーフレイズ', 'レッグプレス トープレス', 'マシン ショルダープレス', 'スミス ショルダープレス', 'トライセップ プッシュダウン'].forEach(n => assert(wk.includes(n), '週画面の一覧に ' + n + ' が出る: ' + wk));
+      assert(wk.includes('9/21') && wk.includes('一番上で止めて、コントロールしながら効かせる') && !wk.includes('…'), '日付つき・省略なしで全文: ' + wk);
+      // カーフの提案幅（前回の回数で変える）
+      const calf = await page.evaluate(() => { const mk = pr => window.__tl.suggestSets([{ setNo: 1, setType: 'MAIN', min: 15, max: 20, weightKg: '', reps: '', done: false, prevWeightKg: 60, prevReps: pr, move: '' }], 1, { calfBump: true })[0]; return { r20: mk(20), r18: mk(18), r15: mk(15), r14: mk(14) }; });
+      assert(calf.r20.suggestWeightKg === 70 && /20回/.test(calf.r20.suggestReason), '前回20回 → +10kg: ' + JSON.stringify(calf.r20.suggestWeightKg));
+      assert(calf.r18.suggestWeightKg === 65, '前回18回 → +5kg: ' + calf.r18.suggestWeightKg);
+      assert(calf.r15.suggestWeightKg === 62.5, '前回15〜17回 → +2.5kg: ' + calf.r15.suggestWeightKg);
+      assert(calf.r14.suggestWeightKg === 60, '15回に届かなければ据え置き: ' + calf.r14.suggestWeightKg);
+      return 'カーフ 20回→+10kg / 18回→+5kg / 15回→+2.5kg / 14回→据え置き';
     } finally { await resetClock(); await p2.close(); rt.op('del', { coll: 'log_workout', id: D }); rt.op('del', { coll: 'log_daily', id: D }); }
   });
 
@@ -1597,6 +1706,11 @@ async function run(mode) {
 | 33 | 実施済みの休みの日が「できなかった」として翌日以降に持ち越され続けた。9/18 は体重・リンゴ酢・1食目の記録があるのに、有酸素だけ記録が無かったため未消化のまま残り、9/21 に「9/18 にできなかったため持ち越し」と出ていた。あわせて (a) 過去の日付にも「いま」カードが今の時刻つきで出て、そこから押すと過去の日付に今の時刻で記録が入ってしまう、(b) 1日の目標がコーチ指定の 2,632kcal ではなくプランの品目合計 2,178kcal になっていた、(c) 体重の入力が空でも保存ボタンを押せた | (a) 休みの日の消化判定を「有酸素を記録したか」だけで見ていた。休みの日に求められるのは「トレーニングをしないこと」なので、その日を過ごした記録があれば消化とみなすべきだった。(b) 「いま」カードは常に今日のものとして描いていて、表示中の日付が今日かどうかを見ていなかった。(c) 目標値をプランの品目合計から計算しており、コーチ指定の値とのズレがそのまま目標になっていた | (a) \`restDayConsumed(date)\` を追加し、有酸素の記録／食事・体重・サプリのいずれか1件以上／「有酸素はやらない」（\`log_daily.restDone\`、休みの日なので理由は聞かない）／\`cardioMissed\`／\`log_workout.finished\` のどれかで休みの日を消化扱いにした。筋トレの日は今までどおり \`finished\` だけで判定する。(b) 今日以外の日付では「いま」カードと記録バーを出さず、✓ を無効にし、行タップでも開かないようにして、修正は長押しの「修正する」からに限定した（時刻の初期値は元の記録時刻）。(c) 目標を \`settings.targetKcal/targetP/targetF/targetC\`（2632 / 210 / 69 / 295、全曜日共通）に固定し、プランの品目合計とのズレは隠さず合計の展開に 1 行で出すようにした。(d) 体重は入力欄を空のままにして、何か入るまで保存ボタンを無効にした |
 
 | 34 | 「プランの枠はタップできない予定表示」から「タップすると品目選択シートが開く」へ戻したとき、テスト側が \`#manualCalBtn\` ＋「プランから入れる」チップで枠を埋める作りだったため、食事系のテストが連鎖で壊れた。あわせて (a) 品目ごとの栄養値を新しい表に入れ替えたので合計 kcal が全部ズレた、(b) 未記録の枠に「まだ記録がありません」が付く日だけ、打ち消し線用の \`lineHtml\` が 1 行足りず \`undefined\` が表示された、(c) テストの時計を戻す \`resetClock()\` が \`curTime\` を更新していなかったため、別のテストの \`logIntoSlot\` が「戻す」ときに**古い時刻**をブラウザへ書き戻しており、その副作用に後続のテストが依存していた | (a) 表示に使う行（\`lines\`）と HTML 版（\`lineHtml\`）を別々のタイミングで組み立てていた。(b) 時計のヘルパーが「テスト側が覚えている時刻」と「ブラウザの時刻」の2つの状態を持ちながら、片方だけ更新する経路があった | テスト側の \`logIntoSlot(slot)\` を「カードをタップ →『全部食べた』」に作り直し、\`openMealSlot(slot)\` は未記録なら先に記録してから詳細を開くようにした。アプリ側は \`lineHtml\` を \`lines\` が確定してから組み立てるように直した。時計は \`resetClock()\` でも \`curTime\` を同期させ、孤立した日付へ飛ぶテストは \`T0\` ではなく**入ってきた時刻**（\`backTime = curTime\`）へ戻すようにして、暗黙の依存を無くした |
+
+| 35 | 全セット記録済みの種目が「セット 1/3」のままで、スキップ扱いにもなっていた。完了とスキップを記録とは別のフラグで持ち、カーソルを返す \`firstUndoneIn()\` が「未記録なし」のとき 0（＝1セット目）を返していたのが原因。状態を \`exStarted()\`/\`exComplete()\` として記録から毎回導出し、\`firstUndoneIn()\` は全部記録済みなら最後のセットを返すようにした。完了した種目は完了カード＋「次の種目へ」にしたので、\`#setDone\` があることを前提に種目を歩いていた既存テスト（最終種目→完了画面、Day2 カーフ、\`#cmpReview\`）が壊れ、\`enterEdit()\`（セット行をタップして入力に戻す）と \`#exNext\` 分岐を足して直した。あわせて \`openDayOn()\` が \`#setDone\` だけを待っていたため、1種目目が「A または B」の Day 1 で固まっていたのを \`[data-exchoice]\` も待つようにした |
+
+| 36 | db モードで「手で入力」「サプリ」「写真」まわりのテストが実行のたびに違う場所で落ちた（\`#bbar .k1\` が無い等）。孤立した日付へ飛ばしたテストが \`page.clock.setFixedTime()\` を戻しても画面は描き直されず、「今日ではない日付」として描いた状態（＝下部の固定バーが消えたまま）が次のテストに残っていたのが原因。\`setTime()\` / \`resetClock()\` が時刻を動かしたあと必ず \`window.__tl.rerender()\` で描き直すようにした |
+
 
 ## 実行方法
 

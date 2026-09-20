@@ -27,7 +27,7 @@
 |---|---|---|
 | `settings` | `main` | startDate, unit(kg/lb), tz, waterGoalMl, restMainSec(150), restTopSec, restOtherSec(90), restAccessorySec(90: 腹筋・カーフ), incDbKg(1), incBarKg(2), weeklyGainPct(5), timerMorningMin, timerAfterMealMin, riceBasis("raw"/"cooked"), targetKcal(2632)/targetP(210)/targetF(69)/targetC(295)（1日の目標・全曜日共通）, workoutMin, warmupMin, bioWeightKg(72.4: 体重未記録のときの有酸素kcal計算の初期値), cardioLabel, times{weight,morning,meal1..5,after_meal,warmup,workout,cardio,night}, seedVersion |
 | `plan_days` | dayNo | name, isRest, cardioRequired, notes |
-| `plan_exercises` | id | dayNo（数値 または 複数日の配列。腹筋は `[1,4,6]`、カーフは `[2,5]` で 1 つの exerciseId を共有し履歴が途切れない）, order, seq（SEED の並び順。order が同じ選択肢の表示順に使う）, nameJa, nameEn, isPreexhaust, supersetGroup("SS"), pair[2 動作名]（スーパーセット: 各セットを 1-1/1-2 に展開、1-1 の後は休憩なし）, progressive（セットごとに少しずつ重くする）, accessory("abs"/"calves": 最終種目のあとの枠、order 99〜101), choiceGroup（同じ値の種目はその日どれか 1 つだけを選ぶ＝「A または B」）, bodyweight（自重。重量欄を出さない）, setScheme（例 `WU10-12,TOP6-8,BO10-12` / `MAIN8-12x3` / `MAIN10-15x3,DROP*` / `TOP6-8,MID16-20` / `MID12-15x2,MID12-15?`。`*` = 限界まで、`MID` = 中重量、末尾 `?` = 任意のセット）, howTo, videoQuery, active, **sets[]**（展開済み。move/moveName/pairNo/optional） |
+| `plan_exercises` | id | dayNo（数値 または 複数日の配列。腹筋は `[1,4,6]`、カーフは `[2,5]` で 1 つの exerciseId を共有し履歴が途切れない）, order, seq（SEED の並び順。order が同じ選択肢の表示順に使う）, nameJa, nameEn, isPreexhaust, supersetGroup("SS"), pair[2 動作名]（スーパーセット: 各セットを 1-1/1-2 に展開、1-1 の後は休憩なし）, progressive（セットごとに少しずつ重くする）, accessory("abs"/"calves": 最終種目のあとの枠、order 99〜101), choiceGroup（同じ値の種目はその日どれか 1 つだけを選ぶ＝「A または B」）, bodyweight（自重。重量欄を出さない）, setScheme（例 `WU10-12,TOP6-8,BO10-12` / `MAIN8-12x3` / `MAIN10-15x3,DROP*` / `TOP6-8,MID16-20` / `MID12-15x2,MID12-15?`。`*` = 限界まで、`MID` = 中重量、末尾 `?` = 任意のセット）, howTo, videoQuery, active, formCues[{date, text, videoUrl}]（コーチからのフォーム指摘。種目画面では種目名の直後に折りたたまずに出す）, **sets[]**（展開済み。move/moveName/pairNo/optional） |
 | `plan_warmup` | id | name, nameEn, anim(swing/alt/cross/circle/hips/toe), reps, targetSets(3), minSets(2), steps[3]（コーチ指定 6 種、毎回必須） |
 | `plan_meals` | mealNo | label, note, items[{foodId, grams, label?, short?, choices?}], alt?{label, items}（4食目の代替案）。foodId `rice` は settings.riceBasis で rice_raw / rice_cooked に解決 |
 | `plan_supplements` | id | name, dose, timing(after_meal/night/pre), order, active, pending（量がコーチ確認中なら true。シートでタップ入力すると解除） |
@@ -43,7 +43,7 @@
 | `log_daily` | YYYY-MM-DD | dayNo(手動上書き), dayChange{from, loggedAt}（その日の Day/部位の差し替え。「未消化キュー」方式はこのフィールドだけで表現し、他の日付は書き換えない）, dayName, notes, waterMl, waterLoggedAt（水タブ）, skippedItems[{item, itemJa, reason, reasonJa}]（できなかった項目の自動集計）, isRestOverride, comment, warmupSkipped{reason, at}, workoutMissed{reason, reasonText, loggedAt}, cardioMissed{reason, reasonText, loggedAt}, restDone{loggedAt}（休みの日の「有酸素はやらない」） |
 
 重量は常に kg で保存。表示時のみ lb 換算（1 lb = 0.45359237 kg、小数 1 桁）。
-初回起動時に `plan_days` が空、または `settings.seedVersion` が `SEED_VERSION`（現在 9 = Day4 をコーチ原文どおりに差し替え、「A または B」を選択式に分割、腹筋3種・カーフ3択を確定）より古ければ、`SEED` 定数（[training-log-spec.md](training-log-spec.md)）で `plan_*` と `foods`(source=plan) を投入し直す。ログは触らない。プランを変えたら `SEED_VERSION` を上げて再公開する。
+初回起動時に `plan_days` が空、または `settings.seedVersion` が `SEED_VERSION`（現在 11 = コーチからのフォーム指摘をカーフ3種・トライセップ プッシュダウン・ショルダープレスに追加）より古ければ、`SEED` 定数（[training-log-spec.md](training-log-spec.md)）で `plan_*` と `foods`(source=plan) を投入し直す。ログは触らない。プランを変えたら `SEED_VERSION` を上げて再公開する。
 
 ### 食事プラン（コーチ指定）
 1. 全卵4個(約200g)・卵白150g・ヒマラヤ塩1g
@@ -61,11 +61,15 @@
 
 **「A または B」の種目（`choiceGroup`）**: `exercisesFor(date)` が同じ `choiceGroup` の種目を 1 枠にまとめ、その日の `log_workout[date].choices[group]` で選ばれた 1 つに解決する（未選択なら `needsChoice` の仮スロット）。`renderExerciseChoice()` がセット入力の前に選択カードを出し、選択肢ごとに `lastDoneOf(exId, date)` の「前回 M/D ・ Xkg×Y回」（記録が無ければ「記録なし」、14 日以上空いていれば「しばらくやっていません」）を添える。選択肢は別々の exerciseId なので前回値・提案・履歴・週まとめ・グラフはすべて独立。種目名の横の「選び直す」（`#rePick`）は 1 セット以上記録済みなら確認ダイアログを出し、`A.setExerciseChoice(date, group, null, [exId])` で選択とその日の記録を消す。対象は Day1/2/4/5 の「or」種目とカーフ 3 択。
 
-**腹筋・カーフ（確定）**: 腹筋は Day 1・4・6 の最終種目のあとに 3 種すべて（ケーブルクランチ → ケーブル 片手 オブリーククランチ → ハンギングニーレイズ、各 3 × 15〜20。ハンギングニーレイズは `bodyweight` で重量欄なし）。カーフは Day 2・5 に 3 種から 1 つ（スミスマシン カーフレイズ／ドンキーカーフレイズ／レッグプレス トープレス、2 セット必須＋3 セット目は任意）。どちらも `dayNo` を配列にして 1 つの exerciseId を複数日で共有するので履歴が日をまたいでつながる。休憩は `restAccessorySec`（90 秒）。提案は腹筋 +2.5kg／カーフ +5kg（`bumpStep`）で、20 回に届いたときだけ伸ばす。今日画面のタイムラインも種目名を省略せずに全部出す。
+**腹筋・カーフ（確定）**: 腹筋は Day 1・4・6 の最終種目のあとに 3 種すべて（ケーブルクランチ → ケーブル 片手 オブリーククランチ → ハンギングニーレイズ、各 3 × 15〜20。ハンギングニーレイズは `bodyweight` で重量欄なし）。カーフは Day 2・5 に 3 種から 1 つ（スミスマシン カーフレイズ／ドンキーカーフレイズ／レッグプレス トープレス、2 セット必須＋3 セット目は任意）。どちらも `dayNo` を配列にして 1 つの exerciseId を複数日で共有するので履歴が日をまたいでつながる。休憩は `restAccessorySec`（90 秒）。提案は腹筋が +2.5kg（`bumpStep`）で 20 回に届いたときだけ伸ばす。カーフは「15〜20回でギリギリになる重量まで上げる」というコーチの指摘に合わせ、前回の回数で伸ばし幅を変える（`calfBump`: 20 回以上 +10kg ／ 18〜19 回 +5kg ／ 15〜17 回 +2.5kg ／ 15 回未満は据え置き）。カーフの画面には「15〜20回でギリギリになる重量まで上げる」を常に添える。今日画面のタイムラインも種目名を省略せずに全部出す。
+
+**完了・スキップは記録からだけ導く（フラグを持たない）**: 種目の状態は `exStarted()`（1 つでも記録がある）／`exComplete()`（必須セットが全部記録済み）で毎回計算し、「やった・飛ばした」を別に保存しない。記録が 1 つでもある種目はスキップ扱いにならず、前にスキップと見えていた種目も記録を入れた時点で自動的に戻る。カーソル（`firstUndoneIn`）は最初の未記録セット（全部記録済みなら最後のセット）。必須セットが全部埋まった種目は「いまのセット」カードを出さず **完了カード**（「✓ この種目は完了しました」＋「Nセット記録済み」＋「次の種目へ」／最終種目なら「筋トレ完了 → 完了画面へ」）にし、セット一覧はそのまま下に残してタップで修正できる（ボタンは「記録を上書きする」）。右上のカウンターは進行中「セット 2/3」、完了「セット 3/3 完了」、任意セットだけ残っていれば「セット 2/3（任意1つ残り）」。その日の筋トレ完了（`workoutCompleteFor`）・未消化キュー・週の遵守率・コーチ報告もすべてこの判定を使うので、「筋トレ完了」を押し忘れても記録が揃っていれば Day は消化される。
+
+**コーチからのフォーム指摘（`formCues`）**: 種目ごとに `[{date, text, videoUrl}]` を持ち、種目名のすぐ下・セット入力の上に折りたたまずに箇条書きで出す（`formCuesHtml`）。出どころは「コーチより 9/21」、`videoUrl` があれば「動画を見る」を別タブで開く。初めて見る指摘だけ 1 回強調し、その種目から離れた時点で通常表示に戻す（`localStorage` の `tl.cueSeen`）。週タブにも全種目の指摘を新しい順で一覧表示する。
 
 **入力ポップアップ（`openSetInput`）**: 重量と回数を 1 つのポップアップに左右で並べ、重量 ±2.5（ダンベルは ±1）・回数 ±1、初期値は提案重量と目標回数の下限。数字をタップすれば直接入力でき、「記録する」1 つで `commitSet()` → 休憩タイマー開始。自重種目は回数だけ。見出しは日本語（「1セット目 ・ ウォームアップ ・ 10〜12回」など。英略語は出さない）。目標回数の範囲外でも記録は止めず、「目標を超えました。次回は重量を上げてください」／「目標に届きませんでした。次回は同じ重量で」をトーストで出すだけ。
 
-**セット種類ごとの提案（`suggestSets`）**: ウォームアップ = その日のトップ予定 × 0.55（トップは後ろにあるので `topPlan` で先に見積もる）／トップ = 前回のトップ、上限到達で `bumpKg`（+5%、ダンベルは +1kg）／バックオフ = 今日のトップ × 0.85／中重量（MID）= 16〜20 回ならトップ × 0.70、10〜15 回ならトップ × 0.80／漸増 = 1 セット目は前回の 1 セット目（前回上限到達なら 1 段階重く）、2 セット目以降は前のセットから 1 段階重く（ダンベル +1kg、腹筋 +2.5kg、カーフ +5kg、それ以外 +2.5kg。前のセットを記録済みで上限に届かなかったときだけ据え置き）／ドロップ = 直前 × 0.7／最終 = 最重量 × 0.7。
+**セット種類ごとの提案（`suggestSets`）**: ウォームアップ = その日のトップ予定 × 0.55（トップは後ろにあるので `topPlan` で先に見積もる）／トップ = 前回のトップ、上限到達で `bumpKg`（+5%、ダンベルは +1kg）／バックオフ = 今日のトップ × 0.85／中重量（MID）= 16〜20 回ならトップ × 0.70、10〜15 回ならトップ × 0.80／漸増 = 1 セット目は前回の 1 セット目（前回上限到達なら 1 段階重く）、2 セット目以降は前のセットから 1 段階重く（ダンベル +1kg、腹筋 +2.5kg、カーフ +5kg、それ以外 +2.5kg。前のセットを記録済みで上限に届かなかったときだけ据え置き）／カーフ（`calfBump`）= 前回 20 回以上 +10kg・18〜19 回 +5kg・15〜17 回 +2.5kg・それ未満は据え置き／ドロップ = 直前 × 0.7／最終 = 最重量 × 0.7。
 
 **任意のセット**: `setScheme` の末尾 `?` のセットは「（任意）」表示＋「このセットは飛ばす（任意）」ボタン。任意セットを開いている間はボタンが「このセット完了」のままで（未記録のまま完了画面に飛ばない）、飛ばした時点で残りが無ければ筋トレ完了に進む。遵守率のセット数も、任意セットは記録したときだけ分母に数える。
 
