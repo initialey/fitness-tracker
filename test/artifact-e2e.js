@@ -1699,8 +1699,10 @@ async function run(mode) {
       assert(rt.sampleCalls.length === before + 1, '自動で再試行しない: ' + (rt.sampleCalls.length - before) + ' 回呼ばれた');
       await p2.click('#sheet', { position: { x: 5, y: 5 } }); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
       assert(!(await p2.$('#photoBtn')) && (await p2.$('#textEstBtn')), 'images_unavailable のあとは写真ボタンを隠して文字で推定にする');
-      return 'code をそのまま表示 → 写真の入口を隠して文字で推定へ';
-    } finally { await p2.close(); }
+      // この表示は写真に対応していないと覚えるので、後続のテストのために消しておく（localStorage はページ間で共有）
+      await p2.evaluate(() => { try { localStorage.removeItem('tl.noImages'); } catch (e) { /* ignore */ } });
+      return 'code をそのまま表示 → 写真の入口を隠して文字で推定へ（次回から静かに文字で推定に入る）';
+    } finally { await p2.evaluate(() => { try { localStorage.removeItem('tl.noImages'); } catch (e) { /* ignore */ } }).catch(() => {}); await p2.close(); }
   });
   await T(G2, '解析中は「写真を解析しています…（最大1分ほどかかります）」と「止める」を出し、止めたら元に戻る。結果の下の「文字で直す」で言葉を足して推定し直せる（自前のタイムアウトは入れない）', async () => {
     if (mode === 'mock') return 'db のみ';
