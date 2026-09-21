@@ -2140,7 +2140,9 @@ function photoPanelHtml(ph) {
   const photoOk = canSendPhoto();
   let h = '<div class="photo" id="photoPanel"><div class="ttl small mute">' + (ph.blob ? '📷 写真で記録' : '✏️ 文字で推定') + '</div>';
   if (ph.status === 'pick') {
-    if (photoOk) h += '<input type="file" accept="image/jpeg,image/png,image/webp,image/*" id="phFile" class="txt" style="margin-top:6px"><div class="mute small" style="margin-top:4px">タップすると「写真を撮る」と「写真ライブラリ」のどちらも選べます。送る前に JPEG に変換して長辺 1280px に縮小します</div><button class="b b-sub" style="width:100%;margin-top:8px" id="phToText">文字で推定する</button>';
+    if (photoOk) h += '<input type="file" accept="image/jpeg,image/png,image/webp,image/*" id="phFile" hidden><button class="b b-yel" style="width:100%;margin-top:8px" id="phPick">📷 写真を選ぶ</button><div class="mute small" style="margin-top:4px">「写真を撮る」と「写真ライブラリ」のどちらも選べます。送る前に JPEG に変換して長辺 1280px に縮小します</div>' +
+      (CAP.imagesForce ? '<div class="mute small" style="margin-top:6px">押しても写真の選択が出ないときは、この画面が写真に対応していません。同じリンクを Safari で開くと使えることがあります</div>' : '') +
+      '<button class="b b-sub" style="width:100%;margin-top:8px" id="phToText">文字で推定する</button>';
     else h += textFormHtml(ph, 'この画面では写真を送れません（エラー: images_unavailable）。食べたものを文字で入力してください');
     return h + '</div>';
   }
@@ -2189,6 +2191,7 @@ function bindPhotoPanel(s, d, m, date, mealNo) {
     rerender();
   };
   const fi = $('#phFile', s); if (fi) fi.onchange = () => pickFile(fi.files[0]);
+  const pk = $('#phPick', s); if (pk && fi) pk.onclick = () => { fi.value = ''; fi.click(); };
   const est = $('#phEst', s); if (est) est.onclick = () => { noteVal(); runEstimate(); };
   const tt = $('#phToText', s); if (tt) tt.onclick = () => { noteVal(); ph.status = 'text'; ph.textLead = ''; rerender(); };
   const te = $('#phTextEst', s); if (te) te.onclick = () => {

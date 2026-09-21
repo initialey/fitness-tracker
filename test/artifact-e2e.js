@@ -1659,7 +1659,7 @@ async function run(mode) {
       assert((await p2.locator('#phTextLead').textContent()).includes('images_unavailable'), 'エラー code をそのまま画面に出す: ' + (await p2.locator('#phTextLead').textContent()));
       // limits() の申告が実際とズレる環境もあるので、本人の操作でだけ写真を試せる逃げ道を残す
       assert(await p2.$('#phForce'), '「それでも写真で試す」を残す');
-      await p2.click('#phForce'); await p2.waitForSelector('#phFile');
+      await p2.click('#phForce'); await p2.waitForSelector('#phPick'); await p2.waitForSelector('#phFile', { state: 'attached' });
       await p2.click('#phToText'); await p2.waitForSelector('#phText');
       await p2.fill('#phText', 'ハンバーグ定食、ご飯大盛り'); await p2.click('#phTextEst');
       await p2.waitForSelector('#phSave');
@@ -1736,7 +1736,7 @@ async function run(mode) {
       const err = await p2.locator('#phErr').textContent();
       assert(err.includes('エラー: rate_limited') && err.includes('少し時間をおいてください'), 'code と文言の両方を出す: ' + err);
       assert((await p2.$('#phEst')) && (await p2.$('#phToText')) && (await p2.$('#phManual')), 'もう一度・文字で推定・手入力を出す');
-      await p2.click('#phToText'); await p2.waitForSelector('#phAgain'); await p2.click('#phAgain'); await p2.waitForSelector('#phFile');
+      await p2.click('#phToText'); await p2.waitForSelector('#phAgain'); await p2.click('#phAgain'); await p2.waitForSelector('#phPick'); await p2.waitForSelector('#phFile', { state: 'attached' });
       const acc = await p2.$eval('#phFile', e => e.getAttribute('accept'));
       assert(acc.includes('image/jpeg') && acc.includes('image/png') && acc.includes('image/webp'), 'accept: ' + acc);
       assert(!(await p2.$eval('#phFile', e => e.hasAttribute('capture'))), 'capture は付けない（アルバムからも選べるように）');
