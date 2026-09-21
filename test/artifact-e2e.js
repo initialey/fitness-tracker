@@ -1657,6 +1657,10 @@ async function run(mode) {
       assert(await p2.$('#textEstBtn'), '代わりに「文字で推定」を出す: ' + (await p2.locator('#bbar .rec').textContent()));
       await p2.click('#textEstBtn'); await p2.waitForSelector('#phText');
       assert((await p2.locator('#phTextLead').textContent()).includes('images_unavailable'), 'エラー code をそのまま画面に出す: ' + (await p2.locator('#phTextLead').textContent()));
+      // limits() の申告が実際とズレる環境もあるので、本人の操作でだけ写真を試せる逃げ道を残す
+      assert(await p2.$('#phForce'), '「それでも写真で試す」を残す');
+      await p2.click('#phForce'); await p2.waitForSelector('#phFile');
+      await p2.click('#phToText'); await p2.waitForSelector('#phText');
       await p2.fill('#phText', 'ハンバーグ定食、ご飯大盛り'); await p2.click('#phTextEst');
       await p2.waitForSelector('#phSave');
       const panel = await p2.locator('#photoPanel').textContent();

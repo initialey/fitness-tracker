@@ -1621,10 +1621,12 @@ function buildCsv() {
 /* =====================================================================
    6. UI 共通
    ===================================================================== */
-const CAP = { db: null, assets: null, sample: null, downloads: null, images: null, imagesKnown: false };
+const CAP = { db: null, assets: null, sample: null, downloads: null, images: null, imagesKnown: false, imagesForce: false };
 /** 写真を送れる画面かどうか。limits() が「画像は使えない」と答えた画面では写真の入口を出さず、文字で推定に切り替える。
  *  limits() が呼べない/失敗したときは送れる前提で出し、実際に images_unavailable が返った時点で切り替える */
-function canSendPhoto() { return !!CAP.sample && !(CAP.imagesKnown && !CAP.images); }
+function canSendPhoto() { return !!CAP.sample && (CAP.imagesForce || !(CAP.imagesKnown && !CAP.images)); }
+/** limits() の申告が実際とズレる環境もあるので、本人の操作でだけ「それでも写真で試す」を許す（1回試して失敗したら戻す） */
+function forcePhoto() { CAP.imagesForce = true; }
 function photoDiagText() { if (!CAP.sample) return '使えない（この表示では AI を使えません）'; if (CAP.imagesKnown && !CAP.images) return '使えない（この画面では画像を送れません）'; return CAP.imagesKnown ? '使える' : '使える（確認中）'; }
 const PHOTO_MEM = {}; // assets が使えないときの写真（このセッションのみ）: 'date#mealNo' → dataURL
 const UI = { date: todayYmd(), tab: 'today', wk: null, rest: null, summaryWeek: null, howto: false, sheetMeal: null, mealPick: null, totalsOpen: false };
@@ -2091,7 +2093,7 @@ function openMealSheet(mealNo, sub) {
   UI.sheetMeal = { mealNo, sub: !!sub, pending: keep.pending || null, photo: keep.photo || null, photoOnly: !!keep.photoOnly };
   // 写真から記録するときは「何を食べたか」だけに集中させる（どの枠かは記録時刻から自動で決まる）
   if (UI.sheetMeal.photoOnly && UI.sheetMeal.photo) {
-    const s0 = openSheet('<h3>写真で記録</h3><div class="mute small">記録した時刻から、' + esc(isSnack(mealNo) ? '間食' : mealLabel(mealNo)) + ' として記録します（あとから変えられます）</div>' + photoPanelHtml(UI.sheetMeal.photo));
+    const s0 = openSheet('<h3>' + (UI.sheetMeal.photo.blob || UI.sheetMeal.photo.status === 'pick' ? '写真で記録' : '文字で推定') + '</h3><div class="mute small">記録した時刻から、' + esc(isSnack(mealNo) ? '間食' : mealLabel(mealNo)) + ' として記録します（あとから変えられます）</div>' + photoPanelHtml(UI.sheetMeal.photo));
     return bindPhotoPanel(s0, d, m, date, mealNo);
   }
   const t = todayModel(date), step = t.timeline.find(x => x.id === 'meal:' + mealNo) || {}, hist = mealHist(date, mealNo);
@@ -2131,7 +2133,8 @@ function textFormHtml(ph, lead) {
     '<input type="text" class="txt" id="phText" placeholder="' + (fix ? '例: 実際はご飯半分だった' : '例: ハンバーグ定食、ご飯大盛り') + '" value="' + esc(fix ? (ph.note || '') : (ph.text || '')) + '">' +
     '<div class="btns" style="margin-top:10px"><button class="b-yel" id="phTextEst">カロリーを推定する</button>' +
     (canSendPhoto() ? '<button class="b-sub" id="phAgain">写真を選ぶ</button>' : '') +
-    '<button class="b-sub" id="phManual">手入力に切替</button></div>';
+    '<button class="b-sub" id="phManual">手入力に切替</button></div>' +
+    (canSendPhoto() ? '' : '<div class="mute small" style="margin-top:8px">この画面が写真に対応していないという申告です。<u id="phForce" style="cursor:pointer">それでも写真で試す</u></div>');
 }
 function photoPanelHtml(ph) {
   const photoOk = canSendPhoto();
@@ -2172,7 +2175,7 @@ function bindPhotoPanel(s, d, m, date, mealNo) {
       const c = (e && e.code) || (e && e.name === 'AbortError' ? 'cancelled' : '');
       if (c === 'cancelled') { ph.status = ph.blob ? 'ready' : 'text'; }
       else if (c === 'images_unavailable') { // この画面では画像を送れない → 写真の入口を隠して文字で推定に切り替える
-        CAP.images = null; CAP.imagesKnown = true;
+        CAP.images = null; CAP.imagesKnown = true; CAP.imagesForce = false;
         ph.blob = null; ph.dataUrl = ''; ph.status = 'text';
         ph.textLead = '推定できませんでした（エラー: images_unavailable）。この画面では写真を送れません。食べたものを文字で入力してください';
       } else { ph.status = 'error'; ph.errCode = c; ph.err = photoErrText(e); ph.canRetry = true; }
@@ -2196,6 +2199,7 @@ function bindPhotoPanel(s, d, m, date, mealNo) {
   const stop = $('#phStop', s); if (stop) stop.onclick = () => { if (ph.ctl) ph.ctl.abort(); };
   const man = $('#phManual', s); if (man) man.onclick = () => { noteVal(); UI.sheetMeal.photo = null; UI.sheetMeal.sub = true; rerender(); toast('手入力に切り替えました。下の欄に食べたものを書いてください'); };
   const ag = $('#phAgain', s); if (ag) ag.onclick = () => { UI.sheetMeal.photo = { status: 'pick', note: ph.note, text: ph.text, mode: ph.mode }; rerender(); };
+  const fo = $('#phForce', s); if (fo) fo.onclick = () => { forcePhoto(); UI.sheetMeal.photo = { status: 'pick', note: ph.note, text: ph.text, mode: ph.mode }; rerender(); };
   $$('[data-phg]', s).forEach(b => { b.onclick = () => { noteVal(); const [i, dg] = b.dataset.phg.split(':').map(Number); const it = ph.est.items[i]; ph.est.items[i] = scaleItem(it, Math.max(1, it.grams + dg)); rerender(); }; });
   $$('[data-phoff]', s).forEach(b => { b.onclick = () => { noteVal(); const it = ph.est.items[Number(b.dataset.phoff)]; it.on = !it.on; rerender(); }; });
   $$('[data-phname]', s).forEach(el => { el.onclick = () => { noteVal(); const i = Number(el.dataset.phname); askFood('食材を差し替え', ph.est.items[i].nameJa).then(f => { if (!f) return; const it = ph.est.items[i]; const mac = calcMacros(f, isRatioPer(f.per) ? it.grams : 1); ph.est.items[i] = Object.assign({}, it, { nameJa: f.nameJa, nameEn: f.nameEn || '', foodId: f.foodId }, mac); rerender(); }); }; });
