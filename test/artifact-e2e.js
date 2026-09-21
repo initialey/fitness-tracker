@@ -1684,6 +1684,36 @@ async function run(mode) {
       for (const k of snacks) { await page.click('[data-chk="' + k + '"]'); await page.waitForTimeout(250); }
     }
   });
+  await T(G2, 'sample が画像を受け付けない環境の逃げ道: Claude のチャットで写真を見てもらい、返ってきた JSON を貼り付けると、写真から推定したときと同じ結果画面になる（```json の囲みや前後の文章が付いていても読める）', async () => {
+    if (mode === 'mock') return 'db のみ';
+    const p2 = await newPage({ noImages: true }); p2.setDefaultTimeout(20000);
+    try {
+      await p2.waitForTimeout(600); await p2.click('.tabs [data-tab="today"]');
+      await p2.click('#textEstBtn'); await p2.waitForSelector('#phToPaste');
+      await p2.click('#phToPaste'); await p2.waitForSelector('#phPasteTa');
+      assert(await p2.$('#phCopyPrompt'), '指示文をコピーするボタンがある');
+      const reply = 'はい、推定しました。\n```json\n{"items":[{"name_ja":"白ご飯","name_en":"White rice","grams":200,"kcal":336,"p":5,"f":0.6,"c":74},{"name_ja":"鶏の唐揚げ","name_en":"Fried chicken","grams":120,"kcal":340,"p":20,"f":22,"c":12}],"total":{"kcal":676,"p":25,"f":22.6,"c":86},"confidence":"medium","note":"ご飯の量は茶碗から推定しました"}\n```\n以上です。';
+      await p2.fill('#phPasteTa', reply); await p2.click('#phPasteGo');
+      await p2.waitForSelector('#phSave');
+      const panel = await p2.locator('#photoPanel').textContent();
+      assert(panel.includes('白ご飯') && panel.includes('鶏の唐揚げ') && /合計 676kcal/.test(panel), '貼り付けた内容がそのまま結果画面になる: ' + panel.slice(0, 160));
+      assert(panel.includes('確からしさ: 中') && panel.includes('茶碗から推定'), '確からしさと note も反映: ' + panel.slice(0, 200));
+      await p2.click('[data-phg="0:-10"]'); await p2.waitForTimeout(200);
+      assert(!/合計 676kcal/.test(await p2.locator('#photoPanel').textContent()), '分量はその場で直せる');
+      await p2.click('#phSave'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(300);
+      const meals = (rt.DB.log_meals['2026-09-16'] || {}).meals || {};
+      assert(Object.values(meals).some(mm => (mm.items || []).length === 2 && (mm.photo || {}).confidence === 'medium'), '貼り付けからも記録できる');
+      // 壊れた貼り付けは落とさずに知らせるだけ
+      const bad = await p2.evaluate(() => { try { window.__tl.parseEstimateText('なにも JSON がありません'); return 'no-throw'; } catch (e) { return e.code; } });
+      assert(bad === 'invalid_json', '読み取れない貼り付けは invalid_json: ' + bad);
+      return 'Claude のチャットの返事を貼るだけで、写真と同じ結果画面・同じ記録になる';
+    } finally {
+      await p2.close();
+      await page.reload(); await page.waitForFunction(() => !document.querySelector('#view .loading')); await goTab('today');
+      const snacks = (await page.$$eval('.step', els => els.map(e => e.dataset.step))).filter(x => /^meal:snack/.test(x));
+      for (const k of snacks) { await page.click('[data-chk="' + k + '"]'); await page.waitForTimeout(250); }
+    }
+  });
   await T(G2, '写真の送信に失敗したら、実際に返った code を画面に出して「文字で推定」に切り替える（images_unavailable なら写真ボタンも消す）。自動の再試行はしない', async () => {
     if (mode === 'mock') return 'db のみ';
     const p2 = await newPage({ sampleErr: 'images_unavailable', sampleErrImageOnly: true }); p2.setDefaultTimeout(20000);
@@ -1888,6 +1918,8 @@ async function run(mode) {
 | 38 | 写真からのカロリー推定が動かない。呼び出し方（\`claude.use("sample")\` → \`sample.json(prompt, {images:[blob]})\`）自体は正しかったが、**失敗しても code を画面に出していなかった**ため原因が分からず、「動かない」としか見えなかった。（a）\`PHOTO_ERRS\` を足して「推定できませんでした（エラー: images_unavailable）」のように **code をそのまま表示**、（b）\`limits()\` が images を返さない画面／実際に \`images_unavailable\` が返った画面では写真の入口を隠して **「文字で推定」** に切り替え（同じ JSON 形式なので結果画面は共通）、（c）結果の下に「文字で直す」（補足を足して写真つきで推定し直す）、（d）確からしさ「低」を黄色に、（e）設定に「写真推定：使える／使えない」の診断行、（f）\`accept\` に JPEG/PNG/WebP を明示。これに伴い、以前の #17/#19（「\`limits()\` を信じず常に写真ボタンを出す」）は**逆向きに変更**した（\`limits()\` が「使えない」と言う画面では文字で推定に切り替える） |
 
 | 39 | db モードのテストが実行のたびに違う場所で落ちる件が残っていた。今回は \`#suppNA\` のクリックが取りこぼされ、理由の選択ダイアログが出ずに 20 秒待ってタイムアウトし、以降の「できなかった」「写真」系テストが連鎖で壊れた。\`clickUntil(trigger, target)\`（目的の要素が出るまで最大3回押し直す）を足して、そのクリックに使うようにした |
+
+| 40 | 写真からの推定が、Claude アプリ内の表示でも Safari でも \`images_unavailable\` で失敗した（実際に送信まで進んで返ってくる）。この環境の \`sample\` は画像をいっさい受け付けない、というのが結論。ブラウザ側では回避できないので、**Claude のチャット側の画像入力を借りる経路**を足した: 「① 指示文をコピー → ② チャットに写真と一緒に貼る → ③ 返事を貼り戻す」。\`parseEstimateText()\` がコードブロックの囲みや前後の文章から JSON を取り出し、\`validateEstimate()\` に通すので、結果画面・分量の修正・記録はすべて写真から推定したときと同じ |
 
 
 ## 実行方法

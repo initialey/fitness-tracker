@@ -2139,7 +2139,17 @@ function textFormHtml(ph, lead, calm) {
     '<div class="btns" style="margin-top:10px"><button class="b-yel" id="phTextEst">カロリーを推定する</button>' +
     (canSendPhoto() ? '<button class="b-sub" id="phAgain">写真を選ぶ</button>' : '') +
     '<button class="b-sub" id="phManual">手入力に切替</button></div>' +
-    (canSendPhoto() ? '' : '<div class="mute small" style="margin-top:8px">この画面が写真に対応していないという申告です。<u id="phForce" style="cursor:pointer">それでも写真で試す</u></div>');
+    '<div class="mute small" style="margin-top:8px">写真から出したいときは <u id="phToPaste" style="cursor:pointer">Claude のチャットで写真を見てもらう</u>' +
+    (canSendPhoto() ? '' : ' ／ <u id="phForce" style="cursor:pointer">それでも写真で試す</u>') + '</div>';
+}
+/** この表示では sample に画像を渡せないので、Claude のチャット側で写真を見てもらい、返ってきた JSON をここに貼る。
+ *  貼ったあとの画面・修正・記録は写真から推定したときとまったく同じ */
+function pasteFormHtml(ph) {
+  return '<div class="mute small" style="margin-top:6px">① 下のボタンで指示文をコピー → ② Claude のチャットを開いて、食事の写真と一緒に貼って送る → ③ 返ってきた文字をまるごとコピーして、下の欄に貼る</div>' +
+    '<button class="b b-sub" style="width:100%;margin-top:8px" id="phCopyPrompt">① 指示文をコピー</button>' +
+    '<label class="lbl" for="phPasteTa">③ Claude の返事を貼る</label>' +
+    '<textarea class="txt" id="phPasteTa" style="min-height:120px" placeholder=\'{"items":[…],"confidence":"medium","note":"…"}\'></textarea>' +
+    '<div class="btns" style="margin-top:10px"><button class="b-yel" id="phPasteGo">貼り付けた内容を読み込む</button><button class="b-sub" id="phToText">文字で推定</button></div>';
 }
 function photoPanelHtml(ph) {
   const photoOk = canSendPhoto();
@@ -2152,6 +2162,7 @@ function photoPanelHtml(ph) {
     return h + '</div>';
   }
   if (ph.status === 'text') return h + textFormHtml(ph, ph.textLead || '', !ph.textLeadErr) + '</div>';
+  if (ph.status === 'paste') return h + pasteFormHtml(ph) + '</div>';
   if (ph.blob) h += '<img class="thumb" src="' + esc(ph.dataUrl) + '" alt="食事の写真" style="margin-top:6px">' + (ph.width ? '<div class="mute small num">' + ph.width + '×' + ph.height + ' ・ ' + Math.round(ph.blob.size / 1024) + 'KB ・ JPEG</div>' : '');
   if (ph.status === 'ready') {
     h += '<label class="lbl" for="phNote">補足（任意）</label><input type="text" class="txt" id="phNote" placeholder="例: ご飯は半分残した ／ これは2人分" value="' + esc(ph.note || '') + '">';
@@ -2199,6 +2210,14 @@ function bindPhotoPanel(s, d, m, date, mealNo) {
   const pk = $('#phPick', s); if (pk && fi) pk.onclick = () => { fi.value = ''; fi.click(); };
   const est = $('#phEst', s); if (est) est.onclick = () => { noteVal(); runEstimate(); };
   const tt = $('#phToText', s); if (tt) tt.onclick = () => { noteVal(); ph.status = 'text'; ph.textLead = ''; rerender(); };
+  const tp = $('#phToPaste', s); if (tp) tp.onclick = () => { noteVal(); ph.status = 'paste'; rerender(); };
+  const cp = $('#phCopyPrompt', s); if (cp) cp.onclick = () => copyToClipboard(chatPrompt(ph.note), '指示文をコピーしました。Claude のチャットに写真と一緒に貼ってください');
+  const pg = $('#phPasteGo', s); if (pg) pg.onclick = () => {
+    const raw = (($('#phPasteTa', s) || {}).value || '').trim();
+    if (!raw) return toast('Claude の返事を貼り付けてください', true);
+    try { ph.est = validateEstimate(parseEstimateText(raw)); ph.status = 'done'; ph.err = ''; ph.errCode = ''; rerender(); }
+    catch (e) { toast('読み取れませんでした（エラー: ' + ((e && e.code) || 'invalid_json') + '）。返事をまるごと貼り付けてください', true); }
+  };
   const te = $('#phTextEst', s); if (te) te.onclick = () => {
     const v = (($('#phText', s) || {}).value || '').trim();
     if (ph.blob && canSendPhoto()) ph.note = v; else { if (!v) return toast('食べたものを入力してください', true); ph.text = v; }
@@ -2218,6 +2237,22 @@ function bindPhotoPanel(s, d, m, date, mealNo) {
       reg.textContent = '登録しました'; toast(on.length + ' 品目を食品マスタに登録しました'); } catch (e) { reg.disabled = false; reg.textContent = '食品マスタに登録'; toast(e.message || String(e), true); } };
   const save = $('#phSave', s); if (save) save.onclick = async () => { noteVal(); if (!ph.est.items.some(i => i.on)) return toast('記録する品目がありません', true); save.disabled = true; save.textContent = '保存中…';
     try { const msg = await A.recordPhotoMeal(date, mealNo, ph.est, ph, ph.mode ? ph.mode === 'replace' : m.status === 'plan'); UI.sheetMeal.photo = null; closeSheet(); toastAction(msg + 'しました', '元に戻す', () => act(A.mealUndo(date, mealNo))); } catch (e) { save.disabled = false; save.textContent = 'この内容で記録'; toast('保存に失敗: ' + (e.code || e.message), true); } };
+}
+/** Claude のチャットに貼るための指示文（写真はチャット側に添付してもらう） */
+function chatPrompt(note) { return 'この写真の食事を見て、写っている食べ物をすべて特定し、分量を推定して、カロリーと PFC を計算してください。\n下の JSON だけを返してください。他の文章は不要です。\n' +
+  '{"items":[{"name_ja":"白ご飯","name_en":"White rice","grams":200,"kcal":336,"p":5,"f":0.6,"c":74}],"total":{"kcal":336,"p":5,"f":0.6,"c":74},"confidence":"high|medium|low","note":"推定の根拠や注意点を一文で"}\n' +
+  'name_ja は日本語。grams はその品目の食べた重さ、kcal/p/f/c はその品目ぜんぶの値（100g あたりではありません）。分量が分からなければ一般的な1人前で推定し、note に書いてください。' +
+  (note && note.trim() ? '\n\n補足: ' + note.trim() : ''); }
+/** チャットの返事から JSON を取り出す（```json の囲みや前後の文章が付いていても読めるように） */
+function parseEstimateText(raw) {
+  let t = String(raw).replace(/^[\s\S]*?```(?:json)?/i, '').replace(/```[\s\S]*$/, '').trim();
+  if (!t || t[0] !== '{') { const s0 = raw.indexOf('{'), e0 = raw.lastIndexOf('}'); t = s0 >= 0 && e0 > s0 ? raw.slice(s0, e0 + 1) : raw; }
+  try { return JSON.parse(t); } catch (e) { throw { code: 'invalid_json', message: '貼り付けた内容を読み取れませんでした' }; }
+}
+function copyToClipboard(text, okMsg) {
+  const done = () => toast(okMsg || 'コピーしました');
+  const fallback = () => { const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); done(); } catch (e) { toast('コピーできませんでした', true); } document.body.removeChild(ta); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback); else fallback();
 }
 async function estimateMealPhotoWith(ph) {
   const raw = await CAP.sample.json(photoPrompt(ph.note), { images: [ph.blob], modelTier: 'default', cache: false, signal: ph.ctl.signal });
@@ -2906,7 +2941,7 @@ async function boot() {
   use('downloads').then(dl => { CAP.downloads = dl; scheduleRender(); });
 }
 window.addEventListener('beforeunload', () => { try { localStorage.setItem('tl.tab', UI.tab); } catch (e) { /* ignore */ } });
-window.__tl = { resizeImage, validateEstimate, isSnack, mealLabel, parseSetScheme, expandPairSets, suggestSets, repsText, setLabel, setActual, dayReport, bumpKg, warmupMinutesText, setUnits, shortExerciseList, bmr, exerciseKcalFor, dayCalorieBalance, fatModel, fatVisual, suggestActivityBase, weightOnOrBefore, cardioWeightKg, restDayConsumed, coachTarget, slotWindows, slotForTime, autoSlotFor, weekAdherence, matchFood, dayNoFor, padelKcal, padelMets, racketKcal, racketMets, isRacket, weeklyReport, rerender: render }; // テスト用フック（純粋関数＋再描画）
+window.__tl = { resizeImage, validateEstimate, parseEstimateText, isSnack, mealLabel, parseSetScheme, expandPairSets, suggestSets, repsText, setLabel, setActual, dayReport, bumpKg, warmupMinutesText, setUnits, shortExerciseList, bmr, exerciseKcalFor, dayCalorieBalance, fatModel, fatVisual, suggestActivityBase, weightOnOrBefore, cardioWeightKg, restDayConsumed, coachTarget, slotWindows, slotForTime, autoSlotFor, weekAdherence, matchFood, dayNoFor, padelKcal, padelMets, racketKcal, racketMets, isRacket, weeklyReport, rerender: render }; // テスト用フック（純粋関数＋再描画）
 boot();
 })();
 </script>
