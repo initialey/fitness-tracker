@@ -1,11 +1,11 @@
 # テスト結果（自動生成: `npm run e2e:artifact`）
 
-実行日: 2026-09-20 ／ 固定時刻 2026-09-16 06:50 (Asia/Manila) ／ Chromium 390×844
+実行日: 2026-09-21 ／ 固定時刻 2026-09-16 06:50 (Asia/Manila) ／ Chromium 390×844
 
 - **mock**: `window.claude` なし → メモリ上のモックモード
 - **db**: `claude.use("db"/"assets"/"sample"/"downloads")` を疑似ランタイムで注入（db は Node 側に永続し、再読み込み・二重オープンを再現。実際の claude.ai ランタイムではなく API 形状を模したもの）
 
-合計 83 項目 ／ NG 0 件 ／ ページエラー mock 0 件・db 1 件
+合計 87 項目 ／ NG 0 件 ／ ページエラー mock 0 件・db 1 件
 
 ## 共通
 
@@ -17,9 +17,10 @@
 | db スキーマ: log_weight{value,unit,skipped,skipReason,loggedAt} / warmup{completed,minutes,loggedAt} / meals{status: plan|substitute|skip|photo, photoId, reason} / log_daily{dayNo,dayName,notes,skippedItems[]} | ✓ | ✓ | db のみ / statuses=plan,plan,skip,substitute / 9/16 skippedItems=meal 3 |
 | 英略語（W/MAIN/TOP/BO/DROP/PRE/FINAL）がUIに出ない | ✓ | ✓ |  |
 | 数だけの表示（7種、1種）がない | ✓ | ✓ |  |
-| 同日に2回開いても二重保存されない | ✓ | ✓ | db のみ / docs: {"log_workout":4,"plan_days":7,"plan_exercises":54,"plan_warmup":6,"plan_meals":5,"plan_supplements":8,"plan_routine":3,"foods":36,"settings":1,"log_weight":2,"log_daily":7,"log_routine":2,"log_meals":1,"log_supplements":2,"log_media":4,"log_cardio":2} |
+| 同日に2回開いても二重保存されない | ✓ | ✓ | db のみ / docs: {"log_workout":4,"plan_days":7,"plan_exercises":54,"plan_warmup":6,"plan_meals":5,"plan_supplements":8,"plan_routine":3,"foods":37,"settings":1,"log_weight":2,"log_daily":7,"log_routine":2,"log_meals":1,"log_supplements":2,"log_media":4,"log_cardio":2} |
 | 読み込みが終わらないときは 10 秒で打ち切ってエラー画面に進む: 実際のエラー内容を画面に出し、「もう一度読み込む」と「記録はそのままで初期化」を置く。初期化しても食事・体重・トレーニングの記録は消さない | ✓ | ✓ | db のみ（db の応答が返らない状況を再現する） / 10 秒で打ち切り → エラー内容表示 → 記録を残したまま初期化 |
 | 一部のコレクションが読めなくても「今日」は開ける（必須でないものは待たずに進む）／壊れた記録（存在しない種目・sets が配列でない・Day 番号が範囲外）があっても落ちない | ✓ | ✓ | db のみ / 必須は settings・週の予定・種目・食事プランの4つ。ほかは遅れても今日画面を出す |
+| sample の呼び方: api.anthropic.com を直接叩かない／画像は options.images に Blob で渡す（base64 をプロンプトに埋めない）／window.claude.sample を直接読まない／公開時の capabilities に sample を宣言している | ✓ | ✓ | claude.use("sample") → sample.json(prompt, { images: [blob] }) / claude.use("sample") → sample.json(prompt, { images: [blob] }) |
 
 ## 今日画面
 
@@ -121,9 +122,12 @@
 | 今日画面の「📷 食べたものを写真で記録」→ 間食（プラン外）として記録 → タイムラインに時刻順で挿入 → 合計に反映 → 取り消しで消える | ✓ | ✓ | sample null → ボタン非表示 / 間食 snack_1 → 652kcal※ 加算 → 取り消しで 0 |
 | 写真も「どの食事か」を聞かない: 空いている枠の時間帯ならその枠へ、埋まっていれば間食へ自動で紐づく | ✓ | ✓ | db のみ / 枠を聞かずに自動で紐づけ（空き枠 → その枠、埋まっていれば間食）。記録済みの枠へ付け替えると確認のうえ入れ替え |
 | 推定 JSON の parse 失敗時にアプリが落ちず、手入力に切替できる | ✓ | ✓ | 写真ボタン非表示のため対象外 |
-| 画像非対応（limits.images 無し）でも写真ボタンと「AIで推定」は出る（sample があれば、limits() を信じず実際に呼んで判断）。失敗したら案内→手入力に切替、写真はメモとして残る | ✓ | ✓ | sample null で非表示（上で確認） |
+| 画像を送れない画面（limits に images が無い）では写真ボタンを出さず「文字で推定」に切り替える。文字だけで同じ形の推定結果が出て、その場で直して記録できる。設定に「写真推定：使える／使えない」を出す | ✓ | ✓ | db のみ（sample を注入して判定する） / 写真ボタンを隠して文字で推定へ。設定に「写真推定：使えない（この画面では画像を送れません）」 |
+| 写真の送信に失敗したら、実際に返った code を画面に出して「文字で推定」に切り替える（images_unavailable なら写真ボタンも消す）。自動の再試行はしない | ✓ | ✓ | db のみ / code をそのまま表示 → 写真の入口を隠して文字で推定へ |
+| 解析中は「写真を解析しています…（最大1分ほどかかります）」と「止める」を出し、止めたら元に戻る。結果の下の「文字で直す」で言葉を足して推定し直せる（自前のタイムアウトは入れない） | ✓ | ✓ | db のみ / 解析中の案内と中止、結果からの「文字で直す」 |
+| レート制限など他の失敗も code を画面に出し「もう一度」「文字で推定」「手入力」を選べる／JPEG に変換できない写真は image_rejected として案内する（accept に capture は付けない） | ✓ | ✓ | db のみ / rate_limited / image_rejected とも code を画面に出す |
 | assets null で推定だけ動く（写真はメモリ保持、記録は保存） | ✓ | ✓ | db のみ |
-| 縦長・横長・大きい写真（10MB超）で送信前にリサイズ（長辺1280px、JPEG 0.8）して成功する | ✓ | ✓ | 25.2MB PNG → 608KB JPEG 1280×960 / 25.2MB PNG → 607KB JPEG 1280×960 |
+| 縦長・横長・大きい写真（10MB超）で送信前にリサイズ（長辺1280px、JPEG 0.8）して成功する | ✓ | ✓ | 25.2MB PNG → 607KB JPEG 1280×960 / 25.2MB PNG → 607KB JPEG 1280×960 |
 
 ## テスト中に見つけて修正した内容
 
@@ -175,6 +179,10 @@
 | 36 | db モードで「手で入力」「サプリ」「写真」まわりのテストが実行のたびに違う場所で落ちた（`#bbar .k1` が無い等）。孤立した日付へ飛ばしたテストが `page.clock.setFixedTime()` を戻しても画面は描き直されず、「今日ではない日付」として描いた状態（＝下部の固定バーが消えたまま）が次のテストに残っていたのが原因。`setTime()` / `resetClock()` が時刻を動かしたあと必ず `window.__tl.rerender()` で描き直すようにした |
 
 | 37 | アプリが「読み込み中…」から進まなくなった。`store.init()` が最初のスナップショットに加えて `seedIfNeeded()` の完了まで待ってから `ready` を立てており、SEED_VERSION 11 で全プラン（種目54件を含む100件超）を**1件ずつ await して**書き直していたため、回線が遅いと何十秒もかかり、しかも `seedVersion` は最後に書くので再読み込みしても毎回最初からやり直していた。投入を `inParallel()` で 8 件ずつ並列にし、プランが既にあるときは投入を待たずに使える状態にして裏で流すようにした。あわせて、読み込み全体に 10 秒の期限（`withTimeout`）、失敗時のエラー画面（内容表示・再読み込み・記録を消さない初期化）、読み込み中の進捗表示、壊れたデータ（開始日・Day 番号・`sets`・種目マスタに無い id）への防御を入れた |
+
+| 38 | 写真からのカロリー推定が動かない。呼び出し方（`claude.use("sample")` → `sample.json(prompt, {images:[blob]})`）自体は正しかったが、**失敗しても code を画面に出していなかった**ため原因が分からず、「動かない」としか見えなかった。（a）`PHOTO_ERRS` を足して「推定できませんでした（エラー: images_unavailable）」のように **code をそのまま表示**、（b）`limits()` が images を返さない画面／実際に `images_unavailable` が返った画面では写真の入口を隠して **「文字で推定」** に切り替え（同じ JSON 形式なので結果画面は共通）、（c）結果の下に「文字で直す」（補足を足して写真つきで推定し直す）、（d）確からしさ「低」を黄色に、（e）設定に「写真推定：使える／使えない」の診断行、（f）`accept` に JPEG/PNG/WebP を明示。これに伴い、以前の #17/#19（「`limits()` を信じず常に写真ボタンを出す」）は**逆向きに変更**した（`limits()` が「使えない」と言う画面では文字で推定に切り替える） |
+
+| 39 | db モードのテストが実行のたびに違う場所で落ちる件が残っていた。今回は `#suppNA` のクリックが取りこぼされ、理由の選択ダイアログが出ずに 20 秒待ってタイムアウトし、以降の「できなかった」「写真」系テストが連鎖で壊れた。`clickUntil(trigger, target)`（目的の要素が出るまで最大3回押し直す）を足して、そのクリックに使うようにした |
 
 
 ## 実行方法

@@ -148,11 +148,16 @@
 - 週まとめ: 体重グラフは隣り合う日だけ線で結び欠測日を飛ばす。7 日平均は暦 7 日窓の実測のみ。「体重 N/M 日 測定」、「できなかった項目とその理由」ブロック。レポートは `Weight: … (5/7 days measured, skipped: travel×2)` と Notes に自動集計。CSV に skipped / reason 列
 
 ### 写真からカロリー・PFC を推定
-- 食事シートと今日画面の「📷 写真で記録」「AIで推定」は `sample` があれば常に出す。`sample.limits().images` の値では隠さず、実際に画像付きで `sample.json` を呼んで可否を判断する（`limits()` の報告が実際の対応状況とズレる環境があるため）。呼び出しが `images_unavailable` 等で失敗したときだけ案内文＋「手入力に切替」を出す。`sample` が完全に無ければ従来のテキスト入力のみ
-- `<input type="file" accept="image/*">`（`capture` は付けない。付けるとカメラに直行してギャラリーを選べない端末があるため、ネイティブの選択肢で「撮影」「ギャラリーから選ぶ」を両方出す）→ 送信前に `resizeImage` で長辺 1280px・JPEG 0.8 に縮小（EXIF の向きは createImageBitmap で補正）
+- 呼び方は `claude.use("sample")` → `sample.json(prompt, { images: [blob], modelTier: 'default', signal })` だけ。`api.anthropic.com` を直接叩かない（公開ページでは遮断される）、画像を base64 でプロンプトに埋めない、`window.claude.sample` を直接読まない。公開時の `capabilities` に `sample: {}` を必ず入れる
+- **写真を出すかどうかは `canSendPhoto()`**: `sample` があり、かつ `sample.limits()` が「画像は使えない」と答えていなければ写真の入口（`#photoBtn` / 食事シートの「📷 写真で記録」）を出す。`limits()` が「images 無し」と答えた画面では写真ボタンを出さず **「✏️ 文字で推定」（`#textEstBtn`）** に差し替える。`limits()` を呼べない環境では送れる前提で出し、実際に `images_unavailable` が返った時点で写真の入口を隠して文字での推定に切り替える
+- **失敗は必ず code ごと画面に出す**（`PHOTO_ERRS`）: `images_unavailable`／`image_rejected`・`refused`／`not_granted`／`rate_limited`／`invalid_json`／`upstream_error`／`prompt_too_large`。「推定できませんでした（エラー: xxx）」＋日本語の説明＋「もう一度」「文字で推定」「手入力に切替」。**自動の再試行は一切しない**（押したときだけ呼ぶ）。自前のタイムアウトも入れない（初回は許可ダイアログを読む時間があるため）
+- **文字で推定**（`estimateMealTextWith` / `textPrompt`）はどの画面でも動く逃げ道。画像を渡さないだけで返す JSON は写真と同じなので、結果画面・修正・記録はすべて共通。写真の結果の下の「文字で直す」は、補足（例「実際はご飯半分だった」）を足して写真つきで推定し直すのみ
+- `<input type="file" accept="image/jpeg,image/png,image/webp,image/*">`（`capture` は付けない。付けるとカメラに直行してギャラリーを選べない端末があるため、ネイティブの選択肢で「撮影」「ギャラリーから選ぶ」を両方出す）→ 送信前に `resizeImage` で**必ず JPEG に変換**して長辺 1280px・品質 0.8 に縮小（EXIF の向きは `createImageBitmap` で補正。iPhone の HEIC はそのままでは `image_rejected` になるためここで変換する）。`createImageBitmap` が失敗したら `<img>` に読み込んで canvas に描く経路にフォールバックし、それも失敗したら `image_rejected` として「スクリーンショットを撮って選び直してください」と案内する
 - 補足入力（例「ご飯は半分残した」）をプロンプトに含め、`sample.json(prompt, {images:[blob], modelTier:'default', cache:false, signal})` で
   `{items:[{name_ja,name_en,grams,kcal,p,f,c}], total, confidence:"high|medium|low", note}` を返させる。`validateEstimate` で形式を検証し、失敗時は 1 行エラー＋「手入力に切替」
-- 結果は食材ごとの行（グラム ± で比例配分、× で除外、名前タップで foods から差し替え）、合計 kcal/PFC※ と推定の確度
+- 結果は食材ごとの行（グラム ± で比例配分、× で除外、名前タップで foods から差し替え）、合計 kcal/PFC※ と「確からしさ」（`high/medium/low`。**低は黄色**で目立たせる）
+- 解析中は「写真を解析しています…（最大1分ほどかかります）」と「止める」（`AbortController` は呼び出しごとに作る）。止めても元の画面に戻るだけでエラー扱いにしない
+- 週タブの設定の一番下に診断行「写真推定：使える／使えない（この画面では画像を送れません）」（`photoDiagText()`）
 - 「この内容で記録」→ 食材を foods に `source:"ai_photo"` で登録（100g 換算）、品目を `estimated:true` で log_meals に追加、写真は assets に保存して log_media（category:"meal", mealNo）に紐付け、meal.photo に assetId／確度／note。assets が無ければ写真はこのセッションのメモリだけに保持して推定・記録は行う
 - 今日画面の「いま」カード直下に「📷 食べたものを写真で記録」を常設。撮影 → どの食事か選ぶ（記録済みなら 追加／置き換え）→ 間食（プラン外）は `log_meals.meals.snack_N` に保存して合計に加算、タイムラインは実績時刻の位置に挿入
 - 今日画面の食事行に 📷（タップでサムネイル）、推定値を含む食事は kcal に「※」。週まとめ「写真記録 N回（推定値含む）」、レポート `(photo-logged: N, estimated values marked ※)`

@@ -53,7 +53,13 @@ const SHIM = `(() => {
   const assets = { upload: async (blob) => { const id = ('a' + Math.random().toString(36).slice(2)).padEnd(32, '0').slice(0, 32); await call('asset', { id, type: blob.type, size: blob.size }); return { id, url: '/_blob/' + id, sizeBytes: blob.size, contentType: blob.type }; }, list: async () => ({ assets: [], usage: {} }), delete: async () => ({ deleted: true }) };
   const sample = Object.assign(async (input) => ({ text: 'ok', truncated: false, modelTierApplied: 'quick' }), {
     json: async (input, opts) => { opts = opts || {}; const img = opts.images ? (Array.isArray(opts.images) ? opts.images[0] : opts.images) : null; await call('sample', { prompt: String(input).slice(0, 80), hasImage: !!img, imageSize: img ? img.size : 0, imageType: img ? img.type : '', tier: opts.modelTier || '' });
+      // テスト用: 時間のかかる呼び出しを再現する（待ち時間の表示と「止める」の確認）。signal で中断できる
+      if (OPTS.sampleDelay) await new Promise((res2, rej2) => { const t = setTimeout(res2, OPTS.sampleDelay); const sg = opts.signal; if (sg) sg.addEventListener('abort', () => { clearTimeout(t); const e = new Error('cancelled'); e.code = 'cancelled'; rej2(e); }); });
       if (img && OPTS.noImages) { const e = new Error('images not supported in this view'); e.code = 'images_unavailable'; throw e; }
+      // テスト用: 呼び出し時だけ失敗させる（limits() は使えると答えるのに実際は失敗する画面の再現）
+      if (OPTS.sampleErr && (!OPTS.sampleErrImageOnly || img)) { const e = new Error(OPTS.sampleErr + ' (test)'); e.code = OPTS.sampleErr; throw e; }
+      // 文字だけの推定（写真と同じ形の JSON を返す）
+      if (/The user describes a meal/.test(input)) return { items: [{ name_ja: 'ハンバーグ', name_en: 'Hamburg steak', grams: 150, kcal: 408, p: 22, f: 28, c: 12 }, { name_ja: '白ご飯', name_en: 'White rice', grams: 300, kcal: 504, p: 7.5, f: 0.9, c: 111 }], total: { kcal: 912, p: 29.5, f: 28.9, c: 123 }, confidence: 'low', note: '分量が書かれていないため一般的な1人前で推定しました' };
       if (img) { if (/BAD/.test(input)) return { oops: 'not the shape' }; return { items: [{ name_ja: '白ご飯', name_en: 'White rice', grams: 200, kcal: 312, p: 5, f: 1, c: 69 }, { name_ja: '鶏の唐揚げ', name_en: 'Fried chicken', grams: 120, kcal: 340, p: 20, f: 22, c: 12 }], total: { kcal: 652, p: 25, f: 23, c: 81 }, confidence: 'medium', note: '皿の大きさから推定' }; }
       if (/meal note/.test(input)) return [{ foodId: 'salmon', nameJa: 'サーモン', nameEn: 'Salmon', amount: 150, kcal: 0, p: 0, f: 0, c: 0, note: '' }, { foodId: null, nameJa: '納豆', nameEn: 'Natto', amount: 45, kcal: 190, p: 16.5, f: 10, c: 12.1, note: '1 pack' }];
       return { nameJa: '納豆', nameEn: 'Natto', kcal: 190, p: 16.5, f: 10, c: 12.1, note: '1 pack' }; },
@@ -142,6 +148,15 @@ async function run(mode) {
   const gotoEx = async (i) => { for (let g = 0; g < 16; g++) { if (await has('#rest:not([hidden])')) { await page.click('#skipRest'); await page.waitForSelector('#setDone:not([hidden]), [data-exchoice]'); } const m = /種目 (\d+)\//.exec(await text('.ex-head .p')); const cur = Number(m[1]) - 1; if (cur === i) { await pickChoice(); await enterEdit(); return; } await page.click('[data-ex="' + (cur < i ? 1 : -1) + '"]'); await page.waitForTimeout(60); } throw new Error('gotoEx ' + i); };
   const dlgOk = async (fillText) => { await page.waitForSelector('#dlg:not([hidden])'); if (fillText != null) { await page.fill('#dlgIn', fillText); } await page.click('#dlgOk'); await page.waitForSelector('#dlg', { state: 'hidden' }); await page.waitForTimeout(120); };
   const mark = async (id) => page.$eval('[data-step="' + id + '"]', e => { const c = e.querySelector('.chk'); return e.dataset.mark + '|' + (c ? c.className : '') + '|' + (c ? c.textContent : ''); });
+  /** まれにシートを開くクリックが取りこぼされるので、目的の要素が出るまで押し直す（最大3回） */
+  const clickUntil = async (trigger, target, pg) => { pg = pg || page;
+    for (let i = 0; i < 3; i++) {
+      if (await pg.$(target)) return;
+      if (!(await pg.$(trigger))) return void (await pg.waitForSelector(target, { timeout: 5000 }));
+      await pg.click(trigger).catch(() => {});
+      try { await pg.waitForSelector(target, { timeout: 4000 }); return; } catch (e) { if (i === 2) throw e; await pg.waitForTimeout(250); }
+    }
+  };
   const pickReason = async (label) => { await page.waitForSelector('[data-reason]', { timeout: 20000 }); await page.click('[data-reason="' + label + '"]'); await page.waitForFunction(() => document.querySelector('#dlg').hidden || !document.querySelector('[data-reason]')); await page.waitForTimeout(80); };
   /** 未消化キュー方式では日付を進めるだけで特定の Day に届くとは限らない（前の日を完了させていないと Day が進まない）。
    * 内容確認だけが目的のテストでは、Day ピッカーで明示的に Day N を指定して直接そこへ飛ぶ */
@@ -1507,7 +1522,7 @@ async function run(mode) {
     if (mode === 'db') { await page.click('#csvBtn'); await page.waitForTimeout(200); const dl = rt.downloads[rt.downloads.length - 1]; assert(dl.head.includes('"skipped","reason"'), 'csv columns: ' + dl.head.slice(0, 100)); assert(dl.size > 0); } return 'points=' + pts.join(',') + ' / ma(9/18)=72.3'; });
   await T(G.missed, 'あとで測れたら数値保存で skipped 解除。「記録を取り消す」で未記録に戻る', async () => { await setTime('2026-09-17T07:00:00+08:00'); await goTab('today'); await page.click('[data-shift="-1"]'); assert((await text('.date')).includes('9/17'), 'on 9/17'); await page.click('[data-open="weight"]'); await page.waitForSelector('#shSave'); await page.fill('#shW', '72.3'); await page.click('#shSave'); await page.waitForFunction(() => document.querySelector('[data-step="weight"]').dataset.mark === 'ok'); assert((await text('[data-step="weight"]')).includes('72.3kg'), 'measured later'); if (mode === 'db') { await page.waitForTimeout(150); assert(!rt.DB.log_weight['2026-09-17'].skipped, 'skipped cleared'); }
     await page.click('[data-chk="weight"]'); await page.waitForFunction(() => document.querySelector('[data-step="weight"]').dataset.mark === ''); assert((await text('#toast')).includes('取り消しました'), 'cancel toast'); await page.click('#toast button'); await page.waitForFunction(() => document.querySelector('[data-step="weight"]').dataset.mark === 'ok'); await page.click('[data-open="weight"]'); await page.waitForSelector('#shCancel'); await page.click('#shCancel'); await dlgOk(); await page.waitForFunction(() => document.querySelector('[data-step="weight"]').dataset.mark === ''); if (mode === 'db') { await page.waitForTimeout(150); assert(!rt.DB.log_weight['2026-09-17'], 'db doc removed'); } });
-  await T(G.missed, 'サプリ「今日はなし（理由）」→ 灰色−・理由表示。再タップで取り消し', async () => { await page.click('[data-open="supp:after_meal"]'); await page.waitForSelector('#suppNA'); await page.click('#suppNA'); await pickReason('切れていた'); await page.waitForTimeout(150); const m = await mark('supp:after_meal'); assert(m.startsWith('na|chk na|−'), 'supp mark ' + m); assert((await text('[data-step="supp:after_meal"]')).includes('今日はなし（切れていた）'), 'reason line'); await page.click('[data-chk="supp:after_meal"]'); await page.waitForFunction(() => document.querySelector('[data-step="supp:after_meal"]').dataset.mark === ''); assert((await text('#toast')).includes('取り消しました'), 'undo toast');
+  await T(G.missed, 'サプリ「今日はなし（理由）」→ 灰色−・理由表示。再タップで取り消し', async () => { await clickUntil('[data-open="supp:after_meal"]', '#suppNA'); await clickUntil('#suppNA', '[data-reason]'); await pickReason('切れていた'); await page.waitForTimeout(150); const m = await mark('supp:after_meal'); assert(m.startsWith('na|chk na|−'), 'supp mark ' + m); assert((await text('[data-step="supp:after_meal"]')).includes('今日はなし（切れていた）'), 'reason line'); await page.click('[data-chk="supp:after_meal"]'); await page.waitForFunction(() => document.querySelector('[data-step="supp:after_meal"]').dataset.mark === ''); assert((await text('#toast')).includes('取り消しました'), 'undo toast');
     // ルーティンは長押し
     await page.dispatchEvent('[data-chk="routine:1"]', 'pointerdown'); await page.waitForTimeout(700); await page.dispatchEvent('[data-chk="routine:1"]', 'pointerup'); await pickReason('忘れた'); await page.waitForTimeout(150); assert((await mark('routine:1')).startsWith('na|'), 'routine long-press NA'); assert((await text('[data-step="routine:1"]')).includes('今日はなし（忘れた）'), 'routine reason'); });
   await T(G.missed, '筋トレ「できなかった（理由）」→ 完了していないので翌日も同じ Day が繰り越して出る（未消化キュー方式）。取り消しで「できなかった」の記録は消える', async () => {
@@ -1568,6 +1583,8 @@ async function run(mode) {
   const setPhoto = () => page.evaluate(() => { const inp = document.querySelector('#phFile'); const dt = new DataTransfer(); dt.items.add(window.__img); inp.files = dt.files; inp.dispatchEvent(new Event('change')); });
   /** 新方式: 写真は画面下部の固定ボタンから入れる（どの食事かは聞かれない） */
   const pickTopPhoto = (pg) => (pg || page).evaluate(() => { const inp = document.querySelector('#photoFile'); const dt = new DataTransfer(); dt.items.add(window.__img); inp.files = dt.files; inp.dispatchEvent(new Event('change')); });
+  /** 別ページで、その場で作った JPEG を下部バーの写真入力に渡す */
+  const pickTopPhotoOn = (pg) => pg.evaluate(() => new Promise(res => { const cv = document.createElement('canvas'); cv.width = 600; cv.height = 400; const c = cv.getContext('2d'); c.fillStyle = '#c93'; c.fillRect(0, 0, 600, 400); cv.toBlob(b => { const inp = document.querySelector('#photoFile'); const dt = new DataTransfer(); dt.items.add(new File([b], 'm.jpg', { type: 'image/jpeg' })); inp.files = dt.files; inp.dispatchEvent(new Event('change')); res(); }, 'image/jpeg', 0.9); }));
   await T(G2, '写真→推定→修正→記録→合計に反映→取り消し→合計から消える', async () => { await goTab('today'); assert((await text('.date')).includes('9/16'), 'on 9/16');
     if (mode === 'mock') { assert(!(await has('#photoBtn')), 'sample null → 写真ボタン非表示'); return 'sample null → 写真ボタン非表示（テキスト入力のみ）'; }
     const total = dayTotal;
@@ -1580,7 +1597,7 @@ async function run(mode) {
     const dim = await text('#photoPanel .num'); assert(dim.startsWith('1280×853'), 'resized to 1280×853: ' + dim);
     await page.fill('#phNote', 'ご飯は少なめ'); await page.click('#phEst'); await page.waitForSelector('#phSave', { timeout: 15000 });
     const sc = rt.sampleCalls[rt.sampleCalls.length - 1]; assert(sc.hasImage && sc.imageType === 'image/jpeg' && sc.imageSize < 1000000 && sc.tier === 'default', 'sample got resized jpeg on default tier: ' + JSON.stringify(sc)); assert(sc.prompt.length > 0);
-    assert((await page.$$eval('.photo .est .it', els => els.length)) === 2, 'two item rows'); assert((await text('.photo .conf')).includes('推定の確度: 中'), 'confidence'); assert((await text('.photo .row2')).includes('合計 652kcal※'), 'total 652※');
+    assert((await page.$$eval('.photo .est .it', els => els.length)) === 2, 'two item rows'); assert((await text('.photo .conf')).includes('確からしさ: 中'), 'confidence'); assert((await text('.photo .row2')).includes('合計 652kcal※'), 'total 652※');
     // 推定した品目をそのまま食品マスタへ登録できる（次から「＋ 他のものを追加」で選べる）
     { const nFoods = Object.keys(rt.DB.foods).length; await page.click('#phReg'); await page.waitForFunction(() => document.querySelector('#phReg').textContent === '登録しました', null, { timeout: 15000 });
       assert(Object.keys(rt.DB.foods).length > nFoods, '推定結果を食品マスタに登録できる: ' + nFoods + ' → ' + Object.keys(rt.DB.foods).length);
@@ -1593,7 +1610,7 @@ async function run(mode) {
     await page.click('[data-chk="meal:5"]'); await page.waitForFunction(() => document.querySelector('[data-step="meal:5"]').dataset.mark === ''); assert((await total()) === base, 'cancel → total back');
     await setTime('2026-09-16T07:41:00+08:00'); await goTab('summary'); await page.waitForSelector('#repText'); await goTab('today'); return '1280×853 JPEG ' + Math.round(sc.imageSize / 1024) + 'KB を送信 / 白ご飯 210g=328kcal※ を記録'; });
   await T(G2, '今日画面の「📷 食べたものを写真で記録」→ 間食（プラン外）として記録 → タイムラインに時刻順で挿入 → 合計に反映 → 取り消しで消える', async () => { await goTab('today'); if (mode === 'mock') { assert(!(await has('#photoBtn')), 'sample null → ボタン非表示'); return 'sample null → ボタン非表示'; }
-    await setTime('2026-09-16T15:00:00+08:00'); await goTab('workout'); await goTab('today'); assert(await has('#photoBtn') && (await text('#photoBtn')).includes('写真で記録'), '画面下部に固定された写真ボタン'); assert(await page.$eval('#photoFile', e => e.getAttribute('accept') === 'image/*' && e.getAttribute('capture') === null), 'gallery picker: no capture attribute so camera and library both offered');
+    await setTime('2026-09-16T15:00:00+08:00'); await goTab('workout'); await goTab('today'); assert(await has('#photoBtn') && (await text('#photoBtn')).includes('写真で記録'), '画面下部に固定された写真ボタン'); assert(await page.$eval('#photoFile', e => (e.getAttribute('accept') || '').includes('image/jpeg') && !e.hasAttribute('capture')), 'gallery picker: no capture attribute so camera and library both offered');
     // スクロールしても消えない（固定バー）
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); await page.waitForTimeout(120);
     assert(await page.$eval('#photoBtn', e => e.getBoundingClientRect().bottom <= window.innerHeight + 1 && e.getBoundingClientRect().top >= 0), 'スクロールしても記録ボタンが画面内に残る');
@@ -1631,12 +1648,102 @@ async function run(mode) {
     await setTime('2026-09-16T07:41:00+08:00'); await goTab('workout'); await goTab('today');
     return '枠を聞かずに自動で紐づけ（空き枠 → その枠、埋まっていれば間食）。記録済みの枠へ付け替えると確認のうえ入れ替え'; });
   await T(G2, '推定 JSON の parse 失敗時にアプリが落ちず、手入力に切替できる', async () => { if (mode === 'mock') return '写真ボタン非表示のため対象外'; await makeImageFile(800, 600, false); await pickTopPhoto(); await page.waitForSelector('#phEst'); await page.fill('#phNote', 'BAD'); await page.click('#phEst'); await page.waitForSelector('#phManual', { timeout: 15000 }); assert((await text('.photo .pending')).includes('推定結果を読み取れませんでした'), 'error line: ' + (await text('.photo .pending'))); await page.click('#phManual'); await page.waitForSelector('#freeTxt'); assert(!(await has('#photoPanel')) && !(await page.$eval('#sub', e => e.hidden)), 'switched to manual'); assert(!errors.length, 'no page errors'); await closeSheet(); });
-  await T(G2, '画像非対応（limits.images 無し）でも写真ボタンと「AIで推定」は出る（sample があれば、limits() を信じず実際に呼んで判断）。失敗したら案内→手入力に切替、写真はメモとして残る', async () => { if (mode === 'mock') return 'sample null で非表示（上で確認）'; const p2 = await newPage({ noImages: true }); await p2.waitForTimeout(600); await p2.click('.tabs [data-tab="today"]');
-    assert(await p2.$('#photoBtn'), 'today screen button still shown (sample present)');
-    await p2.evaluate(() => new Promise(res => { const cv = document.createElement('canvas'); cv.width = 600; cv.height = 400; cv.getContext('2d').fillStyle = '#c93'; cv.getContext('2d').fillRect(0, 0, 600, 400); cv.toBlob(b => { const inp = document.querySelector('#photoFile'); const dt = new DataTransfer(); dt.items.add(new File([b], 'm.jpg', { type: 'image/jpeg' })); inp.files = dt.files; inp.dispatchEvent(new Event('change')); res(); }, 'image/jpeg', 0.9); }));
-    await p2.waitForSelector('#phEst'); await p2.click('#phEst'); await p2.waitForSelector('#photoPanel .pending', { timeout: 15000 });
-    assert((await p2.locator('#photoPanel').textContent()).includes('解析ができない環境です'), 'real rejection (images_unavailable) surfaced, not a pre-emptive guess'); assert(await p2.$('#phManual'), 'manual switch offered');
-    await p2.click('#phManual'); await p2.waitForSelector('#freeTxt'); assert(!(await p2.$('#photoPanel')), 'back to normal add flow'); await p2.close(); });
+  await T(G2, '画像を送れない画面（limits に images が無い）では写真ボタンを出さず「文字で推定」に切り替える。文字だけで同じ形の推定結果が出て、その場で直して記録できる。設定に「写真推定：使える／使えない」を出す', async () => {
+    if (mode === 'mock') return 'db のみ（sample を注入して判定する）';
+    const p2 = await newPage({ noImages: true }); p2.setDefaultTimeout(20000);
+    try {
+      await p2.waitForTimeout(600); await p2.click('.tabs [data-tab="today"]');
+      assert(!(await p2.$('#photoBtn')), '写真は送れないので写真ボタンを出さない');
+      assert(await p2.$('#textEstBtn'), '代わりに「文字で推定」を出す: ' + (await p2.locator('#bbar .rec').textContent()));
+      await p2.click('#textEstBtn'); await p2.waitForSelector('#phText');
+      assert((await p2.locator('#phTextLead').textContent()).includes('images_unavailable'), 'エラー code をそのまま画面に出す: ' + (await p2.locator('#phTextLead').textContent()));
+      await p2.fill('#phText', 'ハンバーグ定食、ご飯大盛り'); await p2.click('#phTextEst');
+      await p2.waitForSelector('#phSave');
+      const panel = await p2.locator('#photoPanel').textContent();
+      assert(panel.includes('ハンバーグ') && panel.includes('白ご飯') && /合計 912kcal/.test(panel), '文字から品目と合計が出る: ' + panel.slice(0, 160));
+      assert(panel.includes('確からしさ: 低'), '確からしさを出す');
+      const conf = await p2.$eval('#photoPanel .conf.low', e => getComputedStyle(e).backgroundColor);
+      assert(conf === 'rgb(242, 195, 0)', '「低」は黄色で目立たせる: ' + conf);
+      await p2.click('[data-phg="1:-10"]'); await p2.waitForTimeout(200);
+      assert(!/合計 912kcal/.test(await p2.locator('#photoPanel').textContent()), '分量を直すと合計が再計算される');
+      await p2.click('#phSave'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(300);
+      const meals = (rt.DB.log_meals['2026-09-16'] || {}).meals || {};
+      assert(Object.values(meals).some(mm => (mm.items || []).length === 2 && mm.photo && !mm.photo.assetId), '文字からの推定でも記録できる');
+      await p2.click('.tabs [data-tab="summary"]'); await p2.waitForSelector('#diagPhoto');
+      const diag = (await p2.locator('#diagPhoto').textContent()).trim();
+      assert(diag.includes('写真推定：使えない') && diag.includes('画像を送れません'), '設定に診断行: ' + diag);
+      return '写真ボタンを隠して文字で推定へ。設定に「' + diag + '」';
+    } finally {
+      await p2.close();
+      await page.reload(); await page.waitForFunction(() => !document.querySelector('#view .loading')); await goTab('today');
+      const snacks = (await page.$$eval('.step', els => els.map(e => e.dataset.step))).filter(x => /^meal:snack/.test(x));
+      for (const k of snacks) { await page.click('[data-chk="' + k + '"]'); await page.waitForTimeout(250); }
+    }
+  });
+  await T(G2, '写真の送信に失敗したら、実際に返った code を画面に出して「文字で推定」に切り替える（images_unavailable なら写真ボタンも消す）。自動の再試行はしない', async () => {
+    if (mode === 'mock') return 'db のみ';
+    const p2 = await newPage({ sampleErr: 'images_unavailable', sampleErrImageOnly: true }); p2.setDefaultTimeout(20000);
+    try {
+      await p2.waitForTimeout(600); await p2.click('.tabs [data-tab="today"]');
+      assert(await p2.$('#photoBtn'), 'limits が images を返す画面では写真ボタンを出す');
+      const before = rt.sampleCalls.length;
+      await pickTopPhotoOn(p2);
+      await p2.waitForSelector('#phEst'); await p2.click('#phEst');
+      await p2.waitForSelector('#phText');
+      assert((await p2.locator('#phTextLead').textContent()).includes('images_unavailable'), '実際に返った code を画面に出す: ' + (await p2.locator('#phTextLead').textContent()));
+      await p2.waitForTimeout(1200);
+      assert(rt.sampleCalls.length === before + 1, '自動で再試行しない: ' + (rt.sampleCalls.length - before) + ' 回呼ばれた');
+      await p2.click('#sheet', { position: { x: 5, y: 5 } }); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
+      assert(!(await p2.$('#photoBtn')) && (await p2.$('#textEstBtn')), 'images_unavailable のあとは写真ボタンを隠して文字で推定にする');
+      return 'code をそのまま表示 → 写真の入口を隠して文字で推定へ';
+    } finally { await p2.close(); }
+  });
+  await T(G2, '解析中は「写真を解析しています…（最大1分ほどかかります）」と「止める」を出し、止めたら元に戻る。結果の下の「文字で直す」で言葉を足して推定し直せる（自前のタイムアウトは入れない）', async () => {
+    if (mode === 'mock') return 'db のみ';
+    const p2 = await newPage({ sampleDelay: 2500 }); p2.setDefaultTimeout(20000);
+    try {
+      await p2.waitForTimeout(600); await p2.click('.tabs [data-tab="today"]');
+      await pickTopPhotoOn(p2);
+      await p2.waitForSelector('#phEst'); await p2.click('#phEst'); await p2.waitForSelector('#phWait');
+      const wait = await p2.locator('#phWait').textContent();
+      assert(wait.includes('写真を解析しています') && wait.includes('最大1分'), '待ち時間の案内: ' + wait);
+      await p2.click('#phStop'); await p2.waitForSelector('#phEst');
+      assert(!(await p2.$('#phErr')), '止めてもエラー扱いにしない（元の画面に戻るだけ）');
+      // もう一度、今度は最後まで
+      await p2.click('#phEst'); await p2.waitForSelector('#phSave');
+      assert((await p2.locator('#photoPanel').textContent()).includes('白ご飯'), '写真から推定できる');
+      // 「文字で直す」→ 補足を足して推定し直す
+      await p2.click('#phToText'); await p2.waitForSelector('#phText');
+      await p2.fill('#phText', '実際はご飯半分だった'); await p2.click('#phTextEst');
+      await p2.waitForSelector('#phSave');
+      const calls = rt.sampleCalls.slice(-1)[0];
+      assert(calls.hasImage, '「文字で直す」でも写真は付けたまま推定し直す');
+      await p2.click('#sheet', { position: { x: 5, y: 5 } }); await p2.waitForSelector('#sheet', { state: 'hidden' });
+      return '解析中の案内と中止、結果からの「文字で直す」';
+    } finally { await p2.close(); }
+  });
+  await T(G2, 'レート制限など他の失敗も code を画面に出し「もう一度」「文字で推定」「手入力」を選べる／JPEG に変換できない写真は image_rejected として案内する（accept に capture は付けない）', async () => {
+    if (mode === 'mock') return 'db のみ';
+    const p2 = await newPage({ sampleErr: 'rate_limited', sampleErrImageOnly: true }); p2.setDefaultTimeout(20000);
+    try {
+      await p2.waitForTimeout(600); await p2.click('.tabs [data-tab="today"]');
+      await pickTopPhotoOn(p2);
+      await p2.waitForSelector('#phEst'); await p2.click('#phEst'); await p2.waitForSelector('#phErr');
+      const err = await p2.locator('#phErr').textContent();
+      assert(err.includes('エラー: rate_limited') && err.includes('少し時間をおいてください'), 'code と文言の両方を出す: ' + err);
+      assert((await p2.$('#phEst')) && (await p2.$('#phToText')) && (await p2.$('#phManual')), 'もう一度・文字で推定・手入力を出す');
+      await p2.click('#phToText'); await p2.waitForSelector('#phAgain'); await p2.click('#phAgain'); await p2.waitForSelector('#phFile');
+      const acc = await p2.$eval('#phFile', e => e.getAttribute('accept'));
+      assert(acc.includes('image/jpeg') && acc.includes('image/png') && acc.includes('image/webp'), 'accept: ' + acc);
+      assert(!(await p2.$eval('#phFile', e => e.hasAttribute('capture'))), 'capture は付けない（アルバムからも選べるように）');
+      await p2.evaluate(() => { const inp = document.querySelector('#phFile'); const dt = new DataTransfer(); dt.items.add(new File([new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])], 'photo.heic', { type: 'image/heic' })); inp.files = dt.files; inp.dispatchEvent(new Event('change')); });
+      await p2.waitForSelector('#phErr');
+      const err2 = await p2.locator('#phErr').textContent();
+      assert(err2.includes('エラー: image_rejected') && err2.includes('スクリーンショット'), '読み込めない写真の案内: ' + err2);
+      assert(!(await p2.$('#phEst')), '読み込めない写真では「もう一度」ではなく別の写真を選ばせる');
+      return 'rate_limited / image_rejected とも code を画面に出す';
+    } finally { await p2.close(); }
+  });
   await T(G2, 'assets null で推定だけ動く（写真はメモリ保持、記録は保存）', async () => { if (mode === 'mock') return 'db のみ'; const p2 = await newPage({ noAssets: true }); await p2.waitForTimeout(600); await p2.click('.tabs [data-tab="today"]'); const nAssets = rt.assets.length;
     await p2.clock.setFixedTime(new Date('2026-09-16T19:30:00+08:00')); await p2.click('.tabs [data-tab="workout"]'); await p2.click('.tabs [data-tab="today"]');
     await p2.evaluate(() => new Promise(res => { const cv = document.createElement('canvas'); cv.width = 600; cv.height = 400; cv.getContext('2d').fillStyle = '#c93'; cv.getContext('2d').fillRect(0, 0, 600, 400); cv.toBlob(b => { const inp = document.querySelector('#photoFile'); const dt = new DataTransfer(); dt.items.add(new File([b], 'm.jpg', { type: 'image/jpeg' })); inp.files = dt.files; inp.dispatchEvent(new Event('change')); res(); }, 'image/jpeg', 0.9); }));
@@ -1697,6 +1804,16 @@ async function run(mode) {
       assert(!(await p2.$('.ttl:has-text("表示エラー")')), '筋トレタブも落ちない');
       return '必須は settings・週の予定・種目・食事プランの4つ。ほかは遅れても今日画面を出す';
     } finally { await p2.close(); ['2026-09-13', D].forEach(d => { rt.op('del', { coll: 'log_workout', id: d }); rt.op('del', { coll: 'log_daily', id: d }); }); }
+  });
+  await T(G.common, 'sample の呼び方: api.anthropic.com を直接叩かない／画像は options.images に Blob で渡す（base64 をプロンプトに埋めない）／window.claude.sample を直接読まない／公開時の capabilities に sample を宣言している', async () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'artifact', 'index.html'), 'utf8');
+    assert(!/api\.anthropic\.com/.test(src), 'api.anthropic.com を直接呼んでいる');
+    assert(!/window\.claude\.sample/.test(src), 'window.claude.sample を直接読んでいる');
+    assert(/images:\s*\[ph\.blob\]/.test(src), '画像は options.images に Blob で渡す');
+    assert(!/data:image\/[a-z]+;base64/.test(src.replace(/toDataURL/g, '')), 'base64 をプロンプトに埋め込んでいる');
+    assert(/sample:\s*\{\}/.test(src), '公開時の capabilities 宣言に sample がある');
+    assert(/modelTier:\s*'default'/.test(src), '写真・文字の推定は modelTier: default');
+    return 'claude.use("sample") → sample.json(prompt, { images: [blob] })';
   });
 
   await browser.close();
@@ -1761,6 +1878,10 @@ async function run(mode) {
 | 36 | db モードで「手で入力」「サプリ」「写真」まわりのテストが実行のたびに違う場所で落ちた（\`#bbar .k1\` が無い等）。孤立した日付へ飛ばしたテストが \`page.clock.setFixedTime()\` を戻しても画面は描き直されず、「今日ではない日付」として描いた状態（＝下部の固定バーが消えたまま）が次のテストに残っていたのが原因。\`setTime()\` / \`resetClock()\` が時刻を動かしたあと必ず \`window.__tl.rerender()\` で描き直すようにした |
 
 | 37 | アプリが「読み込み中…」から進まなくなった。\`store.init()\` が最初のスナップショットに加えて \`seedIfNeeded()\` の完了まで待ってから \`ready\` を立てており、SEED_VERSION 11 で全プラン（種目54件を含む100件超）を**1件ずつ await して**書き直していたため、回線が遅いと何十秒もかかり、しかも \`seedVersion\` は最後に書くので再読み込みしても毎回最初からやり直していた。投入を \`inParallel()\` で 8 件ずつ並列にし、プランが既にあるときは投入を待たずに使える状態にして裏で流すようにした。あわせて、読み込み全体に 10 秒の期限（\`withTimeout\`）、失敗時のエラー画面（内容表示・再読み込み・記録を消さない初期化）、読み込み中の進捗表示、壊れたデータ（開始日・Day 番号・\`sets\`・種目マスタに無い id）への防御を入れた |
+
+| 38 | 写真からのカロリー推定が動かない。呼び出し方（\`claude.use("sample")\` → \`sample.json(prompt, {images:[blob]})\`）自体は正しかったが、**失敗しても code を画面に出していなかった**ため原因が分からず、「動かない」としか見えなかった。（a）\`PHOTO_ERRS\` を足して「推定できませんでした（エラー: images_unavailable）」のように **code をそのまま表示**、（b）\`limits()\` が images を返さない画面／実際に \`images_unavailable\` が返った画面では写真の入口を隠して **「文字で推定」** に切り替え（同じ JSON 形式なので結果画面は共通）、（c）結果の下に「文字で直す」（補足を足して写真つきで推定し直す）、（d）確からしさ「低」を黄色に、（e）設定に「写真推定：使える／使えない」の診断行、（f）\`accept\` に JPEG/PNG/WebP を明示。これに伴い、以前の #17/#19（「\`limits()\` を信じず常に写真ボタンを出す」）は**逆向きに変更**した（\`limits()\` が「使えない」と言う画面では文字で推定に切り替える） |
+
+| 39 | db モードのテストが実行のたびに違う場所で落ちる件が残っていた。今回は \`#suppNA\` のクリックが取りこぼされ、理由の選択ダイアログが出ずに 20 秒待ってタイムアウトし、以降の「できなかった」「写真」系テストが連鎖で壊れた。\`clickUntil(trigger, target)\`（目的の要素が出るまで最大3回押し直す）を足して、そのクリックに使うようにした |
 
 
 ## 実行方法

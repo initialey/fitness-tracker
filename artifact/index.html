@@ -102,7 +102,7 @@ h1.tap{cursor:pointer}
 .photo .est .it .m{grid-column:1 / -1;font:500 12px var(--num);color:var(--mute)}
 .photo .est .it.off{opacity:.4;text-decoration:line-through}
 .conf{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px}
-.conf.high{background:rgba(111,207,138,.18);color:var(--done)}.conf.medium{background:rgba(242,195,0,.18);color:var(--yellow)}.conf.low{background:rgba(229,83,75,.18);color:var(--warn)}
+.conf.high{background:rgba(111,207,138,.18);color:var(--done)}.conf.medium{background:rgba(242,195,0,.18);color:var(--yellow)}.conf.low{background:var(--yellow);color:var(--yellow-ink);font-weight:700}
 .cam{font-size:16px;margin-left:4px;cursor:pointer}
 .dlg{z-index:30;align-items:center}
 .dlg .sheet-body{border-radius:14px;max-width:360px;padding:18px}
@@ -1496,7 +1496,7 @@ const A = {
     const items = [];
     for (const it of est.items.filter(i => i.on)) {
       let f = Object.values(ST.foods).find(x => x.nameJa === it.nameJa && x.source === 'ai_photo');
-      if (!f) { const k = 100 / it.grams; f = await A.addFood({ nameJa: it.nameJa, nameEn: it.nameEn, per: '100g', kcal: r1(it.kcal * k), p: r1(it.p * k), f: r1(it.f * k), c: r1(it.c * k), source: 'ai_photo', note: '写真から推定（確度 ' + est.confidence + '）' }); }
+      if (!f) { const k = 100 / it.grams; f = await A.addFood({ nameJa: it.nameJa, nameEn: it.nameEn, per: '100g', kcal: r1(it.kcal * k), p: r1(it.p * k), f: r1(it.f * k), c: r1(it.c * k), source: 'ai_photo', note: (photo && photo.blob ? '写真' : '文字') + 'から推定（確度 ' + est.confidence + '）' }); }
       items.push({ foodId: f.foodId, grams: it.grams, kcal: it.kcal, p: it.p, f: it.f, c: it.c, origin: 'add', eaten: true, deleted: false, planGrams: '', estimated: true });
     }
     let photoRef = { confidence: est.confidence, note: est.note, loggedAt: isoNow() };
@@ -1504,7 +1504,7 @@ const A = {
     if (!photoRef.assetId && photo && photo.dataUrl) PHOTO_MEM[date + '#' + n] = photo.dataUrl;
     const cur = mealModel(date, n); const base = replace || cur.status === 'skip' || !cur.logged ? [] : cur.items.filter(i => !i.deleted).map(({ foodId, grams, kcal, p, f, c, origin, eaten, planGrams, estimated }) => ({ foodId, grams, kcal, p, f, c, origin, eaten, deleted: false, planGrams, estimated }));
     await A.mealCommit(date, n, base.concat(items), { photo: photoRef });
-    return items.length + ' 品目を写真から記録';
+    return items.length + ' 品目を' + (photo && photo.blob ? '写真' : '文字') + 'から記録';
   },
   /** 記録の紐づけ先を変える。移動先が記録済みなら入れ替える。以後は自動判定で書き換えない（linkOverride） */
   async relinkMeal(date, fromKey, toSlot) {
@@ -1621,7 +1621,11 @@ function buildCsv() {
 /* =====================================================================
    6. UI 共通
    ===================================================================== */
-const CAP = { db: null, assets: null, sample: null, downloads: null, images: null };
+const CAP = { db: null, assets: null, sample: null, downloads: null, images: null, imagesKnown: false };
+/** 写真を送れる画面かどうか。limits() が「画像は使えない」と答えた画面では写真の入口を出さず、文字で推定に切り替える。
+ *  limits() が呼べない/失敗したときは送れる前提で出し、実際に images_unavailable が返った時点で切り替える */
+function canSendPhoto() { return !!CAP.sample && !(CAP.imagesKnown && !CAP.images); }
+function photoDiagText() { if (!CAP.sample) return '使えない（この表示では AI を使えません）'; if (CAP.imagesKnown && !CAP.images) return '使えない（この画面では画像を送れません）'; return CAP.imagesKnown ? '使える' : '使える（確認中）'; }
 const PHOTO_MEM = {}; // assets が使えないときの写真（このセッションのみ）: 'date#mealNo' → dataURL
 const UI = { date: todayYmd(), tab: 'today', wk: null, rest: null, summaryWeek: null, howto: false, sheetMeal: null, mealPick: null, totalsOpen: false };
 const $ = (s, el) => (el || document).querySelector(s);
@@ -1715,7 +1719,7 @@ function renderToday(t) {
   // 今日以外の日付では「いま」カードを出さない（今の時刻で過去・未来に記録が入ってしまうため）
   if (isToday) h += '<div class="now' + (t.now.kind === 'done' ? ' done' : '') + '" id="now"></div>';
   else h += '<div class="pastbar" id="pastBar">' + md(UI.date) + '（' + wd(UI.date) + '）の' + (UI.date < todayYmd() ? '記録 ・ 過去' : '予定 ・ 未来') + '<span class="mute small">記録カードを長押しすると修正できます</span></div>';
-  h += '<input type="file" accept="image/*" id="photoFile" hidden>';
+  h += '<input type="file" accept="image/jpeg,image/png,image/webp,image/*" id="photoFile" hidden>';
   h += '<div class="tl">';
   t.timeline.forEach(st => {
     const tm = st.handled && st.loggedAt ? '<span class="tm edit" data-time="' + esc(st.id) + '" title="時刻を修正"><b' + (st.late ? ' class="late"' : '') + '>' + esc(fmtHm(st.loggedAt)) + '</b><small>予定 ' + esc(st.planned || '—') + '</small></span>' : '<span class="tm">' + (st.timerUntil ? '<b>' + esc(fmtHm(st.timerUntil)) + '</b><small>タイマー</small>' : esc(st.planned || '') + ' <small style="display:inline">予定</small>') + '</span>';
@@ -1760,11 +1764,12 @@ function renderBottomBar(t) {
   h += '<button class="tot" id="bbTot"><div class="k1">' + fmtN(t.total.kcal) + ' <span>/ ' + fmtN(t.planTotal.kcal) + ' kcal</span>　<span>' + (left > 0 ? '残り ' + fmtN(left) : '達成') + '</span></div>' +
     '<div class="bar' + (t.planTotal.kcal && t.total.kcal >= t.planTotal.kcal ? ' ok' : '') + '" style="margin:5px 0 4px"><div style="width:' + (t.planTotal.kcal ? Math.min(100, Math.round(t.total.kcal / t.planTotal.kcal * 100)) : 0) + '%"></div></div>' +
     '<div class="k2">' + esc([mac('p', 'タンパク質', 'g'), mac('f', '脂質', 'g'), mac('c', '炭水化物', 'g')].join('　')) + '　' + (UI.totalsOpen ? '▾ 閉じる' : '▸ くわしく') + '</div></button>';
-  h += '<div class="rec">' + (CAP.sample ? '<button class="b-yel" id="photoBtn">📷 写真で記録</button>' : '') + '<button class="b-sub" id="manualCalBtn">✏️ 手で入力</button></div>';
+  h += '<div class="rec">' + (canSendPhoto() ? '<button class="b-yel" id="photoBtn">📷 写真で記録</button>' : CAP.sample ? '<button class="b-yel" id="textEstBtn">✏️ 文字で推定</button>' : '') + '<button class="b-sub" id="manualCalBtn">✏️ 手で入力</button></div>';
   bar.innerHTML = h; bar.hidden = false;
   $('#bbTot').onclick = () => { UI.totalsOpen = !UI.totalsOpen; renderBottomBar(t); };
   const bw = $('#bbWeek'); if (bw) bw.onclick = () => go('summary');
   const pb = $('#photoBtn'), pf = $('#photoFile'); if (pb && pf) { pb.onclick = () => { pf.value = ''; pf.click(); }; pf.onchange = () => photoFromToday(t, pf.files[0]); }
+  const teb = $('#textEstBtn'); if (teb) teb.onclick = () => openTextEstimate(t.date);
   $('#manualCalBtn').onclick = () => openManualCalSheet(t.date, null, null);
 }
 /** プランの食事カードをタップして開く「品目選択シート」。品目ごとにチェックと分量を決めてから記録する。
@@ -1947,9 +1952,16 @@ function renderNow(t) {
 /** 「📷 写真で記録」: 縮小 → 写真だけの記録パネルへ。どの食事かは聞かない（記録した時刻から自動で紐づく） */
 async function photoFromToday(t, file) {
   if (!file) return;
-  let r; try { r = await resizeImage(file, 1280, 0.8); } catch (e) { return toast('画像を読み込めませんでした', true); }
   const mealNo = autoSlotFor(t.date);
-  UI.sheetMeal = { mealNo, sub: false, pending: null, photoOnly: true, photo: { status: 'ready', note: '', mode: 'replace', blob: r.blob, dataUrl: r.dataUrl, width: r.width, height: r.height, orig: file.size } };
+  let r; try { r = await resizeImage(file, 1280, 0.8); }
+  catch (e) { UI.sheetMeal = { mealNo, sub: false, pending: null, photoOnly: true, photo: { status: 'error', note: '', text: '', mode: 'replace', errCode: 'image_rejected', canRetry: false, err: PHOTO_ERRS.image_rejected + '。スクリーンショットを撮って選び直してください' } }; return openMealSheet(mealNo, false); }
+  UI.sheetMeal = { mealNo, sub: false, pending: null, photoOnly: true, photo: { status: 'ready', note: '', text: '', mode: 'replace', blob: r.blob, dataUrl: r.dataUrl, width: r.width, height: r.height, orig: file.size } };
+  openMealSheet(mealNo, false);
+}
+/** 写真を使わずに文字だけで推定する入口（どの画面でも動く） */
+function openTextEstimate(date) {
+  const mealNo = autoSlotFor(date);
+  UI.sheetMeal = { mealNo, sub: false, pending: null, photoOnly: true, photo: { status: 'text', note: '', text: '', mode: 'replace', textLead: canSendPhoto() ? '' : 'この画面では写真を送れません（エラー: images_unavailable）。食べたものを文字で入力してください' } };
   openMealSheet(mealNo, false);
 }
 /** 食事の写真サムネイルを表示（assets の id か、このセッションのメモリ） */
@@ -2096,8 +2108,8 @@ function openMealSheet(mealNo, sub) {
   m.choices.forEach(ch => { const curId = (m.items.find(i => i.origin === 'plan' && (i.choiceOf || i.foodId) === ch.foodId) || {}).foodId || ch.foodId;
     h += '<div class="chips" style="margin-top:8px" data-choicegroup="' + esc(ch.foodId) + '">' + ch.choices.map(c => '<button data-choice="' + esc(c) + '"' + (resolveFoodId(c) === curId ? ' class="on"' : '') + '>' + esc((ST.foods[c] || {}).nameJa || c) + ((ch.choiceGrams || {})[c] ? ' ' + (ch.choiceGrams || {})[c] + 'g' : '') + 'で</button>').join('') + '</div>'; });
   const allEaten = m.items.filter(i => i.origin === 'plan' && !i.deleted).every(i => i.eaten) && m.items.some(i => i.origin === 'plan');
-  const canPhoto = !!CAP.sample;
-  h += '<div class="btns" style="margin-top:10px">' + (allEaten && m.logged || m.isSnack ? '' : '<button class="b-main" id="mPlan">プラン通り食べた</button>') + (m.isSnack ? '' : '<button class="b-sub" id="mPick">品目を選び直す</button>') + '<button class="b-sub" id="mChange">' + (m.logged ? '変更・追加' : '変更して記録') + '</button>' + (canPhoto ? '<button class="b-sub" id="mPhoto">📷 写真で記録</button>' : '') + '</div>';
+  const canPhoto = canSendPhoto();
+  h += '<div class="btns" style="margin-top:10px">' + (allEaten && m.logged || m.isSnack ? '' : '<button class="b-main" id="mPlan">プラン通り食べた</button>') + (m.isSnack ? '' : '<button class="b-sub" id="mPick">品目を選び直す</button>') + '<button class="b-sub" id="mChange">' + (m.logged ? '変更・追加' : '変更して記録') + '</button>' + (canPhoto ? '<button class="b-sub" id="mPhoto">📷 写真で記録</button>' : CAP.sample ? '<button class="b-sub" id="mText">✏️ 文字で推定</button>' : '') + '</div>';
   if (m.photo) h += '<div class="mute small" style="margin-top:6px">📷 写真から推定して記録済み（確度 ' + esc({ high: '高', medium: '中', low: '低' }[m.photo.confidence] || '不明') + '）<u data-showphoto="1" style="cursor:pointer;margin-left:6px">写真を見る</u></div>';
   if (UI.sheetMeal.photo) h += photoPanelHtml(UI.sheetMeal.photo);
   if (m.alt) h += '<button class="b b-sub" style="width:100%;margin-top:8px" id="mAlt">' + esc(m.alt.label) + '（' + esc(macroLine(macrosOfItems(planToItems(m.alt.items)))) + '）</button>';
@@ -2109,41 +2121,88 @@ function openMealSheet(mealNo, sub) {
   bindMealSheet(s, d, m, date, mealNo);
   if (UI.sheetMeal.photo) bindPhotoPanel(s, d, m, date, mealNo);
 }
-/** 写真で記録パネル（状態: pick → ready → analyzing → done / error） */
+/** 写真／文字でカロリーを推定するパネル
+ *  状態: pick（写真を選ぶ）→ ready → analyzing → done ／ text（文字で推定・文字で直す）／ error
+ *  写真は送信前に必ず JPEG へ変換して長辺 1280px に縮小する（iPhone の HEIC はそのままでは送れないため） */
+function textFormHtml(ph, lead) {
+  const fix = !!ph.blob;
+  return (lead ? '<div class="pending" style="margin-top:6px" id="phTextLead">' + esc(lead) + '</div>' : '') +
+    '<label class="lbl" for="phText">' + (fix ? '写真の内容を文字で直す' : '食べたものを文字で入力') + '</label>' +
+    '<input type="text" class="txt" id="phText" placeholder="' + (fix ? '例: 実際はご飯半分だった' : '例: ハンバーグ定食、ご飯大盛り') + '" value="' + esc(fix ? (ph.note || '') : (ph.text || '')) + '">' +
+    '<div class="btns" style="margin-top:10px"><button class="b-yel" id="phTextEst">カロリーを推定する</button>' +
+    (canSendPhoto() ? '<button class="b-sub" id="phAgain">写真を選ぶ</button>' : '') +
+    '<button class="b-sub" id="phManual">手入力に切替</button></div>';
+}
 function photoPanelHtml(ph) {
-  let h = '<div class="photo" id="photoPanel"><div class="ttl small mute">📷 写真で記録</div>';
-  if (ph.status === 'pick') h += '<input type="file" accept="image/*" id="phFile" class="txt" style="margin-top:6px"><div class="mute small" style="margin-top:4px">タップすると「撮影」と「ギャラリーから選ぶ」を選べます。送信前に長辺 1280px に縮小します</div>';
-  else {
-    h += '<img class="thumb" src="' + esc(ph.dataUrl) + '" alt="食事の写真" style="margin-top:6px">' + (ph.width ? '<div class="mute small num">' + ph.width + '×' + ph.height + ' ・ ' + Math.round(ph.blob.size / 1024) + 'KB</div>' : '');
+  const photoOk = canSendPhoto();
+  let h = '<div class="photo" id="photoPanel"><div class="ttl small mute">' + (ph.blob ? '📷 写真で記録' : '✏️ 文字で推定') + '</div>';
+  if (ph.status === 'pick') {
+    if (photoOk) h += '<input type="file" accept="image/jpeg,image/png,image/webp,image/*" id="phFile" class="txt" style="margin-top:6px"><div class="mute small" style="margin-top:4px">タップすると「写真を撮る」と「写真ライブラリ」のどちらも選べます。送る前に JPEG に変換して長辺 1280px に縮小します</div><button class="b b-sub" style="width:100%;margin-top:8px" id="phToText">文字で推定する</button>';
+    else h += textFormHtml(ph, 'この画面では写真を送れません（エラー: images_unavailable）。食べたものを文字で入力してください');
+    return h + '</div>';
+  }
+  if (ph.status === 'text') return h + textFormHtml(ph, ph.textLead || '') + '</div>';
+  if (ph.blob) h += '<img class="thumb" src="' + esc(ph.dataUrl) + '" alt="食事の写真" style="margin-top:6px">' + (ph.width ? '<div class="mute small num">' + ph.width + '×' + ph.height + ' ・ ' + Math.round(ph.blob.size / 1024) + 'KB ・ JPEG</div>' : '');
+  if (ph.status === 'ready') {
     h += '<label class="lbl" for="phNote">補足（任意）</label><input type="text" class="txt" id="phNote" placeholder="例: ご飯は半分残した ／ これは2人分" value="' + esc(ph.note || '') + '">';
-    if (ph.status === 'ready') h += '<div class="btns" style="margin-top:10px"><button class="b-yel" id="phEst">AIで推定</button><button class="b-sub" id="phManual">手入力に切替</button><button class="b-ghost" id="phAgain" style="flex:0 0 auto">別の写真</button></div>';
-    if (ph.status === 'analyzing') h += '<div class="pending" style="text-align:center">解析中… <span class="mute small">5〜60 秒かかることがあります</span><div class="btns"><button class="b-sub" id="phStop">中止</button></div></div>';
-    if (ph.status === 'error') h += '<div class="pending" style="border-color:var(--warn)">' + esc(ph.err) + '<div class="btns"><button class="b-yel" id="phEst">もう一度推定</button><button class="b-sub" id="phManual">手入力に切替</button></div></div>';
-    if (ph.status === 'done') {
-      const est = ph.est, tot = estTotal(est.items);
-      h += '<div class="est">' + est.items.map((it, i) => '<div class="it' + (it.on ? '' : ' off') + '"><span class="nm" data-phname="' + i + '" title="foods から差し替え">' + esc(it.nameJa) + '</span><span class="g"><button data-phg="' + i + ':-10">−</button>' + it.grams + 'g<button data-phg="' + i + ':10">＋</button></span><button class="x" data-phoff="' + i + '" aria-label="除外">' + (it.on ? '×' : '↩') + '</button><span class="m">' + it.kcal + 'kcal ・ P' + it.p + ' F' + it.f + ' C' + it.c + '</span></div>').join('') + '</div>';
-      h += '<div class="row2" style="margin-top:8px"><span class="num" style="font-weight:700">合計 ' + Math.round(tot.kcal) + 'kcal※ ・ P' + Math.round(tot.p) + ' F' + Math.round(tot.f) + ' C' + Math.round(tot.c) + '</span><span style="text-align:right"><span class="conf ' + est.confidence + '">推定の確度: ' + ({ high: '高', medium: '中', low: '低' }[est.confidence]) + '</span></span></div>' + (est.note ? '<div class="mute small" style="margin-top:4px">' + esc(est.note) + '</div>' : '');
-      h += '<div class="btns" style="margin-top:10px"><button class="b-main" id="phSave">この内容で記録</button></div><div class="btns" style="margin-top:8px"><button class="b-sub" id="phReg">食品マスタに登録</button><button class="b-sub" id="phEst">もう一度推定</button><button class="b-sub" id="phManual">手入力に切替</button></div>';
-    }
+    h += '<div class="btns" style="margin-top:10px"><button class="b-yel" id="phEst">AIで推定</button><button class="b-sub" id="phToText">文字で推定</button><button class="b-ghost" id="phAgain" style="flex:0 0 auto">別の写真</button></div>';
+  }
+  if (ph.status === 'analyzing') h += '<div class="pending" style="text-align:center" id="phWait">' + (ph.blob ? '写真を解析しています…' : 'カロリーを推定しています…') + '<div class="mute small">（最大1分ほどかかります）</div><div class="btns"><button class="b-sub" id="phStop">止める</button></div></div>';
+  if (ph.status === 'error') h += '<div class="pending" style="border-color:var(--warn)" id="phErr"><b>推定できませんでした</b>' + (ph.errCode ? '（エラー: ' + esc(ph.errCode) + '）' : '') +
+    '<div class="mute small" style="margin-top:4px" id="phErrMsg">' + esc(ph.err) + '</div>' +
+    '<div class="btns">' + (ph.canRetry === false ? '' : '<button class="b-yel" id="phEst">もう一度</button>') + '<button class="b-sub" id="phToText">文字で推定</button><button class="b-sub" id="phManual">手入力に切替</button></div></div>';
+  if (ph.status === 'done') {
+    const est = ph.est, tot = estTotal(est.items);
+    h += '<div class="est">' + est.items.map((it, i) => '<div class="it' + (it.on ? '' : ' off') + '"><span class="nm" data-phname="' + i + '" title="foods から差し替え">' + esc(it.nameJa) + '</span><span class="g"><button data-phg="' + i + ':-10">−</button>' + it.grams + 'g<button data-phg="' + i + ':10">＋</button></span><button class="x" data-phoff="' + i + '" aria-label="除外">' + (it.on ? '×' : '↩') + '</button><span class="m">' + it.kcal + 'kcal ・ P' + it.p + ' F' + it.f + ' C' + it.c + '</span></div>').join('') + '</div>';
+    h += '<div class="row2" style="margin-top:8px"><span class="num" style="font-weight:700">合計 ' + Math.round(tot.kcal) + 'kcal※ ・ P' + Math.round(tot.p) + ' F' + Math.round(tot.f) + ' C' + Math.round(tot.c) + '</span><span style="text-align:right"><span class="conf ' + est.confidence + '">確からしさ: ' + ({ high: '高', medium: '中', low: '低' }[est.confidence]) + '</span></span></div>' + (est.note ? '<div class="mute small" style="margin-top:4px">' + esc(est.note) + '</div>' : '');
+    h += '<div class="btns" style="margin-top:10px"><button class="b-main" id="phSave">この内容で記録</button></div><div class="btns" style="margin-top:8px"><button class="b-sub" id="phToText">文字で直す</button><button class="b-sub" id="phReg">食品マスタに登録</button><button class="b-sub" id="phManual">手入力に切替</button></div>';
   }
   return h + '</div>';
 }
 function bindPhotoPanel(s, d, m, date, mealNo) {
   const ph = UI.sheetMeal.photo, rerender = () => openMealSheet(mealNo, UI.sheetMeal.sub);
   const noteVal = () => { const n = $('#phNote', s); if (n) ph.note = n.value; };
-  const fi = $('#phFile', s); if (fi) fi.onchange = async () => { const f = fi.files[0]; if (!f) return; try { const r = await resizeImage(f, 1280, 0.8); Object.assign(ph, { status: 'ready', blob: r.blob, dataUrl: r.dataUrl, width: r.width, height: r.height, orig: f.size }); rerender(); } catch (e) { ph.status = 'pick'; toast('画像を読み込めませんでした', true); } };
-  const est = $('#phEst', s); if (est) est.onclick = async () => { noteVal(); ph.status = 'analyzing'; ph.ctl = new AbortController(); rerender();
-    try { const r = await estimateMealPhotoWith(ph); ph.est = r; ph.status = 'done'; } catch (e) { if (e && e.code === 'cancelled') { ph.status = 'ready'; } else { ph.status = 'error'; ph.err = photoErrText(e); } } rerender(); };
+  // 推定は必ずボタンを押したときだけ走らせる（初回は Claude の許可ダイアログが出るため）。自動の再試行はしない
+  const runEstimate = async () => {
+    ph.status = 'analyzing'; ph.ctl = new AbortController(); ph.err = ''; ph.errCode = ''; rerender();
+    try {
+      ph.est = (ph.blob && canSendPhoto()) ? await estimateMealPhotoWith(ph) : await estimateMealTextWith(ph);
+      ph.status = 'done';
+    } catch (e) {
+      const c = (e && e.code) || (e && e.name === 'AbortError' ? 'cancelled' : '');
+      if (c === 'cancelled') { ph.status = ph.blob ? 'ready' : 'text'; }
+      else if (c === 'images_unavailable') { // この画面では画像を送れない → 写真の入口を隠して文字で推定に切り替える
+        CAP.images = null; CAP.imagesKnown = true;
+        ph.blob = null; ph.dataUrl = ''; ph.status = 'text';
+        ph.textLead = '推定できませんでした（エラー: images_unavailable）。この画面では写真を送れません。食べたものを文字で入力してください';
+      } else { ph.status = 'error'; ph.errCode = c; ph.err = photoErrText(e); ph.canRetry = true; }
+    }
+    rerender();
+  };
+  const pickFile = async f => {
+    if (!f) return;
+    try { const r = await resizeImage(f, 1280, 0.8); Object.assign(ph, { status: 'ready', blob: r.blob, dataUrl: r.dataUrl, width: r.width, height: r.height, orig: f.size }); }
+    catch (e) { ph.status = 'error'; ph.errCode = 'image_rejected'; ph.canRetry = false; ph.err = PHOTO_ERRS.image_rejected + '。スクリーンショットを撮って選び直してください'; }
+    rerender();
+  };
+  const fi = $('#phFile', s); if (fi) fi.onchange = () => pickFile(fi.files[0]);
+  const est = $('#phEst', s); if (est) est.onclick = () => { noteVal(); runEstimate(); };
+  const tt = $('#phToText', s); if (tt) tt.onclick = () => { noteVal(); ph.status = 'text'; ph.textLead = ''; rerender(); };
+  const te = $('#phTextEst', s); if (te) te.onclick = () => {
+    const v = (($('#phText', s) || {}).value || '').trim();
+    if (ph.blob && canSendPhoto()) ph.note = v; else { if (!v) return toast('食べたものを入力してください', true); ph.text = v; }
+    runEstimate();
+  };
   const stop = $('#phStop', s); if (stop) stop.onclick = () => { if (ph.ctl) ph.ctl.abort(); };
   const man = $('#phManual', s); if (man) man.onclick = () => { noteVal(); UI.sheetMeal.photo = null; UI.sheetMeal.sub = true; rerender(); toast('手入力に切り替えました。下の欄に食べたものを書いてください'); };
-  const ag = $('#phAgain', s); if (ag) ag.onclick = () => { UI.sheetMeal.photo = { status: 'pick', note: ph.note }; rerender(); };
+  const ag = $('#phAgain', s); if (ag) ag.onclick = () => { UI.sheetMeal.photo = { status: 'pick', note: ph.note, text: ph.text, mode: ph.mode }; rerender(); };
   $$('[data-phg]', s).forEach(b => { b.onclick = () => { noteVal(); const [i, dg] = b.dataset.phg.split(':').map(Number); const it = ph.est.items[i]; ph.est.items[i] = scaleItem(it, Math.max(1, it.grams + dg)); rerender(); }; });
   $$('[data-phoff]', s).forEach(b => { b.onclick = () => { noteVal(); const it = ph.est.items[Number(b.dataset.phoff)]; it.on = !it.on; rerender(); }; });
   $$('[data-phname]', s).forEach(el => { el.onclick = () => { noteVal(); const i = Number(el.dataset.phname); askFood('食材を差し替え', ph.est.items[i].nameJa).then(f => { if (!f) return; const it = ph.est.items[i]; const mac = calcMacros(f, isRatioPer(f.per) ? it.grams : 1); ph.est.items[i] = Object.assign({}, it, { nameJa: f.nameJa, nameEn: f.nameEn || '', foodId: f.foodId }, mac); rerender(); }); }; });
   // 推定した品目をそのまま食品マスタへ（次から「＋ 他のものを追加」で1タップで選べる）
   const reg = $('#phReg', s); if (reg) reg.onclick = async () => { noteVal(); const on = ph.est.items.filter(i => i.on); if (!on.length) return toast('登録する品目がありません', true);
     reg.disabled = true; reg.textContent = '登録中…';
-    try { for (const it of on) { const k = 100 / it.grams; await A.addFood({ nameJa: it.nameJa, nameEn: it.nameEn, per: '100g', kcal: r1(it.kcal * k), p: r1(it.p * k), f: r1(it.f * k), c: r1(it.c * k), portionG: it.grams, source: 'user', note: '写真から推定' }); }
+    try { for (const it of on) { const k = 100 / it.grams; await A.addFood({ nameJa: it.nameJa, nameEn: it.nameEn, per: '100g', kcal: r1(it.kcal * k), p: r1(it.p * k), f: r1(it.f * k), c: r1(it.c * k), portionG: it.grams, source: 'user', note: '推定から登録' }); }
       reg.textContent = '登録しました'; toast(on.length + ' 品目を食品マスタに登録しました'); } catch (e) { reg.disabled = false; reg.textContent = '食品マスタに登録'; toast(e.message || String(e), true); } };
   const save = $('#phSave', s); if (save) save.onclick = async () => { noteVal(); if (!ph.est.items.some(i => i.on)) return toast('記録する品目がありません', true); save.disabled = true; save.textContent = '保存中…';
     try { const msg = await A.recordPhotoMeal(date, mealNo, ph.est, ph, ph.mode ? ph.mode === 'replace' : m.status === 'plan'); UI.sheetMeal.photo = null; closeSheet(); toastAction(msg + 'しました', '元に戻す', () => act(A.mealUndo(date, mealNo))); } catch (e) { save.disabled = false; save.textContent = 'この内容で記録'; toast('保存に失敗: ' + (e.code || e.message), true); } };
@@ -2152,13 +2211,31 @@ async function estimateMealPhotoWith(ph) {
   const raw = await CAP.sample.json(photoPrompt(ph.note), { images: [ph.blob], modelTier: 'default', cache: false, signal: ph.ctl.signal });
   return validateEstimate(raw);
 }
-function photoErrText(e) { const c = e && e.code; const map = { rate_limited: '混み合っています。少し待ってからもう一度', not_granted: 'この表示では AI を使えません', invalid_json: '推定結果を読み取れませんでした', images_unavailable: '写真の解析ができない環境です', refused: 'この写真は解析できませんでした', prompt_too_large: '画像が大きすぎます', upstream_error: '一時的なエラーです' }; return (map[c] || (e && (e.message || String(e)))) + '（手入力に切り替えられます）'; }
+/** 写真が使えない画面でも必ず使える「文字で推定」。画像を渡さないだけで、返す形は写真と同じ */
+async function estimateMealTextWith(ph) {
+  const raw = await CAP.sample.json(textPrompt(ph.text, ph.note), { modelTier: 'default', cache: false, signal: ph.ctl.signal });
+  return validateEstimate(raw);
+}
+/** sample の失敗は {code, message} で返る。code はそのまま画面に出す（原因の特定に必要） */
+const PHOTO_ERRS = {
+  images_unavailable: 'この画面では写真を送れません',
+  image_rejected: 'この写真は読み込めません。別の写真を選んでください',
+  refused: 'この写真は読み込めません。別の写真を選んでください',
+  not_granted: 'Claude の利用が許可されていません。許可のダイアログで「許可」を押してください',
+  rate_limited: '少し時間をおいてください',
+  invalid_json: '推定結果を読み取れませんでした',
+  upstream_error: '通信に失敗しました',
+  prompt_too_large: '画像が大きすぎます。別の写真を選んでください'
+};
+function photoErrText(e) { const c = e && e.code; return PHOTO_ERRS[c] || (e && (e.message || String(e))) || '推定できませんでした'; }
 /** foods から検索して 1 つ選ぶ */
 function askFood(title, q) { return new Promise(res => { const d = openDlg('<h3>' + esc(title) + '</h3><input class="txt" id="fq" placeholder="食品名で検索" value="' + esc(q || '') + '"><div class="list" id="flist" style="max-height:40vh;overflow:auto;margin-top:8px"></div><button class="b b-sub" style="width:100%;margin-top:10px" id="dlgNo">やめる</button>');
   const draw = () => { const t = $('#fq', d).value.trim().toLowerCase(); const fs = Object.values(ST.foods).filter(f => !t || (f.nameJa + ' ' + f.nameEn + ' ' + f.foodId).toLowerCase().includes(t)).slice(0, 30); $('#flist', d).innerHTML = fs.map(f => '<div class="it" data-fid="' + esc(f.foodId) + '" style="cursor:pointer"><span>' + esc(f.nameJa) + '</span><span class="m">' + f.kcal + 'kcal /' + esc(f.per) + '</span></div>').join('') || '<div class="mute small">該当なし</div>'; $$('[data-fid]', d).forEach(el => { el.onclick = () => { closeDlg(); res(ST.foods[el.dataset.fid]); }; }); };
   $('#fq', d).oninput = draw; draw(); $('#dlgNo', d).onclick = () => { closeDlg(); res(null); }; }); }
 // estimateMealPhoto のプロンプト（補足を含める）
 function photoPrompt(note) { return 'You estimate the food in the attached photo. Assume common Filipino or Japanese home cooking and eating-out dishes. Estimate portions from the plate, bowl, spoon and chopstick sizes. If unsure, set confidence to "low" and explain why in note. Output JSON only, nothing else.\nReply with only this JSON: {"items":[{"name_ja":string,"name_en":string,"grams":number,"kcal":number,"p":number,"f":number,"c":number}],"total":{"kcal":number,"p":number,"f":number,"c":number},"confidence":"high|medium|low","note":string}\nname_ja is the Japanese dish/ingredient name (e.g. 白ご飯, 鶏の唐揚げ), grams is the eaten weight for that item, kcal/p/f/c are for that whole item (not per 100 g).' + (note && note.trim() ? '\n\nAdditional information from the user: ' + note.trim() : ''); }
+/** 文字だけで推定する（写真を送れない画面でも必ず動く逃げ道）。返す JSON の形は写真と同じ */
+function textPrompt(text, note) { return 'The user describes a meal they ate, in Japanese or English. Identify every dish, estimate the portion, and compute kcal and PFC. Assume common Filipino or Japanese home cooking and eating-out dishes. If the amount is not given, assume a typical single serving and say so in note. Output JSON only, nothing else.\n' + 'Reply with only this JSON: {"items":[{"name_ja":string,"name_en":string,"grams":number,"kcal":number,"p":number,"f":number,"c":number}],"total":{"kcal":number,"p":number,"f":number,"c":number},"confidence":"high|medium|low","note":string}\nname_ja is the Japanese dish/ingredient name (e.g. 白ご飯, 鶏の唐揚げ), grams is the eaten weight for that item, kcal/p/f/c are for that whole item (not per 100 g). note is one short sentence in Japanese on what you assumed.' + '\n\nWhat the user ate: ' + String(text || '').trim() + (note && note.trim() ? '\nAdditional information: ' + note.trim() : ''); }
 function bindMealSheet(s, d, m, date, mealNo) {
   const undoToast = msg => toastAction(msg, '元に戻す', () => act(A.mealUndo(date, mealNo)));
   $('#mUndo', s).onclick = () => act(A.mealUndo(date, mealNo)).then(ok => { if (ok) toast('1つ戻しました'); });
@@ -2173,7 +2250,8 @@ function bindMealSheet(s, d, m, date, mealNo) {
   const ma = $('#mAlt', s); if (ma) ma.onclick = () => { act(A.mealPlanDone(date, mealNo, { variant: 'alt' }), mealNo + '食目 代替案で記録').then(() => closeSheet()); };
   const mpk = $('#mPick', s); if (mpk) mpk.onclick = () => { UI.sheetMeal = null; UI.mealPick = null; openMealPickSheet(date, mealNo); };
   $('#mChange', s).onclick = () => { const p = $('#sub', s); p.hidden = !p.hidden; UI.sheetMeal.sub = !p.hidden; };
-  const mph = $('#mPhoto', s); if (mph) mph.onclick = () => { UI.sheetMeal.photo = { status: 'pick', note: '' }; openMealSheet(mealNo, UI.sheetMeal.sub); };
+  const mph = $('#mPhoto', s); if (mph) mph.onclick = () => { UI.sheetMeal.photo = { status: 'pick', note: '', text: '' }; openMealSheet(mealNo, UI.sheetMeal.sub); };
+  const mtx = $('#mText', s); if (mtx) mtx.onclick = () => { UI.sheetMeal.photo = { status: 'text', note: '', text: '', textLead: 'この画面では写真を送れません（エラー: images_unavailable）。食べたものを文字で入力してください' }; openMealSheet(mealNo, UI.sheetMeal.sub); };
   const sp = $('[data-showphoto]', s); if (sp) sp.onclick = () => showMealPhoto(date, mealNo);
   const setPending = pend => { UI.sheetMeal.pending = pend; UI.sheetMeal.sub = true; openMealSheet(mealNo, true); };
   $$('[data-q]', s).forEach(b => { b.onclick = () => { const q = d.quickSubs[Number(b.dataset.q)];
@@ -2672,7 +2750,7 @@ function renderSummary() {
   h += '<div class="card"><div class="ttl" style="margin-bottom:8px">コーチに送る</div><div class="report" id="repText"></div><label class="opt"><input type="checkbox" id="optMsgr"> フォーム動画は Messenger で送った（sent via Messenger）</label><div class="btns" style="margin-top:10px"><button class="b-yel" id="copyRep">レポートをコピー</button><button class="b-sub" id="addMedia"' + (CAP.assets ? '' : ' hidden') + '>体の写真を追加</button></div>' +
     (d.media.length ? '<div class="gallery">' + d.media.map(m => { const src = m.url || ('/_blob/' + m.assetId); return '<a class="thumb" href="' + esc(src) + '" target="_blank" rel="noopener">' + (m.type === 'video' ? '<video src="' + esc(src) + '" muted playsinline preload="metadata"></video>' : '<img src="' + esc(src) + '" loading="lazy" alt="' + esc(m.category) + '">') + '<div class="cap">' + esc(m.date.slice(5)) + ' ' + esc(m.category) + (m.type === 'video' ? ' ▶' : '') + '</div></a>'; }).join('') + '</div>' : '') + '</div>';
   h += '<div class="card"><div class="ttl small mute">コーチ確認中（回答が来たら反映）</div><ul class="small" style="margin:8px 0 0 18px;padding:0;color:var(--mute)">' + PENDING_COACH.map(x => '<li>' + esc(x) + '</li>').join('') + '</ul></div>';
-  h += '<div class="card"><div class="ttl small mute">設定</div><div class="btns" style="margin-top:8px"><button class="b-sub" id="unitBtn">単位: ' + unit() + ' → ' + (unit() === 'kg' ? 'lb' : 'kg') + '</button><button class="b-sub" id="riceBtn">白米: ' + (ST.settings.riceBasis === 'raw' ? '生米基準' : '炊飯後基準') + ' → 切替</button></div><div class="btns" style="margin-top:8px"><button class="b-sub" id="csvBtn"' + (CAP.downloads ? '' : ' hidden') + '>CSV 書き出し</button></div><div class="mute small" style="margin-top:6px">保存は常に kg。開始日 ' + esc(ST.settings.startDate) + ' ・ 休憩 トップセット ' + ST.settings.restTopSec + '秒 / 他 ' + ST.settings.restOtherSec + '秒' + (ST.mode === 'mock' ? ' ・ モックモード' : '') + '</div></div>';
+  h += '<div class="card"><div class="ttl small mute">設定</div><div class="btns" style="margin-top:8px"><button class="b-sub" id="unitBtn">単位: ' + unit() + ' → ' + (unit() === 'kg' ? 'lb' : 'kg') + '</button><button class="b-sub" id="riceBtn">白米: ' + (ST.settings.riceBasis === 'raw' ? '生米基準' : '炊飯後基準') + ' → 切替</button></div><div class="btns" style="margin-top:8px"><button class="b-sub" id="csvBtn"' + (CAP.downloads ? '' : ' hidden') + '>CSV 書き出し</button></div><div class="mute small" style="margin-top:6px" id="diagPhoto">写真推定：' + esc(photoDiagText()) + '</div><div class="mute small" style="margin-top:6px">保存は常に kg。開始日 ' + esc(ST.settings.startDate) + ' ・ 休憩 トップセット ' + ST.settings.restTopSec + '秒 / 他 ' + ST.settings.restOtherSec + '秒' + (ST.mode === 'mock' ? ' ・ モックモード' : '') + '</div></div>';
   view.innerHTML = h;
   bindFatBlock(fm);
   $('#wkPrev').onclick = () => { UI.summaryWeek = d.weekNo - 1; render(); };
@@ -2812,7 +2890,7 @@ async function boot() {
     render();
   }
   use('assets').then(a => { CAP.assets = a; scheduleRender(); });
-  use('sample').then(async s => { CAP.sample = s; CAP.images = null; if (s && typeof s.limits === 'function') { try { const lim = await s.limits(); CAP.images = lim && lim.images ? lim.images : null; } catch (e) { CAP.images = null; } } scheduleRender(); });
+  use('sample').then(async s => { CAP.sample = s; CAP.images = null; CAP.imagesKnown = false; if (s && typeof s.limits === 'function') { try { const lim = await s.limits(); CAP.images = lim && lim.images ? lim.images : null; CAP.imagesKnown = true; } catch (e) { CAP.images = null; CAP.imagesKnown = false; } } scheduleRender(); });
   use('downloads').then(dl => { CAP.downloads = dl; scheduleRender(); });
 }
 window.addEventListener('beforeunload', () => { try { localStorage.setItem('tl.tab', UI.tab); } catch (e) { /* ignore */ } });
