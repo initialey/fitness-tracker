@@ -109,19 +109,30 @@ async function run(mode) {
   const dayTotal = async () => { if (!(await page.$('#bbar .k1'))) { await goTab('today'); await page.waitForSelector('#bbar .k1'); } return Number((await page.$eval('#bbar .k1', e => e.textContent)).match(/^([\d,]+)/)[1].replace(/,/g, '')); };
   /** 固定バーの「くわしく」を開いて中身を読む（閉じてから戻す） */
   const totalsPanel = async () => { const open = await page.$('#bbar .panel'); if (!open) await page.click('#bbTot'); await page.waitForSelector('#bbar .panel'); const txt = await page.$eval('#bbar .panel', e => e.textContent); return txt; };
-  /** 新方式（食べたら記録 → アプリが一番近い枠に自動で紐づける）では枠をタップして埋められないので、
-   *  その枠の予定時刻に時計を合わせてから「手で入力」で記録する。planDone=true なら続けてプラン通りの内容に置き換える */
   const SLOT_HM = { 1: '07:00', 2: '10:30', 3: '13:30', 4: '16:30', 5: '19:30' };
+  /** 「今日のプラン」の N 食目を食べた扱いにする（品目選択シートの「全部食べた」から） */
   const logIntoSlot = async (slot) => {
-    const back = curTime;
     await page.evaluate(() => { const t = document.querySelector('#toast'); if (t) t.className = 'toast'; });
-    await setTime('2026-09-16T' + SLOT_HM[slot] + ':00+08:00'); await goTab('workout'); await goTab('today');
-    await page.click('[data-step="meal:' + slot + '"] .row'); await page.waitForSelector('#mpAll'); await page.click('#mpAll');
+    if (await planEaten(slot)) return;
+    await page.click('[data-planrow="' + slot + '"]'); await page.waitForSelector('#mpAll'); await page.click('#mpAll');
     await page.waitForSelector('#sheet', { state: 'hidden' }); await page.waitForTimeout(250);
-    await setTime(back); await goTab('workout'); await goTab('today');
   };
-  /** 枠の詳細シートを開く（未記録なら先に「全部食べた」で記録を作る。記録済みの行はタップで詳細が開く） */
-  const openMealSlot = async (slot) => { if (await page.$eval('[data-step="meal:' + slot + '"]', e => e.className.includes('planonly'))) await logIntoSlot(slot); await page.click('[data-step="meal:' + slot + '"] .row'); await page.waitForTimeout(120); };
+  /** プランの N 食目が「食べた（✓）」になっているか */
+  const planEaten = async (slot, pg) => (pg || page).$eval('[data-planchk="' + slot + '"]', e => e.className.includes('on'));
+  /** 「食べたもの」一覧のうち、プランの N 食目から記録された行 */
+  const eatenRowOf = async (slot, pg) => (pg || page).evaluate(n => {
+    const rows = [...document.querySelectorAll('.elist .erow')];
+    const hit = rows.find(r => r.querySelector('.nm').textContent.indexOf(n + '食目（プラン）') === 0);
+    return hit ? hit.innerText : '';
+  }, slot);
+  /** 記録の詳細シートを開く（未記録なら先にプラン通りで記録を作る） */
+  const openMealSlot = async (slot) => { await logIntoSlot(slot);
+    await page.evaluate(n2 => { const rows = [...document.querySelectorAll('.elist .erow')]; const hit = rows.find(r => r.querySelector('.nm').textContent.indexOf(n2 + '食目（プラン）') === 0); if (hit) hit.click(); }, slot);
+    await page.waitForTimeout(150); };
+  /** 「＋ 食べたものを記録」のシートから、指定の入口を開く */
+  /** 「食べたもの」一覧の行（見出しが label で始まる行）を開く */
+  const openEatenRow = async (pg, label) => { await pg.evaluate(l => { const rows = [...document.querySelectorAll('.elist .erow')]; const hit = rows.find(r => r.querySelector('.nm').textContent.indexOf(l) === 0); if (hit) hit.click(); }, label); await pg.waitForTimeout(150); };
+  const openRecordWay = async (id, pg) => { pg = pg || page; await pg.click('#addMealBtn'); await pg.waitForSelector('#recTxt'); await pg.click('#' + id); await pg.waitForTimeout(120); };
   const goTab = async (tab) => { await page.click('.tabs [data-tab="' + tab + '"]'); await page.waitForTimeout(120); };
   const closeSheet = async () => { if (await has('#sheet:not([hidden])')) { await page.click('#sheet', { position: { x: 5, y: 5 } }); await page.waitForSelector('#sheet', { state: 'hidden' }); await page.waitForTimeout(150); } };
   /** clock.setFixedTime はブラウザコンテキスト全体で共有されるので、孤立日付へ飛ばしたテストは必ずここで今日（T0）へ戻す */
@@ -187,13 +198,17 @@ async function run(mode) {
     } finally { for (let i = 0; i < shifted; i++) await page.click('[data-shift="-1"]'); }
     assert((await text('.date')).includes('9/16') && !(await text('.date')).includes('過去'), 'back to today');
   });
-  await T(G.today, '全行で「…」省略なし。サプリ名・食材が全部表示', async () => { const rows = await page.$$eval('.step', els => els.map(e => e.textContent)); assert(!rows.some(r => r.includes('…')), 'ellipsis'); assert(rows.some(r => r.includes('経口サプリ') && r.includes('B12＋D3') && r.includes('ベルベリン') && r.includes('フィッシュオイル') && r.includes('亜鉛') && !r.includes('クレアチン')), 'oral supp names, no creatine'); assert(rows.some(r => r.includes('トレ前') && r.includes('クレアチン') && r.includes('タイミング確認中')), 'creatine on its own pre-workout row'); assert(rows.some(r => r.includes('マグネシウム グリシネート 400mg 就寝前') && r.includes('アシュワガンダ 300mg 就寝前')), 'night supps with dose'); assert(rows.some(r => r.includes('腹筋（最終種目のあと）') && r.includes('ケーブルクランチ') && r.includes('ケーブル 片手 オブリーククランチ') && r.includes('ハンギングニーレイズ') && !r.includes('確認中')), 'abs row lists all 3 exercises, no 確認中'); assert(rows.some(r => r.includes('ウォームアップ') && r.includes('各10回×2セット')), 'warm-up 2 sets'); assert(rows.some(r => r.includes('全卵4個・卵白150g・塩1g')), 'meal1 items'); assert(rows.some(r => r.includes('ケーブルフライ（座位・ミッド角度） または ペックデッキ・インクラインダンベルプレス・マシン インクラインプレス または スミス インクラインプレス') && r.includes('ほか5種目') && !r.includes('アンダーハンド')), 'exercises: first 3 + ほか5種目'); });
-  await T(G.today, '朝の順番: 体重 → リンゴ酢 → 1食目 → 経口サプリ → サイリウム。サプリ 07:05・サイリウム 07:20（15分後）、説明に「ゆっくり」「水500ml以上」「水1L以上」', async () => { const ids = await page.$$eval('.step', els => els.map(e => e.dataset.step)); const want = ['weight', 'routine:1', 'meal:1', 'supp:after_meal', 'routine:2']; assert(JSON.stringify(ids.slice(0, 5)) === JSON.stringify(want), 'order: ' + ids.slice(0, 6).join(',')); const tm = async id => text('[data-step="' + id + '"] .tm'); assert((await tm('weight')).includes('06:40') && (await tm('routine:1')).includes('06:45') && (await tm('meal:1')).includes('07:00') && (await tm('supp:after_meal')).includes('07:05') && (await tm('routine:2')).includes('07:20'), 'times: ' + [await tm('weight'), await tm('routine:1'), await tm('meal:1'), await tm('supp:after_meal'), await tm('routine:2')].join(' | ')); const r1 = await text('[data-step="routine:1"]'), r2 = await text('[data-step="routine:2"]'); assert(r1.includes('大さじ1') && r1.includes('水500ml以上') && r1.includes('ゆっくり飲む') && r1.includes('食事の15分前'), 'acv row: ' + r1); assert(r2.includes('サイリウムハスク 大さじ1') && r2.includes('水1L以上') && r2.includes('ゆっくり') && r2.includes('15分後'), 'psyllium row: ' + r2); assert((await text('[data-step="supp:night"]')).includes('就寝前サプリ') && (await tm('supp:night')).includes('22:30'), 'night 22:30'); const u = await page.evaluate(() => [window.__tl.warmupMinutesText(289), window.__tl.warmupMinutesText(12), window.__tl.warmupMinutesText(0)]); assert(u[0] === '完了' && u[1] === '完了 12分' && u[2] === '完了', 'warm-up minutes guard: ' + u.join(',')); });
+  await T(G.today, '全行で「…」省略なし。サプリ名・食材が全部表示', async () => { const rows = await page.$$eval('.step', els => els.map(e => e.textContent)); assert(!rows.some(r => r.includes('…')), 'ellipsis'); assert(rows.some(r => r.includes('経口サプリ') && r.includes('B12＋D3') && r.includes('ベルベリン') && r.includes('フィッシュオイル') && r.includes('亜鉛') && !r.includes('クレアチン')), 'oral supp names, no creatine'); assert(rows.some(r => r.includes('トレ前') && r.includes('クレアチン') && r.includes('タイミング確認中')), 'creatine on its own pre-workout row'); assert(rows.some(r => r.includes('マグネシウム グリシネート 400mg 就寝前') && r.includes('アシュワガンダ 300mg 就寝前')), 'night supps with dose'); assert(rows.some(r => r.includes('腹筋（最終種目のあと）') && r.includes('ケーブルクランチ') && r.includes('ケーブル 片手 オブリーククランチ') && r.includes('ハンギングニーレイズ') && !r.includes('確認中')), 'abs row lists all 3 exercises, no 確認中'); assert(rows.some(r => r.includes('ウォームアップ') && r.includes('各10回×2セット')), 'warm-up 2 sets'); assert((await page.$eval('[data-planrow="1"]', e => e.textContent)).includes('全卵4個（約200g）') && !(await page.$eval('.plist', e => e.textContent)).includes('…'), 'プランの品目は省略せず全部出す'); assert(rows.some(r => r.includes('ケーブルフライ（座位・ミッド角度） または ペックデッキ・インクラインダンベルプレス・マシン インクラインプレス または スミス インクラインプレス') && r.includes('ほか5種目') && !r.includes('アンダーハンド')), 'exercises: first 3 + ほか5種目'); });
+  await T(G.today, '朝の順番: 体重 → リンゴ酢 → 1食目 → 経口サプリ → サイリウム。サプリ 07:05・サイリウム 07:20（15分後）、説明に「ゆっくり」「水500ml以上」「水1L以上」', async () => { const ids = await page.$$eval('.step', els => els.map(e => e.dataset.step)); const want = ['weight', 'routine:1', 'supp:after_meal', 'routine:2']; assert(JSON.stringify(ids.slice(0, 4)) === JSON.stringify(want), 'order: ' + ids.slice(0, 6).join(',')); assert(!ids.some(x => /^meal:/.test(x)), '食事はルーティンのタイムラインから外れている: ' + ids.join(',')); const tm = async id => text('[data-step="' + id + '"] .tm'); assert((await tm('weight')).includes('06:40') && (await tm('routine:1')).includes('06:45') && (await tm('supp:after_meal')).includes('07:05') && (await tm('routine:2')).includes('07:20'), 'times: ' + [await tm('weight'), await tm('routine:1'), await tm('supp:after_meal'), await tm('routine:2')].join(' | ')); const r1 = await text('[data-step="routine:1"]'), r2 = await text('[data-step="routine:2"]'); assert(r1.includes('大さじ1') && r1.includes('水500ml以上') && r1.includes('ゆっくり飲む') && r1.includes('食事の15分前'), 'acv row: ' + r1); assert(r2.includes('サイリウムハスク 大さじ1') && r2.includes('水1L以上') && r2.includes('ゆっくり') && r2.includes('15分後'), 'psyllium row: ' + r2); assert((await text('[data-step="supp:night"]')).includes('就寝前サプリ') && (await tm('supp:night')).includes('22:30'), 'night 22:30'); const u = await page.evaluate(() => [window.__tl.warmupMinutesText(289), window.__tl.warmupMinutesText(12), window.__tl.warmupMinutesText(0)]); assert(u[0] === '完了' && u[1] === '完了 12分' && u[2] === '完了', 'warm-up minutes guard: ' + u.join(',')); });
   await T(G.today, '体重 kg⇄lb 切替で換算が正しく、保存は kg', async () => { await goTab('summary'); await page.click('#unitBtn'); await page.waitForTimeout(100); await goTab('today'); assert((await text('#now .w-in .u')) === 'lb', 'unit lb'); await page.fill('#nowW', '160'); await page.click('#nowBtn'); await page.waitForFunction(() => document.querySelector('[data-step="weight"]').className.includes('done')); const row = await text('[data-step="weight"]'); assert(row.includes('160.1lb') || row.includes('160lb'), 'lb display: ' + row); if (mode === 'db') { await page.waitForTimeout(200); assert(rt.DB.log_weight['2026-09-16'].weightKg === 72.6, 'stored kg=' + rt.DB.log_weight['2026-09-16'].weightKg); } await goTab('summary'); await page.click('#unitBtn'); await page.waitForTimeout(100); await goTab('today'); assert((await text('[data-step="weight"]')).includes('72.6kg'), 'kg display'); return '160lb → 72.6kg 保存'; });
-  await T(G.today, 'リンゴ酢✓ → 15分タイマー → 「いま」が1食目に変わる', async () => { await page.click('[data-chk="routine:1"]'); await page.waitForSelector('#nowTimer'); assert((await text('#now .t')) === '1食目まで', 'timer title'); assert((await text('#nowTimer')) === '15:00', 'timer 15:00'); assert((await text('[data-step="meal:1"] .tm')).includes('07:05') && (await text('[data-step="meal:1"] .tm')).includes('タイマー'), 'row shows timer end 07:05');
-    if (mode === 'db') { await page.waitForTimeout(250); await setTime('2026-09-16T06:55:30+08:00'); await page.reload(); await page.waitForFunction(() => !document.querySelector('#view .loading')); await goTab('today'); await page.waitForSelector('#nowTimer'); const left = await text('#nowTimer'); assert(/^9:(2|3)\d$/.test(left), 'after reload remaining ~9:30: ' + left); } await setTime('2026-09-16T07:06:00+08:00'); await goTab('workout'); await goTab('today'); assert((await text('#now .t')) === '1食目を食べる', 'after 15min: ' + (await text('#now .t'))); });
-  await T(G.today, '✓の付け外しが即反映、再読み込み後も残る（db）', async () => { await logIntoSlot(1); await page.waitForFunction(() => document.querySelector('[data-step="meal:1"]').className.includes('done')); await page.click('[data-chk="routine:1"]'); await page.waitForFunction(() => !document.querySelector('[data-step="routine:1"]').className.includes('done')); await page.click('[data-chk="routine:1"]'); await page.waitForFunction(() => document.querySelector('[data-step="routine:1"]').className.includes('done'));
-    if (mode === 'db') { await page.waitForTimeout(300); await page.reload(); await page.waitForFunction(() => !document.querySelector('#view .loading')); await goTab('today'); assert((await page.$eval('[data-step="meal:1"]', e => e.className)).includes('done'), 'meal1 after reload'); assert((await page.$eval('[data-step="weight"]', e => e.className)).includes('done'), 'weight after reload'); return '再読み込み後も維持'; } return 'モックは再読み込み対象外'; });
+  await T(G.today, 'リンゴ酢✓ → 「いま」が次のルーティンへ進む（食事はタイムラインに無いので「いま」にならない）', async () => {
+    await page.click('[data-chk="routine:1"]'); await page.waitForFunction(() => document.querySelector('[data-step="routine:1"]').className.includes('done'));
+    const title = await text('#now .t');
+    assert(!/^\d食目/.test(title), '「いま」に食事の記録は出ない: ' + title);
+    assert((await page.$eval('#now', e => e.textContent)).length > 0, '「いま」カードは出る');
+  });
+  await T(G.today, '✓の付け外しが即反映、再読み込み後も残る（db）', async () => { await logIntoSlot(1); assert(await planEaten(1), 'プラン1食目が ✓ になる'); await page.click('[data-chk="routine:1"]'); await page.waitForFunction(() => !document.querySelector('[data-step="routine:1"]').className.includes('done')); await page.click('[data-chk="routine:1"]'); await page.waitForFunction(() => document.querySelector('[data-step="routine:1"]').className.includes('done'));
+    if (mode === 'db') { await page.waitForTimeout(300); await page.reload(); await page.waitForFunction(() => !document.querySelector('#view .loading')); await goTab('today'); assert(await planEaten(1), 'meal1 after reload'); assert((await page.$eval('[data-step="weight"]', e => e.className)).includes('done'), 'weight after reload'); return '再読み込み後も維持'; } return 'モックは再読み込み対象外'; });
   await T(G.today, 'サプリ✓ → 15分後にサイリウムが「いま」になる', async () => { await setTime('2026-09-16T07:20:00+08:00'); await goTab('workout'); await goTab('today'); await page.click('[data-chk="supp:after_meal"]'); await page.waitForFunction(() => document.querySelector('[data-step="supp:after_meal"]').className.includes('done')); assert(/^サイリウム.*まで$/.test(await text('#now .t')), 'timer to psyllium: ' + (await text('#now .t'))); await setTime('2026-09-16T07:36:00+08:00'); await goTab('workout'); await goTab('today'); assert(/^サイリウム/.test(await text('#now .t')) && !/まで$/.test(await text('#now .t')), 'now psyllium: ' + (await text('#now .t'))); await page.click('#nowBtn'); await page.waitForFunction(() => document.querySelector('[data-step="routine:2"]').className.includes('done')); });
   await T(G.today, '水タブ: 目標 5.0L・大数字・+500/+350/−500・達成で緑「5L 達成！」・log_daily.waterMl に保存', async () => { await page.click('[data-open="water"]'); await page.waitForSelector('#waterBig'); assert((await page.$eval('.tabs .on', e => e.dataset.tab)) === 'water', 'row tap opens water tab'); assert((await text('.card .ttl')).includes('目標 5.0 L'), 'goal'); await page.click('[data-w="500"]'); await page.click('[data-w="350"]'); await page.waitForFunction(() => document.querySelector('#waterBig').textContent.startsWith('0.85')); assert((await text('#waterStat')).includes('あと 4.15 L'), 'left'); await page.click('[data-w="-500"]'); await page.waitForFunction(() => document.querySelector('#waterBig').textContent.startsWith('0.35')); for (let i = 0; i < 10; i++) await page.click('[data-w="500"]'); await page.waitForFunction(() => document.querySelector('#waterBig').textContent.startsWith('5.35')); assert((await text('#waterStat')) === '5L 達成！' && (await page.$eval('#waterStat', e => getComputedStyle(e).color)) === (await page.$eval('#waterBig', e => getComputedStyle(e).color)), 'achieved in green'); assert(/^5\.[34] L$/.test(await text('#tabWater')), 'tab sub: ' + (await text('#tabWater'))); if (mode === 'db') { await page.waitForTimeout(200); assert(rt.DB.log_daily['2026-09-16'].waterMl === 5350, 'log_daily.waterMl: ' + JSON.stringify(rt.DB.log_daily['2026-09-16'])); } await goTab('today'); const row = await text('[data-step="water"]'); assert(row.includes('達成'), 'water row: ' + row); assert((await page.$eval('[data-step="water"]', e => e.className)).includes('done'), 'done'); });
   await T(G.today, '1日合計が画面下部に固定で出る。タップで展開して脂肪の塊と週まとめへの導線（1食目を手計算で検算）', async () => {
@@ -208,42 +223,40 @@ async function run(mode) {
     await page.click('[data-shift="-1"]'); await page.waitForTimeout(150); assert(await page.$eval('#bbar', e => e.hidden), '過去の日付では固定バーを出さない');
     await page.click('[data-shift="1"]'); await page.waitForTimeout(150); assert(!(await page.$eval('#bbar', e => e.hidden)), '今日に戻すと出る');
     return '1食目 = 372.5kcal / P40.4 F20.6 C1.7 と一致。固定バーは今日だけ'; });
-  await T(G.today, '予定（未記録）の枠は薄い枠線。タップすると品目選択シートが開き、予定時刻を2時間過ぎたらオレンジで「まだ記録がありません」', async () => {
-    // 枠の時間帯: 境目は隣り合う予定時刻のまん中。1食目は2時間前から、5食目は24:00まで
-    const w = await page.evaluate(() => window.__tl.slotWindows().map(x => x.mealNo + ':' + x.from + '-' + x.to));
-    assert(w.join(',') === '1:300-525,2:525-720,3:720-900,4:900-1080,5:1080-1440', '枠の時間帯: ' + w.join(','));
-    const at = hm => page.evaluate(x => window.__tl.slotForTime(x), hm);
-    assert((await at('07:10')) === 1 && (await at('11:00')) === 2 && (await at('14:02')) === 3 && (await at('17:00')) === 4 && (await at('21:00')) === 5, '予定時刻に近い枠に入る');
-    assert((await at('02:00')) === 'snack' && (await at('04:59')) === 'snack', 'どの枠の時間帯でもない深夜は間食: ' + (await at('02:00')));
-    // 未記録の枠の見た目と操作（他のテストの記録に影響されない孤立した日付で確認）
+  await T(G.today, '今日のプランは「食べた（✓）／食べてない（○）」の2つだけ。予定時刻を過ぎてもオレンジや警告を出さず、プラン外を記録してもプランは一切変わらない（打ち消し線・変更あり・プラン比なし）', async () => {
     const backTime = curTime;
     const p2 = await newPage(); p2.setDefaultTimeout(20000);
     try {
       await p2.clock.setFixedTime(new Date('2027-09-02T23:30:00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading'));
-      await p2.click('.tabs [data-tab="today"]'); await p2.waitForSelector('[data-step="meal:1"]');
-      const cls = await p2.$eval('[data-step="meal:1"]', e => e.className);
-      assert(cls.includes('planonly') && cls.includes('overdue'), '予定を2時間過ぎた未記録の枠は planonly＋overdue: ' + cls);
-      const st = await p2.$eval('[data-step="meal:1"] .row', e => { const c = getComputedStyle(e); return { style: c.borderTopStyle, color: c.borderTopColor, bg: c.backgroundColor }; });
-      assert(st.style === 'dashed' && st.color === 'rgb(232, 145, 58)', '枠線だけ（破線）で、時刻超過はオレンジ: ' + JSON.stringify(st));
-      assert(await p2.$('[data-step="meal:1"] [data-open]'), '未記録の枠もタップできる');
-      const row = await p2.locator('[data-step="meal:1"]').textContent();
-      assert(row.includes('全卵4個・卵白150g・塩1g') && row.includes('kcal') && row.includes('まだ記録がありません') && !row.includes('…'), '中身は省略せず全部出し、1行足す: ' + row);
-      assert(!(await p2.$('[data-step="meal:1"] .chk')), '未記録の枠に ✓ ボタンは出さない（品目選択シートの「全部食べた」で記録する）');
-      // タップすると品目選択シートが開き、品目は最初から全部チェックされている
-      await p2.click('[data-step="meal:1"] .row'); await p2.waitForSelector('#mpAll');
-      const cbs = await p2.$$eval('.pick .cb', els => els.map(e => e.className));
-      assert(cbs.length === 3 && cbs.every(c => c.includes('on')), '品目が最初から全部チェックされた状態で開く: ' + cbs.join(','));
-      const names = await p2.$$eval('.pick .pn', els => els.map(e => e.textContent.trim()));
-      assert(names.join('・') === '全卵・卵白・ヒマラヤ塩' && !names.join('').includes('…'), '品目名は省略しない: ' + names.join('・'));
-      await p2.click('#mpCancel'); await p2.waitForSelector('#sheet', { state: 'hidden' });
-      // 記録した瞬間の時刻が自動で入る（入力させない）
-      await p2.click('#manualCalBtn'); await p2.waitForSelector('#mcSave');
-      assert(!(await p2.$('#mcTime')) && !(await p2.$('input[type="time"]')), '記録画面に時刻の入力欄は無い');
-      await p2.fill('#mcK', '300'); await p2.click('#mcSave'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(300);
-      assert(await p2.$eval('[data-step="meal:5"]', e => !e.className.includes('planonly')), '23:30 は5食目の時間帯（18:00〜24:00）なので空いている5食目に紐づく');
-      assert((await p2.locator('[data-step="meal:5"] .tm b').textContent()) === '23:30', '記録した時刻が自動で入る: ' + (await p2.locator('[data-step="meal:5"] .tm').textContent()));
-      assert((await p2.locator('[data-step="meal:5"] .slotchip').textContent()).includes('5食目'), '紐づけ先のチップが出る');
-      return '枠の時間帯（まん中で分割）・深夜は間食・空き枠には自動で紐づく・未記録の枠は破線＋タップで品目選択・2時間超過でオレンジ＋「まだ記録がありません」・時刻は自動';
+      await p2.click('.tabs [data-tab="today"]'); await p2.waitForSelector('[data-planrow="1"]');
+      const row = await p2.locator('[data-planrow="1"]').textContent();
+      assert(row.includes('全卵4個（約200g）') && row.includes('kcal') && !row.includes('…'), 'プランの品目は省略せず全部出す: ' + row);
+      assert(!row.includes('まだ記録がありません') && !row.includes('変更あり') && !row.includes('プラン比'), '予定時刻を過ぎても警告は出さない: ' + row);
+      const border = await p2.$eval('[data-planrow="1"]', e => getComputedStyle(e).borderBottomColor);
+      assert(!/232, 145, 58/.test(border), 'オレンジにしない: ' + border);
+      assert(!(await p2.$eval('[data-planchk="1"]', e => e.className)).includes('on'), '未記録は ○');
+      // プラン外のものを記録してもプランは変わらない
+      await p2.click('#addMealBtn'); await p2.waitForSelector('#recManual'); await p2.click('#recManual'); await p2.waitForSelector('#mcSave');
+      assert(!(await p2.$('#mcTime')) && !(await p2.$('input[type="time"]')), '記録画面に時刻の入力欄は無い（記録した瞬間の時刻が入る）');
+      await p2.fill('#mcName', 'スタバ 抹茶ラテ'); await p2.fill('#mcK', '220'); await p2.click('#mcSave');
+      await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(300);
+      const rows = await p2.$$eval('[data-planchk]', els => els.map(e => e.className.includes('on') ? '✓' : '○'));
+      assert(rows.join('') === '○○○○○', 'プラン外を記録してもプランは全部 ○ のまま: ' + rows.join(''));
+      const plist = await p2.locator('.plist').textContent();
+      assert(!/打ち消し|変更あり|プラン比/.test(plist) && !(await p2.$('.plist s')), 'プランに打ち消し線も差分も付けない');
+      const e1 = await p2.locator('.elist').textContent();
+      assert(e1.includes('スタバ 抹茶ラテ') && e1.includes('23:30') && !/食目/.test(e1), '食べたものは時刻と品目名だけ（番号は付けない）: ' + e1);
+      assert(!(await p2.$('[data-relink]')) && !(await p2.$('.slotchip')), '紐づけチップは無い');
+      // プランの ○ をタップ → ✓ になり、食べたものに1件増える
+      await p2.click('[data-planchk="2"]'); await p2.waitForTimeout(400);
+      assert(await planEaten(2, p2), '○ をタップで ✓');
+      const e2 = await p2.locator('.elist').textContent();
+      assert(e2.includes('2食目（プラン）') && e2.includes('白米200g'), 'プランから記録すると「（プラン）」付きで1件増える: ' + e2);
+      // ✓ をタップで取り消し → 記録も消える
+      await p2.click('[data-planchk="2"]'); await p2.waitForTimeout(400);
+      assert(!(await planEaten(2, p2)), '✓ をタップで ○ に戻る');
+      assert(!(await p2.locator('.elist').textContent()).includes('2食目（プラン）'), '追加した記録も消える');
+      return 'プランは食べた／食べてないの2つだけ。プラン外の記録はプランに影響しない';
     } finally { await setTime(backTime); await p2.close(); rt.op('del', { coll: 'log_meals', id: '2027-09-02' }); rt.op('del', { coll: 'log_daily', id: '2027-09-02' }); }
   });
   await T(G.today, '今日以外の日付では「いま」カードも記録ボタンも出さず、✓ も押せない。過去の記録は長押し →「修正する」で開く', async () => {
@@ -280,7 +293,7 @@ async function run(mode) {
   await shot('01-home');
 
   // ============ 食事シート ============
-  await T(G.meal, 'プランのカードをタップ →「全部食べた」で1タップ記録。✓ が付いて合計に反映', async () => { await logIntoSlot(2); assert((await page.$eval('[data-step="meal:2"]', e => e.className)).includes('done'), 'done'); assert((await dayTotal()) === 925, 'total 372.5+552.8=925: ' + (await dayTotal())); });
+  await T(G.meal, 'プランのカードをタップ →「全部食べた」で1タップ記録。✓ が付いて合計に反映し、「食べたもの」に1件増える', async () => { await logIntoSlot(2); assert(await planEaten(2), 'プラン2食目が ✓'); assert((await eatenRowOf(2)).includes('白米200g'), '食べたものに出る: ' + (await eatenRowOf(2))); assert((await dayTotal()) === 925, 'total 372.5+552.8=925: ' + (await dayTotal())); });
   await T(G.meal, 'ソフト削除・↩戻す・元に戻すトースト・1つ戻す・プランに戻す', async () => {
     await openMealSlot(2); await page.waitForSelector('#mChange'); await page.click('#mChange'); await page.click('[data-q]:has-text("サーモン")'); await page.waitForSelector('#pendOk');
     assert((await text('.pending')).includes('サーモン150g を追加'), 'pending add'); await page.click('#pendOk'); await page.waitForSelector('.toast.act'); assert((await text('#toast')).includes('サーモン150g を追加しました'), 'toast'); await page.waitForSelector('[data-del]');
@@ -295,39 +308,59 @@ async function run(mode) {
     if (mode === 'mock') { assert((await text('#freeBtn')) === '記録', 'no AI → 記録'); assert(await has('#manualBtn'), 'manual link'); await page.fill('#freeTxt', 'サーモン150 米150'); await page.click('#freeBtn'); await page.waitForSelector('.toast.act'); assert((await text('#toast')).includes('サーモン150g を追加、白米150g（炊飯後基準） を追加'), 'local match: ' + (await text('#toast'))); await closeSheet(); return 'sample null → 手入力／ローカル一致のみ'; }
     assert((await text('#freeBtn')) === 'AI 計算', 'AI button'); await page.fill('#freeTxt', 'サーモン150 納豆45'); await page.click('#freeBtn'); await page.waitForSelector('.toast.act'); assert((await text('#toast')).includes('納豆45g を追加'), 'ai added: ' + (await text('#toast'))); await page.waitForTimeout(200); assert(rt.DB.foods.natto && rt.DB.foods.natto.source === 'ai', 'foods natto source=ai'); const n1 = rt.sampleCalls.length;
     await page.fill('#freeTxt', '納豆45'); await page.click('#freeBtn'); await page.waitForSelector('.toast.act'); await page.waitForTimeout(200); assert(rt.sampleCalls.length === n1, 'reuse without AI call'); await closeSheet(); return 'AI 呼び出し ' + rt.sampleCalls.length + ' 回（2 回目はローカル一致で 0 回）'; });
-  await T(G.meal, '4食目の代替案（白米150・鶏100・全卵1）を選べる', async () => { await openMealSlot(4); await page.waitForSelector('#mAlt'); assert((await text('#mAlt')).includes('白米150g・鶏胸肉100g・全卵1個'), 'alt label'); await page.click('#mAlt'); await page.waitForSelector('#sheet', { state: 'hidden' }); assert((await text('[data-step="meal:4"]')).includes('代替案で記録'), 'alt logged'); });
+  await T(G.meal, '4食目の代替案（白米150・鶏100・全卵1）を選べる', async () => { await openMealSlot(4); await page.waitForSelector('#mAlt'); assert((await text('#mAlt')).includes('白米150g・鶏胸肉100g・全卵1個'), 'alt label'); await page.click('#mAlt'); await page.waitForSelector('#sheet', { state: 'hidden' }); assert(await planEaten(4), 'プラン4食目が ✓'); assert((await eatenRowOf(4)).includes('白米150g'), '代替案の内容が食べたものに出る: ' + (await eatenRowOf(4))); });
   await T(G.meal, '米の基準（生/炊飯後）表示が settings に連動（記録済みは食べたときの基準のまま、未記録の予定は設定に追従）', async () => {
-    assert((await text('[data-step="meal:3"]')).includes('炊飯後基準'), 'cooked default');
+    assert((await text('[data-planrow="3"]')).includes('炊飯後基準'), 'cooked default');
     await goTab('summary'); await page.click('#riceBtn'); await page.waitForTimeout(150); await goTab('today');
-    assert((await text('[data-step="meal:3"]')).includes('炊飯後基準'), '記録済みの食事は食べたときの基準のまま: ' + (await text('[data-step="meal:3"]')));
-    await page.click('[data-shift="1"]'); await page.waitForTimeout(150);
-    assert((await text('[data-step="meal:2"]')).includes('生米基準'), '未記録の予定は設定に追従: ' + (await text('[data-step="meal:2"]')));
-    await page.click('[data-shift="-1"]'); await page.waitForTimeout(150);
+    assert((await eatenRowOf(2)).includes('炊飯後基準'), '記録済みの食事は食べたときの基準のまま: ' + (await eatenRowOf(2)));
+    assert((await text('[data-planrow="3"]')).includes('生米基準'), '未記録のプランは設定に追従: ' + (await text('[data-planrow="3"]')));
     assert((await totalsPanel()).includes('生米基準'), 'totals note'); await page.click('#bbTot');
     await goTab('summary'); await page.click('#riceBtn'); await page.waitForTimeout(150); await goTab('today'); });
-  await T(G.meal, '状態4種の表示: 未記録○ / プラン通り緑✓ / 変更あり黄✓ / スキップ赤−', async () => { await openMealSlot(3); await page.waitForSelector('#mChange'); await page.click('#mChange'); await page.click('[data-skip]'); await pickReason('外食'); await page.waitForSelector('#pendOk'); assert((await text('.pending')).includes('外食'), 'pending shows reason'); await page.click('#pendOk'); await page.waitForTimeout(150); await closeSheet();
-    let m = await mark('meal:3'); assert((await text('[data-step="meal:3"]')).includes('スキップ（外食）'), 'row shows skip reason'); assert(m.startsWith('skip|chk skip|−'), 'skip mark: ' + m); assert((await text('[data-step="meal:3"] .lbl-sub')) === 'スキップ', 'skip label'); assert(!(await page.$('[data-step="meal:3"] .chk.on')), 'no green check on skip');
-    await openMealSlot(2); await page.waitForSelector('#mChange'); m = await mark('meal:2'); await closeSheet(); assert(m.startsWith('ok|chk on|✓'), 'plan mark: ' + m);
-    await openMealSlot(4); await page.waitForSelector('#mChange'); await page.click('#mChange'); await page.click('[data-q]:has-text("サーモン")'); await page.waitForSelector('#pendOk'); await page.click('#pendOk'); await page.waitForTimeout(150); await closeSheet(); m = await mark('meal:4'); assert(m.startsWith('sub|chk sub|✓'), 'sub mark: ' + m); assert((await text('[data-step="meal:4"] .lbl-sub')) === '変更あり', 'sub label');
-    // 5食目は前のテストで変更ありになっているので、✓再タップで取り消して未記録○を確認
-    await page.click('[data-chk="meal:5"]'); await page.waitForFunction(() => document.querySelector('[data-step="meal:5"]').dataset.mark === ''); m = await mark('meal:5'); assert(m.startsWith('||'), 'unlogged mark: ' + m); });
+  await T(G.meal, 'プランの状態は「食べた（✓）／食べてない（○）」の2つだけ。スキップ・変更・プラン比のバッジは出さない', async () => {
+    await openMealSlot(3); await page.waitForSelector('#mChange'); await page.click('#mChange'); await page.click('[data-skip]'); await pickReason('外食'); await page.waitForSelector('#pendOk'); assert((await text('.pending')).includes('外食'), 'pending shows reason'); await page.click('#pendOk'); await page.waitForTimeout(200); await closeSheet();
+    assert(!(await planEaten(3)), '何も食べていない記録はプランを ✓ にしない');
+    assert(!(await page.$('.plist .lbl-sub')) && !/変更あり|プラン比|スキップ/.test(await page.locator('.plist').textContent()), 'プランにバッジは出さない');
+    assert(await planEaten(2), 'プラン通りに記録した2食目は ✓');
+    await openMealSlot(4); await page.waitForSelector('#mChange'); await page.click('#mChange'); await page.click('[data-q]:has-text("サーモン")'); await page.waitForSelector('#pendOk'); await page.click('#pendOk'); await page.waitForTimeout(200); await closeSheet();
+    assert(await planEaten(4), '品目を変えて記録してもプランは ✓ が付くだけ');
+    assert((await eatenRowOf(4)).includes('サーモン'), '変えた内容は食べたものの方に出る: ' + (await eatenRowOf(4)));
+    if (await planEaten(5)) { await page.click('[data-planchk="5"]'); await page.waitForTimeout(300); }
+    assert(!(await planEaten(5)), '未記録は ○');
+  });
   await T(G.meal, 'スキップ→取り消し→プラン通り→取り消し→変更→取り消し: 毎回 未記録に戻り合計が0', async () => {
-    // 5食目で往復。合計は 5食目分だけ見る（他の食事は記録済みなので差分で確認）
     const total = dayTotal;
     const base = await total();
-    const cancelViaSheet = async () => { await page.click('[data-open="meal:5"]'); await page.waitForSelector('#mCancel'); await page.click('#mCancel'); await dlgOk(); await page.waitForSelector('#sheet', { state: 'hidden' }); await page.waitForTimeout(150); assert((await mark('meal:5')).startsWith('||'), 'back to unlogged'); assert((await total()) === base, 'total back to base ' + base + ': ' + (await total())); if (mode === 'db') assert(!(rt.DB.log_meals['2026-09-16'].meals || {})[5], 'db doc removed'); };
-    await openMealSlot(5); await page.waitForSelector('#mChange'); await page.click('#mChange'); await page.click('[data-skip]'); await pickReason('時間なし'); await page.waitForSelector('#pendOk'); await page.click('#pendOk'); await page.waitForTimeout(150); await closeSheet(); assert((await mark('meal:5')).startsWith('skip|'), 'skip'); await cancelViaSheet();
-    await logIntoSlot(5); await page.waitForFunction(() => document.querySelector('[data-step="meal:5"]').dataset.mark === 'ok'); assert((await total()) > base, 'plan adds kcal'); await cancelViaSheet();
-    await openMealSlot(5); await page.waitForSelector('#mChange'); await page.click('#mChange'); await page.click('[data-half]'); await page.waitForSelector('#pendOk'); await page.click('#pendOk'); await page.waitForTimeout(150); await closeSheet(); assert((await mark('meal:5')).startsWith('sub|'), 'sub'); 
-    // 今日画面の✓再タップでも取り消し（トースト＋元に戻す）
-    await page.click('[data-chk="meal:5"]'); await page.waitForFunction(() => document.querySelector('[data-step="meal:5"]').dataset.mark === ''); assert((await text('#toast')).includes('5食目の記録を取り消しました'), 'toast'); assert((await total()) === base, 'total base after chk cancel'); await page.click('#toast button'); await page.waitForFunction(() => document.querySelector('[data-step="meal:5"]').dataset.mark === 'sub'); assert((await total()) > base, 'undo restored'); await page.click('[data-chk="meal:5"]'); await page.waitForFunction(() => document.querySelector('[data-step="meal:5"]').dataset.mark === ''); return 'base=' + base + ' kcal に毎回戻る'; });
-  await T(G.today, '実績時刻: 記録済みは太字＋「予定」、未記録は「予定」薄字、60分以上ズレは黄色', async () => { const w = await page.$eval('[data-step="weight"] .tm', e => ({ b: e.querySelector('b') && e.querySelector('b').textContent, s: e.querySelector('small') && e.querySelector('small').textContent, late: !!e.querySelector('b.late') })); assert(w.b === '06:50' && w.s === '予定 06:40' && !w.late, 'weight tm ' + JSON.stringify(w));
-    { const m2a = await page.$eval('[data-step="meal:2"] .tm', e => ({ b: e.querySelector('b') && e.querySelector('b').textContent, s: e.querySelector('small') && e.querySelector('small').textContent, late: !!e.querySelector('b.late') })); assert(m2a.b === '10:30' && m2a.s === '予定 10:30' && !m2a.late, '記録した時刻が予定どおりなら黄色にしない: ' + JSON.stringify(m2a)); }
-    // 記録の時刻はタップで直せる。予定から 60 分以上ズレたら黄色
-    await page.click('[data-time="meal:2"]'); await page.waitForSelector('#dlgTime'); await page.fill('#dlgTime', '07:36'); await page.click('#dlgOk'); await page.waitForSelector('#dlg', { state: 'hidden' }); await page.waitForTimeout(200);
-    const m2 = await page.$eval('[data-step="meal:2"] .tm', e => ({ b: e.querySelector('b') && e.querySelector('b').textContent, late: !!e.querySelector('b.late') })); assert(m2.b === '07:36' && m2.late, 'meal2 logged 07:36 vs plan 10:30 → late: ' + JSON.stringify(m2));
-    const un = await text('[data-step="meal:5"] .tm'); assert(un.includes('19:30') && un.includes('予定') && !(await page.$('[data-step="meal:5"] .tm b')), 'unlogged shows planned: ' + un); });
-  await T(G.today, '記録済み時刻をタップして手修正できる（時刻ピッカー）', async () => { await page.click('[data-time="meal:2"]'); await page.waitForSelector('#dlgTime'); await page.fill('#dlgTime', '10:40'); await page.click('#dlgOk'); await page.waitForSelector('#dlg', { state: 'hidden' }); await page.waitForTimeout(150); const m2 = await page.$eval('[data-step="meal:2"] .tm', e => ({ b: e.querySelector('b').textContent, late: !!e.querySelector('b.late') })); assert(m2.b === '10:40' && !m2.late, 'edited: ' + JSON.stringify(m2)); if (mode === 'db') { await page.waitForTimeout(200); assert(/T10:40/.test(rt.DB.log_meals['2026-09-16'].meals[2].loggedAt), 'loggedAt saved ' + rt.DB.log_meals['2026-09-16'].meals[2].loggedAt); } await openMealSlot(2); await page.waitForSelector('#mTime'); assert((await text('.sheet-body h3')).includes('予定 10:30') && (await text('.sheet-body h3')).includes('記録 10:40'), 'sheet header: ' + (await text('.sheet-body h3'))); await closeSheet(); });
+    const cancelViaChk = async () => { await page.click('[data-planchk="5"]'); await page.waitForTimeout(350); assert(!(await planEaten(5)), 'back to unlogged'); assert((await total()) === base, 'total back to base ' + base + ': ' + (await total())); };
+    await logIntoSlot(5); assert(await planEaten(5), 'プラン通りで ✓'); assert((await total()) > base, 'plan adds kcal'); await cancelViaChk();
+    await logIntoSlot(5); await openMealSlot(5); await page.waitForSelector('#mChange'); await page.click('#mChange'); await page.click('[data-half]'); await page.waitForSelector('#pendOk'); await page.click('#pendOk'); await page.waitForTimeout(200); await closeSheet();
+    assert(await planEaten(5), '半分にしてもプランは ✓ のまま');
+    await page.click('[data-planchk="5"]'); await page.waitForTimeout(350);
+    assert((await text('#toast')).includes('取り消しました'), 'toast'); assert((await total()) === base, 'total base after chk cancel');
+    await page.click('#toast button'); await page.waitForTimeout(400); assert(await planEaten(5), 'undo restored'); assert((await total()) > base, 'undo restored total');
+    await page.click('[data-planchk="5"]'); await page.waitForTimeout(350);
+    if (mode === 'db') assert(!(rt.DB.log_meals['2026-09-16'].meals || {})[5], 'db doc removed');
+    return 'base=' + base + ' kcal に毎回戻る';
+  });
+  await T(G.today, '実績時刻: ルーティンは記録済みが太字＋「予定」、60分以上ズレたら黄色。食べたものは時刻をタップで直せて並び順も変わる', async () => {
+    const w = await page.$eval('[data-step="weight"] .tm', e => ({ b: e.querySelector('b') && e.querySelector('b').textContent, s: e.querySelector('small') && e.querySelector('small').textContent, late: !!e.querySelector('b.late') }));
+    assert(w.b === '06:50' && w.s === '予定 06:40' && !w.late, 'weight tm ' + JSON.stringify(w));
+    const times = await page.$$eval('.elist .etime', els => els.map(e => e.textContent));
+    assert(times.length >= 2 && times.slice().sort().join(',') === times.join(','), '食べたものは時刻の順に並ぶ: ' + times.join(','));
+    // 2食目の記録の時刻を早い時刻に直すと、並び順も変わる
+    await page.evaluate(() => { const rows = [...document.querySelectorAll('.elist .erow')]; const hit = rows.find(r => r.querySelector('.nm').textContent.indexOf('2食目（プラン）') === 0); hit.querySelector('.etime').click(); });
+    await page.waitForSelector('#dlgTime'); await page.fill('#dlgTime', '07:36'); await page.click('#dlgOk'); await page.waitForSelector('#dlg', { state: 'hidden' }); await page.waitForTimeout(250);
+    const after = await page.$$eval('.elist .erow', els => els.map(e => e.querySelector('.etime').textContent + ' ' + e.querySelector('.nm').textContent));
+    const idx2 = after.findIndex(x => x.includes('2食目'));
+    assert(after[idx2].indexOf('07:36') === 0, '直した時刻になる: ' + after.join(' / '));
+    const ts = after.map(x => x.slice(0, 5)); assert(ts.slice().sort().join(',') === ts.join(','), '並び順も時刻順に変わる: ' + after.join(' / '));
+    if (mode === 'db') { await page.waitForTimeout(200); assert(/T07:36/.test(rt.DB.log_meals['2026-09-16'].meals[2].loggedAt), 'loggedAt saved: ' + rt.DB.log_meals['2026-09-16'].meals[2].loggedAt); }
+  });
+  await T(G.today, '記録済み時刻をタップして手修正できる（時刻ピッカー）', async () => {
+    await page.evaluate(() => { const rows = [...document.querySelectorAll('.elist .erow')]; const hit = rows.find(r => r.querySelector('.nm').textContent.indexOf('2食目（プラン）') === 0); hit.querySelector('.etime').click(); });
+    await page.waitForSelector('#dlgTime'); await page.fill('#dlgTime', '10:40'); await page.click('#dlgOk'); await page.waitForSelector('#dlg', { state: 'hidden' }); await page.waitForTimeout(250);
+    assert((await eatenRowOf(2)).indexOf('10:40') >= 0, 'edited: ' + (await eatenRowOf(2)));
+    if (mode === 'db') { await page.waitForTimeout(200); assert(/T10:40/.test(rt.DB.log_meals['2026-09-16'].meals[2].loggedAt), 'loggedAt saved'); }
+  });
   await T(G.today, '「いま」カード右上は現在時刻（1分ごと更新）、予定時刻は別表示', async () => { assert((await text('#nowClock')) === '07:36', 'clock ' + (await text('#nowClock'))); await setTime('2026-09-16T07:41:00+08:00'); await page.waitForFunction(() => document.querySelector('#nowClock').textContent === '07:41', null, { timeout: 70000 }); assert((await text('#now .k')).includes('予定'), 'planned shown separately'); });
   await shot('02-meal');
   // 5食目は直前のテストで毎回「未記録」に戻して終わっている。共有 page（9/16・体重記録済み）上で
@@ -339,9 +372,9 @@ async function run(mode) {
     try {
       await p2.click('.tabs [data-tab="today"]');
       await p2.clock.setFixedTime(new Date(D + 'T10:35:00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading'));
-      await p2.click('.tabs [data-tab="today"]'); await p2.waitForSelector('[data-step="meal:2"]');
+      await p2.click('.tabs [data-tab="today"]'); await p2.waitForSelector('[data-planrow="2"]');
       // 2食目のカードをタップ → 品目選択シート
-      await p2.click('[data-step="meal:2"] .row'); await p2.waitForSelector('#mpSave');
+      await p2.click('[data-planrow="2"]'); await p2.waitForSelector('#mpSave');
       const rowTxt = async () => (await p2.locator('.picks').textContent());
       const names = await p2.$$eval('.pick .pn', els => els.map(e => e.textContent.trim()));
       assert(names.length === 5 && names[0] === '白米（炊飯後基準）' && names[1].startsWith('鶏胸肉') && names[4].startsWith('インゲン') && !names.join('').includes('…'), '品目名を省略せず全部出す: ' + names.join('・'));
@@ -383,23 +416,24 @@ async function run(mode) {
       await p2.click('#afBack'); await p2.waitForSelector('#mpSave');
       // 記録する → 抜いた品目は打ち消し線、プランとの差
       await p2.click('#mpSave'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(300);
-      const html = await p2.$eval('[data-step="meal:2"] .l2', e => e.innerHTML);
-      assert(/<s class="mute">インゲン80g<\/s>/.test(html), '抜いた品目は打ち消し線で残る: ' + html);
+      const html = await p2.evaluate(() => { const rows = [...document.querySelectorAll('.elist .erow')]; const hit = rows.find(r => r.querySelector('.nm').textContent.indexOf('2食目（プラン）') === 0); return hit ? hit.innerText : ''; });
+      assert(!html.includes('インゲン'), '抜いた品目は「食べたもの」に出さない: ' + html);
       assert(html.includes('鶏胸肉 皮なし50g') && html.includes('ナッツ40g') && html.includes('コンビニのサンドイッチ150g'), '変えた分量と足した品目を出す: ' + html);
-      const card = await p2.locator('[data-step="meal:2"]').textContent();
-      assert(card.includes('変更して記録') && card.includes('943kcal') && card.includes('（プラン 553kcal ・ +390）'), 'プランとの kcal 差を出す: ' + card);
+      assert(!(await p2.$('.plist s')) && (await p2.locator('[data-planrow="2"]').textContent()).includes('インゲン'), 'プランは打ち消し線を付けず、元のまま出す');
+      const card = html;
+      assert(card.includes('943kcal') && !card.includes('プラン 553kcal') && !card.includes('変更して記録'), '1食ごとのプラン比は出さない: ' + card);
       // 個・スクープで数える品目
-      await p2.click('[data-step="meal:1"] .row'); await p2.waitForSelector('#mpSave');
+      await p2.click('[data-planrow="1"]'); await p2.waitForSelector('#mpSave');
       assert((await p2.$eval('.pick:nth-child(1) .pg', e => e.textContent.trim())) === '個' && (await p2.$eval('.pick:nth-child(1) [data-pg]', e => e.value)) === '4', '全卵は「個」で入力（200g = 4個）: ' + (await p2.$eval('.pick:nth-child(1) .pg', e => e.textContent)));
       await p2.click('#mpCancel'); await p2.waitForSelector('#sheet', { state: 'hidden' });
-      await p2.click('[data-step="meal:4"] .row'); await p2.waitForSelector('#mpSave');
+      await p2.click('[data-planrow="4"]'); await p2.waitForSelector('#mpSave');
       const p4 = await p2.$$eval('.pick', els => els.map(e => e.querySelector('.pn').textContent.trim() + '=' + e.querySelector('[data-pg]').value + e.querySelector('.pg .u').textContent));
       assert(p4.some(x => x.includes('ホエイプロテイン=1スクープ')), 'ホエイは「スクープ」で入力（30g = 1スクープ）: ' + p4.join(' / '));
       await p2.click('#mpCancel'); await p2.waitForSelector('#sheet', { state: 'hidden' });
       return '品目ごとのチェックと分量・即時再計算・長押しの倍率・個/スクープ入力・食品マスタからの追加と新規登録・打ち消し線とプラン差、すべて確認';
     } finally { await setTime(backTime); await p2.close(); rt.op('del', { coll: 'log_meals', id: D }); rt.op('del', { coll: 'log_daily', id: D }); }
   });
-  await T(G.meal, '手で入力: どの食事かは聞かず時刻から自動で紐づく／埋まっている枠なら間食／カロリー必須・品目名は任意／タンパク質などから計算／合計と脂肪の塊に反映→取り消しで消える', async () => {
+  await T(G.meal, 'カロリーを直接入力: どの食事かは聞かず「食べたもの」に1件増えるだけでプランは変わらない／カロリー必須・品目名は任意／タンパク質などから計算／合計と脂肪の塊に反映→取り消しで消える', async () => {
     const total = dayTotal;
     const base = await total();
     // 記録済みの枠のシートにも同じ入口がある（存在チェックのみ）
@@ -407,7 +441,7 @@ async function run(mode) {
     assert(await page.$('#mcBtn'), '食事シートの「変更・追加」欄に「カロリーを手で入力」の入口がある');
     await closeSheet();
     // いまは 07:36（1食目の時間帯）。1食目は記録済みなので間食として残る
-    await page.click('#manualCalBtn'); await page.waitForSelector('#mcSave');
+    await openRecordWay('recManual'); await page.waitForSelector('#mcSave');
     assert(!(await page.$('#mcMeal')), '記録画面に「どの食事か」を選ぶ項目は無い');
     assert(!(await page.$('[data-planchip]')), '「プランから入れる」チップは無い（プランはカードから記録する）');
     assert((await text('#sheet h3')) === 'プランにないものを記録', 'タイトル: ' + (await text('#sheet h3')));
@@ -417,12 +451,12 @@ async function run(mode) {
     assert((await text('#toast')).includes('カロリーを入力'), 'カロリーが空だと記録できない: ' + (await text('#toast')));
     await page.fill('#mcK', '450'); await page.click('#mcSave'); await page.waitForSelector('#sheet', { state: 'hidden' });
     await page.waitForFunction(t => { const e = document.querySelector('#bbar .k1'); return e && Number(e.textContent.match(/^([\d,]+)/)[1].replace(/,/g, '')) === t; }, base + 450, { timeout: 20000 });
-    const snack1 = (await page.$$eval('.step', els => els.map(e => e.dataset.step))).filter(x => /^meal:snack/.test(x)).pop();
-    assert(snack1, '記録済みの枠の時間帯に入れた記録は間食になる');
-    assert((await text('[data-step="' + snack1 + '"]')).includes('✏️'), '手入力のラベル（✏️）が今日画面に出る');
+    const elist = await page.locator('.elist').textContent();
+    assert(elist.includes('✏️'), '手入力のラベル（✏️）が「食べたもの」に出る: ' + elist);
+    assert(await page.evaluate(() => [...document.querySelectorAll('.elist .erow')].some(r => !/食目/.test(r.querySelector('.nm').textContent) && /✏️/.test(r.innerText))), 'プラン外の記録に番号は付かず、手入力のラベルが付く');
     assert((await total()) === base + 450, 'カロリーだけで記録できる: +450: ' + (await total()) + ' (base ' + base + ')');
     // タンパク質・脂質・炭水化物から計算（2件目）
-    await page.click('#manualCalBtn'); await page.waitForSelector('#mcSave');
+    await openRecordWay('recManual'); await page.waitForSelector('#mcSave');
     await page.fill('#mcName', 'コンビニ弁当'); await page.fill('#mcP', '20'); await page.fill('#mcF', '15'); await page.fill('#mcC', '60'); await page.click('#mcCalc');
     assert((await page.$eval('#mcK', e => e.value)) === '455', 'PFCから計算(20×4+15×9+60×4=455): ' + (await page.$eval('#mcK', e => e.value)));
     await page.click('#mcSave'); await page.waitForSelector('#sheet', { state: 'hidden' });
@@ -432,21 +466,17 @@ async function run(mode) {
     assert(bal && Math.round(bal.intake) === (await total()), '脂肪の塊の計算(dayCalorieBalance)にも反映: intake=' + (bal && bal.intake) + ' / 合計=' + (await total()));
     const matched = await page.evaluate(() => { const f = window.__tl.matchFood('コンビニ弁当'); return f && { nameJa: f.nameJa, source: f.source, kcal: f.kcal, p: f.p }; });
     assert(matched && matched.source === 'manual' && matched.kcal === 455 && matched.p === 20, '名前を付けた食品が foods に入り、次回検索で呼び出せる: ' + JSON.stringify(matched));
-    // 紐づけ先を 5食目に付け替えても、時刻順の位置は変わらない
-    const snacks = (await page.$$eval('.step', els => els.map(e => e.dataset.step))).filter(x => /^meal:snack/.test(x));
-    const timeBefore = await text('[data-step="' + snacks[0] + '"] .tm');
-    await page.click('[data-relink="' + snacks[0] + '"]'); await page.waitForSelector('[data-slot="5"]'); await page.click('[data-slot="5"]'); await page.waitForTimeout(300);
-    const ids2 = await page.$$eval('.step', els => els.map(e => e.dataset.step));
-    // 位置は時刻順のまま（5食目の予定 19:30 へは動かず、記録した時刻のところに残る）
-    assert(ids2.indexOf('meal:5') > ids2.indexOf('meal:1') && ids2.indexOf('meal:5') < ids2.indexOf('meal:2'), '紐づけを変えても時刻順の位置は変わらない（5食目の予定 19:30 へは動かない）: ' + ids2.join(','));
-    assert((await text('[data-step="meal:5"] .tm')).split('予定')[0] === timeBefore.split('予定')[0], '記録した時刻も変わらない: ' + timeBefore + ' → ' + (await text('[data-step="meal:5"] .tm')));
-    assert((await text('[data-step="meal:5"] .slotchip')).includes('5食目'), 'チップが 5食目 になる');
-    if (mode === 'db') { await page.waitForTimeout(250); const rec = rt.DB.log_meals['2026-09-16'].meals[5]; assert(rec && rec.linkedSlot === 5 && rec.linkOverride === true, '手で変えた紐づけは linkOverride で覚える: ' + JSON.stringify(rec && { linkedSlot: rec.linkedSlot, linkOverride: rec.linkOverride })); }
-    // 後片付け: 5食目と残りの間食を取り消して合計を base に戻す
-    await page.click('[data-chk="meal:5"]'); await page.waitForFunction(() => document.querySelector('[data-step="meal:5"]').dataset.mark === ''); await page.waitForTimeout(150);
-    for (const k of (await page.$$eval('.step', els => els.map(e => e.dataset.step))).filter(x => /^meal:snack/.test(x))) { await page.click('[data-chk="' + k + '"]'); await page.waitForTimeout(250); }
+    // プラン外の記録はプランに一切影響しない
+    const marks = await page.$$eval('[data-planchk]', els => els.map(e => e.className.includes('on') ? '✓' : '○'));
+    assert(marks.filter(x => x === '○').length >= 1 && !(await page.$('.plist s')), 'プラン外を2件記録してもプランは変わらない: ' + marks.join(''));
+    assert(!(await page.$('[data-relink]')) && !(await page.$('.slotchip')), '紐づけチップは無い');
+    // 後片付け: プラン外の記録を消して合計を base に戻す
+    for (const key of await page.$$eval('.elist .erow', els => els.filter(r => !/食目/.test(r.querySelector('.nm').textContent)).map(r => r.dataset.erow))) {
+      await page.evaluate(k => { const r = document.querySelector('.elist [data-erow="' + k + '"]'); if (r) r.click(); }, key);
+      await page.waitForSelector('#mCancel'); await page.click('#mCancel'); await dlgOk(); await page.waitForSelector('#sheet', { state: 'hidden' }); await page.waitForTimeout(200);
+    }
     assert((await total()) === base, '後片付け: 合計を base に戻す: ' + (await total()) + ' vs ' + base);
-    return 'どの食事かを聞かずに記録 → 時刻から自動で紐づけ（埋まっていれば間食）・カロリー必須・PFCから計算・紐づけ変更で位置は不変・linkOverride を確認';
+    return 'どの食事かを聞かず、プランに触れずに「食べたもの」へ1件追加・カロリー必須・PFCから計算';
   });
 
   // ============ 筋トレ ============
@@ -652,9 +682,8 @@ async function run(mode) {
     try {
       // 新方式では枠をタップして埋められないので、1食目の時間帯に合わせて記録 → プラン通りにしてから開く
       await p2.clock.setFixedTime(new Date(D + 'T07:00:00+08:00')); await p2.click('.tabs [data-tab="workout"]'); await p2.click('.tabs [data-tab="today"]');
-      await p2.click('#manualCalBtn'); await p2.waitForSelector('#mcSave'); await p2.fill('#mcK', '1'); await p2.click('#mcSave'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
-      await p2.click('[data-open="meal:1"]'); await p2.waitForSelector('#mPlan'); await p2.click('#mPlan'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
-      await p2.click('[data-open="meal:1"]'); await p2.waitForSelector('#mChange'); await p2.click('#mChange'); await p2.waitForSelector('[data-q]');
+      await p2.click('[data-planrow="1"]'); await p2.waitForSelector('#mpAll'); await p2.click('#mpAll'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
+      await openEatenRow(p2, '1食目（プラン）'); await p2.waitForSelector('#mChange'); await p2.click('#mChange'); await p2.waitForSelector('[data-q]');
       const chips = await p2.$$eval('[data-q]', els => els.map(e => ({ idx: e.dataset.q, txt: e.textContent })));
       const findIdx = label => { const c = chips.find(x => x.txt === label); assert(c, 'チップが無い: ' + label + ' / 実際: ' + JSON.stringify(chips.map(x => x.txt))); return c.idx; };
       const iSelecta = findIdx('Selecta Adult 150ml'), iSoya = findIdx('Soya Hoops 80g'), iCombo = findIdx('Selecta 150ml + Soya Hoops 80g');
@@ -691,9 +720,8 @@ async function run(mode) {
     try {
       // 新方式では枠をタップして埋められないので、1食目の時間帯に合わせて記録 → プラン通りにしてから開く
       await p2.clock.setFixedTime(new Date(D + 'T07:00:00+08:00')); await p2.click('.tabs [data-tab="workout"]'); await p2.click('.tabs [data-tab="today"]');
-      await p2.click('#manualCalBtn'); await p2.waitForSelector('#mcSave'); await p2.fill('#mcK', '1'); await p2.click('#mcSave'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
-      await p2.click('[data-open="meal:1"]'); await p2.waitForSelector('#mPlan'); await p2.click('#mPlan'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
-      await p2.click('[data-open="meal:1"]'); await p2.waitForSelector('#mChange'); await p2.click('#mChange'); await p2.waitForSelector('[data-q]');
+      await p2.click('[data-planrow="1"]'); await p2.waitForSelector('#mpAll'); await p2.click('#mpAll'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
+      await openEatenRow(p2, '1食目（プラン）'); await p2.waitForSelector('#mChange'); await p2.click('#mChange'); await p2.waitForSelector('[data-q]');
       const chips = await p2.$$eval('[data-q]', els => els.map(e => ({ idx: e.dataset.q, txt: e.textContent })));
       const findIdx = label => { const c = chips.find(x => x.txt === label); assert(c, 'チップが無い: ' + label + ' / 実際: ' + JSON.stringify(chips.map(x => x.txt))); return c.idx; };
       const i40 = findIdx('ピスタチオ(Meadows)（40g）'), i20 = findIdx('ピスタチオ(Meadows) 20g');
@@ -1114,7 +1142,7 @@ async function run(mode) {
       // 体重を消して食事だけにしても消化扱い
       rt.op('del', { coll: 'log_weight', id: D }); await reloadAt(D, '08:00', 3);
       assert((await consumed()) === false, '記録を消したら未消化に戻る');
-      await p2.click('#manualCalBtn'); await p2.waitForSelector('#mcSave'); await p2.fill('#mcK', '400'); await p2.click('#mcSave'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
+      await openRecordWay('recManual', p2); await p2.waitForSelector('#mcSave'); await p2.fill('#mcK', '400'); await p2.click('#mcSave'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
       assert((await consumed()) === true, '食事だけでも休みの日は消化扱い');
       // 「有酸素はやらない」でも消化扱い（休みの日なので理由は聞かない）
       rt.op('del', { coll: 'log_meals', id: D }); await reloadAt(D, '08:00', 3);
@@ -1131,7 +1159,7 @@ async function run(mode) {
         try {
           await reloadAt(E, '08:00');
           await forceDayP2(p2, 4);
-          await p2.click('#manualCalBtn'); await p2.waitForSelector('#mcSave'); await p2.fill('#mcK', '400'); await p2.click('#mcSave'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
+          await openRecordWay('recManual', p2); await p2.waitForSelector('#mcSave'); await p2.fill('#mcK', '400'); await p2.click('#mcSave'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
           await reloadAt(E1, '08:00');
           assert((await p2.locator('h1').textContent()).startsWith('Day 4'), '筋トレの日は食事の記録があっても未完了なら翌日に持ち越す: ' + (await p2.locator('h1').textContent()));
         } finally { rt.op('del', { coll: 'log_meals', id: E }); rt.op('del', { coll: 'log_daily', id: E }); rt.op('del', { coll: 'log_daily', id: E1 }); }
@@ -1467,7 +1495,7 @@ async function run(mode) {
       const t2 = async () => (await p2.locator('.fat-mini').textContent()).trim();
       /** 新方式: 枠をタップせず「手で入力」で記録し、時刻から自動で紐づける */
       const logP2 = async (slot) => { await p2.click('.tabs [data-tab="today"]');
-        await p2.click('[data-step="meal:' + slot + '"] .row'); await p2.waitForSelector('#mpAll'); await p2.click('#mpAll'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
+        await p2.click('[data-planrow="' + slot + '"]'); await p2.waitForSelector('#mpAll'); await p2.click('#mpAll'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
         if (!(await p2.$('.fat-mini'))) { await p2.click('#bbTot'); await p2.waitForSelector('.fat-mini'); } };
       assert((await t2()).includes('体重を記録すると表示されます'), '体重も食事も無い → 体重の案内');
       await p2.fill('#nowW', '72.4'); await p2.click('#nowBtn'); await p2.waitForFunction(() => document.querySelector('[data-step="weight"]').classList.contains('done'));
@@ -1574,7 +1602,7 @@ async function run(mode) {
   await T(G.common, 'db スキーマ: log_weight{value,unit,skipped,skipReason,loggedAt} / warmup{completed,minutes,loggedAt} / meals{status: plan|substitute|skip|photo, photoId, reason} / log_daily{dayNo,dayName,notes,skippedItems[]}', async () => { if (mode === 'mock') return 'db のみ';
     const w = rt.DB.log_weight['2026-09-16']; assert(w.value === 72.6 && w.unit === 'kg' && w.skipped === false && w.loggedAt, 'weight ' + JSON.stringify(w));
     const wu = rt.DB.log_workout['2026-09-16'].warmup; assert(wu.completed === true && wu.minutes >= 1 && wu.loggedAt, 'warmup ' + JSON.stringify(wu));
-    const meals = rt.DB.log_meals['2026-09-16'].meals; const sts = Object.values(meals).map(m => m.status); assert(sts.every(x => ['plan', 'substitute', 'skip', 'photo'].includes(x)), 'statuses ' + sts.join(',')); assert(Object.values(meals).every(m => 'photoId' in m && 'reason' in m && m.loggedAt), 'photoId/reason/loggedAt'); assert(Object.entries(meals).every(([k, m]) => m.linkedSlot === (/^snack_/.test(k) ? 'snack' : Number(k))), '記録はどの枠に紐づいているかを linkedSlot で持つ: ' + JSON.stringify(Object.entries(meals).map(([k, m]) => k + '=' + m.linkedSlot))); const sk = Object.values(meals).find(m => m.status === 'skip'); if (sk) assert(sk.reason, 'skip reason persisted');
+    const meals = rt.DB.log_meals['2026-09-16'].meals; const sts = Object.values(meals).map(m => m.status); assert(sts.every(x => ['plan', 'substitute', 'skip', 'photo'].includes(x)), 'statuses ' + sts.join(',')); assert(Object.values(meals).every(m => 'photoId' in m && 'reason' in m && m.loggedAt), 'photoId/reason/loggedAt'); assert(Object.entries(meals).every(([k, m]) => m.planSlot === (/^snack_/.test(k) ? 'snack' : Number(k))), '記録はプランのどの食事から記録されたかを planSlot で持つ: ' + JSON.stringify(Object.entries(meals).map(([k, m]) => k + '=' + m.planSlot))); const sk = Object.values(meals).find(m => m.status === 'skip'); if (sk) assert(sk.reason, 'skip reason persisted');
     const dd = rt.DB.log_daily['2026-09-17']; assert(dd && dd.dayName === 'Pull' && Array.isArray(dd.skippedItems) && 'notes' in dd, 'daily ' + JSON.stringify(dd)); const dd16 = rt.DB.log_daily['2026-09-16']; assert(dd16 && dd16.skippedItems.some(x => x.item === 'meal 3'), 'skippedItems lists meal 3: ' + JSON.stringify(dd16 && dd16.skippedItems)); return 'statuses=' + sts.join(',') + ' / 9/16 skippedItems=' + dd16.skippedItems.map(x => x.item).join('|'); });
 
   // ============ 写真で記録 ============
@@ -1586,14 +1614,14 @@ async function run(mode) {
   /** 別ページで、その場で作った JPEG を下部バーの写真入力に渡す */
   const pickTopPhotoOn = (pg) => pg.evaluate(() => new Promise(res => { const cv = document.createElement('canvas'); cv.width = 600; cv.height = 400; const c = cv.getContext('2d'); c.fillStyle = '#c93'; c.fillRect(0, 0, 600, 400); cv.toBlob(b => { const inp = document.querySelector('#photoFile'); const dt = new DataTransfer(); dt.items.add(new File([b], 'm.jpg', { type: 'image/jpeg' })); inp.files = dt.files; inp.dispatchEvent(new Event('change')); res(); }, 'image/jpeg', 0.9); }));
   await T(G2, '写真→推定→修正→記録→合計に反映→取り消し→合計から消える', async () => { await goTab('today'); assert((await text('.date')).includes('9/16'), 'on 9/16');
-    if (mode === 'mock') { assert(!(await has('#photoBtn')), 'sample null → 写真ボタン非表示'); return 'sample null → 写真ボタン非表示（テキスト入力のみ）'; }
+    if (mode === 'mock') { await page.click('#addMealBtn'); await page.waitForSelector('#recTxt'); const no = !(await page.$('#recPhoto')); await closeSheet(); assert(no, 'sample null → 「写真から推定」非表示'); return 'sample null → 写真の選択肢を出さない（文字入力のみ）'; }
     const total = dayTotal;
     const base = await total(); const nAssets = rt.assets.length;
     // 5食目の時間帯（19:30）に写真から記録すると、どの食事かを聞かれずに 5食目へ自動で紐づく
     await setTime('2026-09-16T19:30:00+08:00'); await goTab('workout'); await goTab('today');
     await makeImageFile(3000, 2000, false); await pickTopPhoto(); await page.waitForSelector('#phEst');
     assert(!(await has('#dlg:not([hidden])')), '記録画面に「どの食事か」を選ぶ項目は無い');
-    assert((await text('#sheet h3')) === '写真で記録' && (await text('#sheet .mute')).includes('5食目'), '写真だけの記録画面で、自動の紐づけ先を知らせる: ' + (await text('#sheet .mute')));
+    assert((await text('#sheet h3')) === '写真で記録' && (await text('#sheet .mute')).includes('今日のプランは変わりません'), '写真だけの記録画面は枠を聞かない: ' + (await text('#sheet .mute')));
     const dim = await text('#photoPanel .num'); assert(dim.startsWith('1280×853'), 'resized to 1280×853: ' + dim);
     await page.fill('#phNote', 'ご飯は少なめ'); await page.click('#phEst'); await page.waitForSelector('#phSave', { timeout: 15000 });
     const sc = rt.sampleCalls[rt.sampleCalls.length - 1]; assert(sc.hasImage && sc.imageType === 'image/jpeg' && sc.imageSize < 1000000 && sc.tier === 'default', 'sample got resized jpeg on default tier: ' + JSON.stringify(sc)); assert(sc.prompt.length > 0);
@@ -1604,58 +1632,61 @@ async function run(mode) {
       assert(Object.values(rt.DB.foods).some(f => f.nameJa === '白ご飯' && Number(f.portionG) > 0), '分量つきでマスタに残る'); }
     await page.click('[data-phg="0:10"]'); await page.waitForSelector('#phSave'); assert((await text('.photo .est .it')).includes('210g'), 'grams +10'); await page.click('[data-phoff="1"]'); await page.waitForSelector('#phSave'); assert((await text('.photo .row2')).includes('合計 328kcal※'), 'exclude item → 328: ' + (await text('.photo .row2')));
     await page.click('#phSave'); await page.waitForSelector('#sheet', { state: 'hidden' }); await page.waitForTimeout(250);
-    const row = await text('[data-step="meal:5"]'); assert(row.includes('📷') && row.includes('白ご飯210g') && /約328kcal※/.test(row), 'row: ' + row); assert(Math.abs((await total()) - (base + 328)) <= 1, 'total +328: ' + (await total()) + ' vs ' + base);
-    assert(rt.assets.length === nAssets + 1 && rt.assets[nAssets].type === 'image/jpeg', 'photo uploaded to assets'); const med = Object.values(rt.DB.log_media).find(m => m.category === 'meal'); assert(med && med.mealNo === 5 && med.assetId === rt.assets[nAssets].id, 'log_media meal link'); const fd = Object.values(rt.DB.foods).find(f => f.source === 'ai_photo'); assert(fd && fd.nameJa === '白ご飯' && Math.round(fd.kcal) === 156, 'foods ai_photo per100g: ' + JSON.stringify(fd)); assert(rt.DB.log_meals['2026-09-16'].meals[5].photo.assetId === med.assetId, 'meal photo ref');
-    await page.click('[data-photo="5"]'); await page.waitForSelector('#dlg img.thumb'); assert((await page.$eval('#dlg img.thumb', e => e.getAttribute('src'))).startsWith('/_blob/'), 'thumbnail from assets'); await page.click('#dlgNo'); await page.waitForSelector('#dlg', { state: 'hidden' });
-    await page.click('[data-chk="meal:5"]'); await page.waitForFunction(() => document.querySelector('[data-step="meal:5"]').dataset.mark === ''); assert((await total()) === base, 'cancel → total back');
+    const row = await page.locator('.elist').textContent(); assert(row.includes('📷') && row.includes('白ご飯210g') && /約328kcal/.test(row) && row.includes('※推定'), 'row: ' + row); assert(Math.abs((await total()) - (base + 328)) <= 1, 'total +328: ' + (await total()) + ' vs ' + base);
+    assert(rt.assets.length === nAssets + 1 && rt.assets[nAssets].type === 'image/jpeg', 'photo uploaded to assets'); const med = Object.values(rt.DB.log_media).find(m => m.category === 'meal'); assert(med && med.assetId === rt.assets[nAssets].id, 'log_media meal link'); const fd = Object.values(rt.DB.foods).find(f => f.source === 'ai_photo'); assert(fd && fd.nameJa === '白ご飯' && Math.round(fd.kcal) === 156, 'foods ai_photo per100g: ' + JSON.stringify(fd)); assert(Object.values(rt.DB.log_meals['2026-09-16'].meals).some(mm => mm.photo && mm.photo.assetId === med.assetId), 'meal photo ref');
+    await page.click('.elist .cam'); await page.waitForSelector('#dlg img.thumb'); assert((await page.$eval('#dlg img.thumb', e => e.getAttribute('src'))).startsWith('/_blob/'), 'thumbnail from assets'); await page.click('#dlgNo'); await page.waitForSelector('#dlg', { state: 'hidden' });
+    for (const key of await page.$$eval('.elist .erow', els => els.filter(r => !/食目/.test(r.querySelector('.nm').textContent)).map(r => r.dataset.erow))) {
+      await page.evaluate(k => { const r = document.querySelector('.elist [data-erow="' + k + '"]'); if (r) r.click(); }, key);
+      await page.waitForSelector('#mCancel'); await page.click('#mCancel'); await dlgOk(); await page.waitForSelector('#sheet', { state: 'hidden' }); await page.waitForTimeout(200); }
+    assert((await total()) === base, 'cancel → total back: ' + (await total()) + ' vs ' + base);
     await setTime('2026-09-16T07:41:00+08:00'); await goTab('summary'); await page.waitForSelector('#repText'); await goTab('today'); return '1280×853 JPEG ' + Math.round(sc.imageSize / 1024) + 'KB を送信 / 白ご飯 210g=328kcal※ を記録'; });
-  await T(G2, '今日画面の「📷 食べたものを写真で記録」→ 間食（プラン外）として記録 → タイムラインに時刻順で挿入 → 合計に反映 → 取り消しで消える', async () => { await goTab('today'); if (mode === 'mock') { assert(!(await has('#photoBtn')), 'sample null → ボタン非表示'); return 'sample null → ボタン非表示'; }
-    await setTime('2026-09-16T15:00:00+08:00'); await goTab('workout'); await goTab('today'); assert(await has('#photoBtn') && (await text('#photoBtn')).includes('写真で記録'), '画面下部に固定された写真ボタン'); assert(await page.$eval('#photoFile', e => (e.getAttribute('accept') || '').includes('image/jpeg') && !e.hasAttribute('capture')), 'gallery picker: no capture attribute so camera and library both offered');
-    // スクロールしても消えない（固定バー）
+  await T(G2, '「＋ 食べたものを記録」→ 写真から推定 → 「食べたもの」に記録した時刻で並び、合計に反映。プランは一切変わらない。取り消しで消える', async () => {
+    await goTab('today');
+    if (mode === 'mock') { await page.click('#addMealBtn'); await page.waitForSelector('#recTxt'); const no = !(await page.$('#recPhoto')); await closeSheet(); assert(no, 'sample null → 写真の選択肢なし'); return 'sample null → 写真の選択肢なし'; }
+    await setTime('2026-09-16T15:00:00+08:00'); await goTab('workout'); await goTab('today');
+    assert(await has('#addMealBtn') && (await text('#addMealBtn')).includes('食べたものを記録'), '記録ボタンは1つにまとまっている: ' + (await text('#addMealBtn')));
+    assert(await page.$eval('#photoFile', e => (e.getAttribute('accept') || '').includes('image/jpeg') && !e.hasAttribute('capture')), 'gallery picker: no capture attribute so camera and library both offered');
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); await page.waitForTimeout(120);
-    assert(await page.$eval('#photoBtn', e => e.getBoundingClientRect().bottom <= window.innerHeight + 1 && e.getBoundingClientRect().top >= 0), 'スクロールしても記録ボタンが画面内に残る');
+    assert(await page.$eval('#addMealBtn', e => e.getBoundingClientRect().bottom <= window.innerHeight + 1 && e.getBoundingClientRect().top >= 0), 'スクロールしても記録ボタンが画面内に残る');
     const total = dayTotal; const base = await total();
-    const pick = () => pickTopPhoto();
-    await makeImageFile(1600, 1200, false); await pick();
-    await page.waitForSelector('#phEst'); assert((await text('#sheet .mute')).includes('間食'), '4食目は記録済みなので間食として記録する: ' + (await text('#sheet .mute'))); assert(!(await has('#mPlan')) && !(await has('#mReset')), 'no plan buttons'); await page.click('#phEst'); await page.waitForSelector('#phSave', { timeout: 15000 }); await page.click('#phSave'); await page.waitForSelector('#sheet', { state: 'hidden' }); await page.waitForSelector('[data-step="meal:snack_1"]');
-    const ids = await page.$$eval('.step', els => els.map(e => e.dataset.step)); const ix = k => ids.indexOf(k); assert(ix('meal:snack_1') > ix('meal:3') && ix('meal:snack_1') < ix('meal:4'), 'inserted by time (15:00 between meal3 13:30 and meal4 16:30): ' + ids.join(','));
-    const row = await text('[data-step="meal:snack_1"]'); assert(row.includes('間食') && row.includes('プラン外') && row.includes('kcal※') && row.includes('15:00'), 'snack row: ' + row); assert(await has('[data-step="meal:snack_1"] .cam'), '📷 icon'); assert((await mark('meal:snack_1')).startsWith('ok|'), 'snack mark'); assert((await total()) === base + 652, 'total +652: ' + (await total()) + ' vs ' + base);
-    await page.waitForTimeout(200); const doc = rt.DB.log_meals['2026-09-16'].meals.snack_1; assert(doc && doc.status === 'photo' && doc.items.length === 2 && doc.items.every(i => i.estimated) && doc.photoId, 'db snack_1: ' + JSON.stringify(doc).slice(0, 200)); assert(Object.values(rt.DB.foods).some(f => f.source === 'ai_photo'), 'foods ai_photo');
-    await page.click('[data-chk="meal:snack_1"]'); await page.waitForFunction(() => !document.querySelector('[data-step="meal:snack_1"]')); assert((await total()) === base, 'total back after cancel'); assert((await text('#toast')).includes('間食の記録を取り消しました'), 'undo toast'); await page.waitForTimeout(200); assert(!rt.DB.log_meals['2026-09-16'].meals.snack_1, 'db doc removed'); await setTime('2026-09-16T07:41:00+08:00'); await goTab('workout'); await goTab('today'); return '間食 snack_1 → 652kcal※ 加算 → 取り消しで 0'; });
-  await T(G2, '写真も「どの食事か」を聞かない: 空いている枠の時間帯ならその枠へ、埋まっていれば間食へ自動で紐づく', async () => { if (mode === 'mock') return 'db のみ'; await goTab('today');
-    const total = dayTotal; const before = await total();
-    // 3食目は「スキップ（外食）」として記録済み → その時間帯（13:30）に撮ると間食になる
-    await setTime('2026-09-16T13:30:00+08:00'); await goTab('workout'); await goTab('today');
-    await pickTopPhoto(); await page.waitForSelector('#phEst');
-    assert(!(await page.$('#dlg:not([hidden]) [data-choice]')), '枠を選ぶダイアログは出ない');
-    assert((await text('#sheet .mute')).includes('間食'), '記録済みの枠の時間帯 → 間食: ' + (await text('#sheet .mute')));
-    await page.click('#phEst'); await page.waitForSelector('#phSave', { timeout: 15000 }); await page.click('#phSave'); await page.waitForSelector('#sheet', { state: 'hidden' }); await page.waitForTimeout(300);
-    const snack = (await page.$$eval('.step', els => els.map(e => e.dataset.step))).filter(x => /^meal:snack/.test(x)).pop();
-    assert(snack, '間食として残る'); assert((await total()) === before + 652, '合計に反映: ' + (await total()));
-    // その間食を 3食目に付け替えようとすると、記録済みなので入れ替えの確認が出る
-    await page.click('[data-relink="' + snack + '"]'); await page.waitForSelector('[data-slot="3"]');
-    assert((await text('[data-slot="3"]')).includes('（記録済み）'), '記録済みの枠には（記録済み）と添える: ' + (await text('[data-slot="3"]')));
-    await page.click('[data-slot="3"]'); await page.waitForSelector('#dlg:not([hidden])');
-    assert((await text('#dlg h3')).includes('入れ替え'), '入れ替えるか確認する: ' + (await text('#dlg h3')));
-    await page.click('#dlgOk'); await page.waitForTimeout(300);
-    assert((await text('[data-step="meal:3"]')).includes('kcal※'), '3食目が写真の記録に入れ替わる: ' + (await text('[data-step="meal:3"]')));
-    const sn2 = (await page.$$eval('.step', els => els.map(e => e.dataset.step))).filter(x => /^meal:snack/.test(x)).pop();
-    assert(sn2 && (await text('[data-step="' + sn2 + '"]')).includes('スキップ') === false, '元の3食目の記録は間食側へ移る（消えない）');
-    if (mode === 'db') { await page.waitForTimeout(250); const m3 = rt.DB.log_meals['2026-09-16'].meals[3]; assert(m3.linkOverride === true && m3.linkedSlot === 3, '入れ替え後も linkedSlot / linkOverride が付く: ' + JSON.stringify({ s: m3.linkedSlot, o: m3.linkOverride })); }
-    // 後片付け: 3食目と間食を取り消して元の合計に戻す
-    await page.click('[data-chk="meal:3"]'); await page.waitForTimeout(300);
-    for (const k of (await page.$$eval('.step', els => els.map(e => e.dataset.step))).filter(x => /^meal:snack/.test(x))) { await page.click('[data-chk="' + k + '"]'); await page.waitForTimeout(300); }
-    await setTime('2026-09-16T07:41:00+08:00'); await goTab('workout'); await goTab('today');
-    return '枠を聞かずに自動で紐づけ（空き枠 → その枠、埋まっていれば間食）。記録済みの枠へ付け替えると確認のうえ入れ替え'; });
+    const planBefore = await page.$$eval('[data-planchk]', els => els.map(e => e.className.includes('on') ? '✓' : '○').join(''));
+    await makeImageFile(1600, 1200, false); await pickTopPhoto();
+    await page.waitForSelector('#phEst');
+    assert((await text('#sheet .mute')).includes('今日のプランは変わりません'), '写真の記録画面は枠を聞かない: ' + (await text('#sheet .mute')));
+    assert(!(await has('#mPlan')) && !(await has('#mReset')), 'no plan buttons');
+    await page.click('#phEst'); await page.waitForSelector('#phSave', { timeout: 15000 }); await page.click('#phSave');
+    await page.waitForSelector('#sheet', { state: 'hidden' }); await page.waitForTimeout(300);
+    const rows = await page.$$eval('.elist .erow', els => els.map(e => e.querySelector('.etime').textContent + ' ' + e.querySelector('.nm').textContent));
+    const idx = rows.findIndex(x => x.indexOf('15:00') === 0);
+    assert(idx >= 0 && !/食目/.test(rows[idx]), '15:00 の記録が番号なしで並ぶ: ' + rows.join(' / '));
+    const ts = rows.map(x => x.slice(0, 5)); assert(ts.slice().sort().join(',') === ts.join(','), '時刻順に並ぶ: ' + rows.join(' / '));
+    assert(/※推定/.test(await page.locator('.elist').textContent()), '推定値には ※推定 を付ける: ' + (await page.locator('.elist').textContent()));
+    assert((await page.$$eval('[data-planchk]', els => els.map(e => e.className.includes('on') ? '✓' : '○').join(''))) === planBefore, 'プランは変わらない: ' + planBefore);
+    assert((await total()) === base + 652, 'total +652: ' + (await total()));
+    await page.waitForTimeout(200);
+    const key = Object.keys(rt.DB.log_meals['2026-09-16'].meals).filter(k => /^snack/.test(k)).pop();
+    const doc = rt.DB.log_meals['2026-09-16'].meals[key];
+    assert(doc && doc.status === 'photo' && doc.planSlot === null && doc.items.length === 2 && doc.items.every(i => i.estimated) && doc.photoId, 'db: planSlot は null: ' + JSON.stringify({ planSlot: doc && doc.planSlot, n: doc && doc.items.length }));
+    assert(Object.values(rt.DB.foods).some(f => f.source === 'ai_photo'), 'foods ai_photo');
+    // 長押しで削除 → 合計から消える
+    await page.evaluate(k => { const r = document.querySelector('.elist [data-erow="' + k + '"]'); if (r) r.click(); }, key);
+    await page.waitForSelector('#mCancel'); await page.click('#mCancel'); await dlgOk(); await page.waitForSelector('#sheet', { state: 'hidden' }); await page.waitForTimeout(250);
+    assert((await total()) === base, 'total back after cancel: ' + (await total()));
+    await page.waitForTimeout(200); assert(!rt.DB.log_meals['2026-09-16'].meals[key], 'db doc removed');
+    await setTime(T0); await goTab('workout'); await goTab('today');
+    return '写真 → 食べたものに1件（時刻順・番号なし・※推定）。プランには触れない';
+  });
   await T(G2, '推定 JSON の parse 失敗時にアプリが落ちず、手入力に切替できる', async () => { if (mode === 'mock') return '写真ボタン非表示のため対象外'; await makeImageFile(800, 600, false); await pickTopPhoto(); await page.waitForSelector('#phEst'); await page.fill('#phNote', 'BAD'); await page.click('#phEst'); await page.waitForSelector('#phManual', { timeout: 15000 }); assert((await text('.photo .pending')).includes('推定結果を読み取れませんでした'), 'error line: ' + (await text('.photo .pending'))); await page.click('#phManual'); await page.waitForSelector('#freeTxt'); assert(!(await has('#photoPanel')) && !(await page.$eval('#sub', e => e.hidden)), 'switched to manual'); assert(!errors.length, 'no page errors'); await closeSheet(); });
   await T(G2, '画像を送れない画面（limits に images が無い）では写真ボタンを出さず「文字で推定」に切り替える。文字だけで同じ形の推定結果が出て、その場で直して記録できる。設定に「写真推定：使える／使えない」を出す', async () => {
     if (mode === 'mock') return 'db のみ（sample を注入して判定する）';
     const p2 = await newPage({ noImages: true }); p2.setDefaultTimeout(20000);
     try {
       await p2.waitForTimeout(600); await p2.click('.tabs [data-tab="today"]');
-      assert(!(await p2.$('#photoBtn')), '写真は送れないので写真ボタンを出さない');
-      assert(await p2.$('#textEstBtn'), '代わりに「文字で推定」を出す: ' + (await p2.locator('#bbar .rec').textContent()));
-      await p2.click('#textEstBtn'); await p2.waitForSelector('#phText');
+      await p2.click('#addMealBtn'); await p2.waitForSelector('#recTxt');
+      assert(!(await p2.$('#recPhoto')), '写真は送れないので「写真から推定」を出さない');
+      await p2.click('#sheet', { position: { x: 5, y: 5 } }); await p2.waitForSelector('#sheet', { state: 'hidden' });
+      await p2.click('#addMealBtn'); await p2.waitForSelector('#recChat'); await p2.click('#recChat'); await p2.waitForSelector('#phPasteTa');
+      await p2.click('#phToText'); await p2.waitForSelector('#phText');
       assert((await p2.locator('#phTextLead').textContent()).includes('images_unavailable'), 'エラー code をそのまま画面に出す: ' + (await p2.locator('#phTextLead').textContent()));
       // limits() の申告が実際とズレる環境もあるので、本人の操作でだけ写真を試せる逃げ道を残す
       assert(await p2.$('#phForce'), '「それでも写真で試す」を残す');
@@ -1689,8 +1720,7 @@ async function run(mode) {
     const p2 = await newPage({ noImages: true }); p2.setDefaultTimeout(20000);
     try {
       await p2.waitForTimeout(600); await p2.click('.tabs [data-tab="today"]');
-      await p2.click('#textEstBtn'); await p2.waitForSelector('#phToPaste');
-      await p2.click('#phToPaste'); await p2.waitForSelector('#phPasteTa');
+      await p2.click('#addMealBtn'); await p2.waitForSelector('#recChat'); await p2.click('#recChat'); await p2.waitForSelector('#phPasteTa');
       assert(await p2.$('#phCopyPrompt'), '指示文をコピーするボタンがある');
       const reply = 'はい、推定しました。\n```json\n{"items":[{"name_ja":"白ご飯","name_en":"White rice","grams":200,"kcal":336,"p":5,"f":0.6,"c":74},{"name_ja":"鶏の唐揚げ","name_en":"Fried chicken","grams":120,"kcal":340,"p":20,"f":22,"c":12}],"total":{"kcal":676,"p":25,"f":22.6,"c":86},"confidence":"medium","note":"ご飯の量は茶碗から推定しました"}\n```\n以上です。';
       await p2.fill('#phPasteTa', reply); await p2.click('#phPasteGo');
@@ -1719,7 +1749,7 @@ async function run(mode) {
     const p2 = await newPage({ sampleErr: 'images_unavailable', sampleErrImageOnly: true }); p2.setDefaultTimeout(20000);
     try {
       await p2.waitForTimeout(600); await p2.click('.tabs [data-tab="today"]');
-      assert(await p2.$('#photoBtn'), 'limits が images を返す画面では写真ボタンを出す');
+      await p2.click('#addMealBtn'); await p2.waitForSelector('#recTxt'); assert(await p2.$('#recPhoto'), 'limits が images を返す画面では「写真から推定」を出す'); await p2.click('#sheet', { position: { x: 5, y: 5 } }); await p2.waitForSelector('#sheet', { state: 'hidden' });
       const before = rt.sampleCalls.length;
       await pickTopPhotoOn(p2);
       await p2.waitForSelector('#phEst'); await p2.click('#phEst');
@@ -1728,7 +1758,7 @@ async function run(mode) {
       await p2.waitForTimeout(1200);
       assert(rt.sampleCalls.length === before + 1, '自動で再試行しない: ' + (rt.sampleCalls.length - before) + ' 回呼ばれた');
       await p2.click('#sheet', { position: { x: 5, y: 5 } }); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
-      assert(!(await p2.$('#photoBtn')) && (await p2.$('#textEstBtn')), 'images_unavailable のあとは写真ボタンを隠して文字で推定にする');
+      await p2.click('#addMealBtn'); await p2.waitForSelector('#recTxt'); assert(!(await p2.$('#recPhoto')), 'images_unavailable のあとは「写真から推定」を隠す');
       // この表示は写真に対応していないと覚えるので、後続のテストのために消しておく（localStorage はページ間で共有）
       await p2.evaluate(() => { try { localStorage.removeItem('tl.noImages'); } catch (e) { /* ignore */ } });
       return 'code をそのまま表示 → 写真の入口を隠して文字で推定へ（次回から静かに文字で推定に入る）';
@@ -1784,9 +1814,13 @@ async function run(mode) {
     await p2.clock.setFixedTime(new Date('2026-09-16T19:30:00+08:00')); await p2.click('.tabs [data-tab="workout"]'); await p2.click('.tabs [data-tab="today"]');
     await p2.evaluate(() => new Promise(res => { const cv = document.createElement('canvas'); cv.width = 600; cv.height = 400; cv.getContext('2d').fillStyle = '#c93'; cv.getContext('2d').fillRect(0, 0, 600, 400); cv.toBlob(b => { const inp = document.querySelector('#photoFile'); const dt = new DataTransfer(); dt.items.add(new File([b], 'm.jpg', { type: 'image/jpeg' })); inp.files = dt.files; inp.dispatchEvent(new Event('change')); res(); }, 'image/jpeg', 0.9); }));
     await p2.waitForSelector('#phEst'); await p2.click('#phEst'); await p2.waitForSelector('#phSave', { timeout: 15000 }); await p2.click('#phSave'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
-    assert(rt.assets.length === nAssets, 'no upload'); const meal = rt.DB.log_meals['2026-09-16'].meals[5]; assert(meal && meal.photo && !meal.photo.assetId && meal.items.length === 2, 'recorded without assetId'); assert((await p2.locator('[data-step="meal:5"]').textContent()).includes('📷'), 'camera icon'); await p2.click('[data-photo="5"]'); await p2.waitForSelector('#dlg:not([hidden])'); assert((await p2.$eval('#dlg', e => e.textContent)).includes('保存されていません') || await p2.$('#dlg img.thumb'), 'photo dialog'); await p2.close();
+    assert(rt.assets.length === nAssets, 'no upload'); const mk = Object.keys(rt.DB.log_meals['2026-09-16'].meals).filter(k => /^snack/.test(k)).pop(); const meal = rt.DB.log_meals['2026-09-16'].meals[mk]; assert(meal && meal.photo && !meal.photo.assetId && meal.items.length === 2, 'recorded without assetId'); assert((await p2.locator('.elist').textContent()).includes('📷'), 'camera icon'); await p2.click('.elist .cam'); await p2.waitForSelector('#dlg:not([hidden])'); assert((await p2.$eval('#dlg', e => e.textContent)).includes('保存されていません') || await p2.$('#dlg img.thumb'), 'photo dialog'); await p2.close();
     // 後始末: メインページで取り消し
-    await resetClock(); await page.reload(); await page.waitForFunction(() => !document.querySelector('#view .loading')); await goTab('today'); await page.click('[data-chk="meal:5"]'); await page.waitForFunction(() => document.querySelector('[data-step="meal:5"]').dataset.mark === ''); });
+    await resetClock(); await page.reload(); await page.waitForFunction(() => !document.querySelector('#view .loading')); await goTab('today');
+    for (const key of await page.$$eval('.elist .erow', els => els.filter(r => !/食目/.test(r.querySelector('.nm').textContent)).map(r => r.dataset.erow))) {
+      await page.evaluate(k => { const r = document.querySelector('.elist [data-erow="' + k + '"]'); if (r) r.click(); }, key);
+      await page.waitForSelector('#mCancel'); await page.click('#mCancel'); await dlgOk(); await page.waitForSelector('#sheet', { state: 'hidden' }); await page.waitForTimeout(200);
+    } });
   await T(G2, '縦長・横長・大きい写真（10MB超）で送信前にリサイズ（長辺1280px、JPEG 0.8）して成功する', async () => { const r = await page.evaluate(async () => { const mk = (w, h, noise) => new Promise(res => { const cv = document.createElement('canvas'); cv.width = w; cv.height = h; const ctx = cv.getContext('2d'); if (noise) { const id = ctx.createImageData(w, h); const a = id.data; for (let i = 0; i < a.length; i += 4) { a[i] = Math.random() * 255; a[i + 1] = Math.random() * 255; a[i + 2] = Math.random() * 255; a[i + 3] = 255; } ctx.putImageData(id, 0, 0); } else { ctx.fillStyle = '#48c'; ctx.fillRect(0, 0, w, h); } cv.toBlob(b => res(new File([b], 'x', { type: b.type })), noise ? 'image/png' : 'image/jpeg', 0.95); });
     const out = {}; const big = await mk(3200, 2400, true); const rb = await window.__tl.resizeImage(big, 1280, 0.8); out.big = { inSize: big.size, w: rb.width, h: rb.height, type: rb.blob.type, outSize: rb.blob.size };
     const land = await mk(4000, 2000, false); const rl = await window.__tl.resizeImage(land); out.land = { w: rl.width, h: rl.height }; const port = await mk(1500, 3000, false); const rp = await window.__tl.resizeImage(port); out.port = { w: rp.width, h: rp.height }; const small = await mk(640, 480, false); const rs = await window.__tl.resizeImage(small); out.small = { w: rs.width, h: rs.height }; return out; });
@@ -1851,19 +1885,66 @@ async function run(mode) {
     assert(/modelTier:\s*'default'/.test(src), '写真・文字の推定は modelTier: default');
     return 'claude.use("sample") → sample.json(prompt, { images: [blob] })';
   });
+  await T(G.meal, '記録ボタンは1つにまとまり、シートで方法を選べる（文字入力にすぐフォーカス）。「食べたもの」から削除すると、プランの記録ならプランも ○ に戻る', async () => {
+    const D = '2027-10-06';
+    const p2 = await newPage(); p2.setDefaultTimeout(20000);
+    try {
+      await p2.clock.setFixedTime(new Date(D + 'T12:00:00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading'));
+      await p2.click('.tabs [data-tab="today"]'); await p2.waitForSelector('#addMealBtn');
+      const btns = await p2.$$eval('#bbar .rec button', els => els.map(e => e.textContent));
+      assert(btns.length === 1 && btns[0].includes('食べたものを記録'), '下部の記録ボタンは1つ: ' + btns.join(' / '));
+      await p2.click('#addMealBtn'); await p2.waitForSelector('#recTxt');
+      assert((await p2.evaluate(() => document.activeElement && document.activeElement.id)) === 'recTxt', 'シートを開くと文字入力にフォーカスが当たる');
+      const ways = await p2.$$eval('#sheet .sheet-body button', els => els.map(e => e.id).filter(Boolean));
+      assert(ways.indexOf('recTxtGo') === 0 && ways.includes('recFood') && ways.includes('recManual') && ways.includes('recChat'), '方法を1枚で選べる: ' + ways.join(','));
+      assert(ways.includes('recPhoto') === (mode === 'db'), '写真の選択肢は使える画面のときだけ出す: ' + ways.join(','));
+      await p2.click('#sheet', { position: { x: 5, y: 5 } }); await p2.waitForSelector('#sheet', { state: 'hidden' });
+      // プランから記録 → 食べたものに1件 → 削除するとプランも ○ に戻る
+      await p2.click('[data-planchk="3"]'); await p2.waitForTimeout(400);
+      assert(await planEaten(3, p2), 'プラン3食目が ✓');
+      assert((await eatenRowOf(3, p2)).includes('3食目（プラン）'), '食べたものに出る');
+      await openEatenRow(p2, '3食目（プラン）'); await p2.waitForSelector('#mCancel'); await p2.click('#mCancel');
+      await p2.waitForSelector('#dlg:not([hidden])'); await p2.click('#dlgOk'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(300);
+      assert(!(await planEaten(3, p2)), '食べたものから消すと、プランも ○ に戻る');
+      assert(!(await p2.$('.elist')) || !(await p2.locator('.elist').textContent()).includes('3食目（プラン）'), '一覧からも消える');
+      return '記録ボタン1つ・フォーカス・削除でプランも ○ に戻る';
+    } finally { await p2.close(); rt.op('del', { coll: 'log_meals', id: D }); rt.op('del', { coll: 'log_daily', id: D }); }
+  });
+  await T(G.workout, '不具合修正: 筋トレの日（Day 6 Pull）が「休み」にならない。手で休みに変えた日はその旨を出して1タップで戻せる。有酸素の説明から「確認中」が消えている', async () => {
+    const D = '2027-10-13';
+    const p2 = await newPage(); p2.setDefaultTimeout(20000);
+    try {
+      await p2.clock.setFixedTime(new Date(D + 'T06:50:00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading'));
+      await p2.click('.tabs [data-tab="today"]'); await p2.waitForSelector('#dayHead');
+      await forceDayP2(p2, 6);
+      assert(!(await p2.locator('h1').first().textContent()).includes('休み'), 'Day 6 は休みではない: ' + (await p2.locator('h1').first().textContent()));
+      assert((await p2.locator('#tabWorkoutIc').textContent()) === '筋トレ', '筋トレの日はタブが「筋トレ」: ' + (await p2.locator('#tabWorkoutIc').textContent()));
+      assert(!(await p2.locator('#tabWorkout').textContent()).includes('休み'), 'タブのサブテキストも休みにしない: ' + (await p2.locator('#tabWorkout').textContent()));
+      assert(await p2.$('[data-step="workout"]'), '筋トレの行が出る');
+      assert(!(await p2.locator('[data-step="cardio"]').textContent()).includes('確認中'), '有酸素の説明に「確認中」を残さない: ' + (await p2.locator('[data-step="cardio"]').textContent()));
+      // 手で「休み」に変えたら、その旨を出して1タップで戻せる
+      await p2.click('#dayHead'); await p2.waitForSelector('#restToggle'); await p2.click('#restToggle'); await p2.waitForTimeout(400);
+      assert((await p2.locator('#tabWorkoutIc').textContent()) === '有酸素', '休みにするとタブが「有酸素」に変わる');
+      assert(await p2.$('#restOvBanner'), '手で変えたことを画面に出す');
+      await p2.click('#restOvBanner'); await p2.waitForTimeout(400);
+      assert((await p2.locator('#tabWorkoutIc').textContent()) === '筋トレ' && !(await p2.$('#restOvBanner')), '1タップで予定どおりに戻る');
+      return 'Day 6 は筋トレの日。手で休みにした日は戻せる';
+    } finally { await p2.close(); rt.op('del', { coll: 'log_daily', id: D }); rt.op('del', { coll: 'log_workout', id: D }); }
+  });
 
   await browser.close();
   return errors;
 }
 (async () => {
   const errs = {};
-  for (const mode of ['mock', 'db']) { errs[mode] = await run(mode); if (errs[mode].length) console.error('[' + mode + '] page errors:\n' + errs[mode].join('\n')); }
+  const MODES = (process.env.E2E_MODES || 'mock,db').split(',');
+  for (const mode of MODES) { errs[mode] = await run(mode); if (errs[mode].length) console.error('[' + mode + '] page errors:\n' + errs[mode].join('\n')); }
   // ---- TEST.md ----
   const groups = [...new Set(results.map(r => r.group))];
   let md = '# テスト結果（自動生成: `npm run e2e:artifact`）\n\n実行日: ' + new Date().toISOString().slice(0, 10) + ' ／ 固定時刻 2026-09-16 06:50 (Asia/Manila) ／ Chromium 390×844\n\n';
   md += '- **mock**: `window.claude` なし → メモリ上のモックモード\n- **db**: `claude.use("db"/"assets"/"sample"/"downloads")` を疑似ランタイムで注入（db は Node 側に永続し、再読み込み・二重オープンを再現。実際の claude.ai ランタイムではなく API 形状を模したもの）\n\n';
   const fails = results.filter(r => r.mock === '✗' || r.db === '✗').length;
-  md += '合計 ' + results.length + ' 項目 ／ NG ' + fails + ' 件 ／ ページエラー mock ' + errs.mock.length + ' 件・db ' + errs.db.length + ' 件\n\n';
+  md += '合計 ' + results.length + ' 項目 ／ NG ' + fails + ' 件 ／ ページエラー mock ' + (errs.mock||[]).length + ' 件・db ' + (errs.db||[]).length + ' 件\n\n';
   groups.forEach(g => { md += '## ' + g + '\n\n| 項目 | mock | db | 備考 |\n|---|:-:|:-:|---|\n'; results.filter(r => r.group === g).forEach(r => { md += '| ' + r.name + ' | ' + r.mock + ' | ' + r.db + ' | ' + r.note.replace(/\|/g, '/') + ' |\n'; }); md += '\n'; });
   md += `## テスト中に見つけて修正した内容
 
@@ -1921,6 +2002,10 @@ async function run(mode) {
 
 | 40 | 写真からの推定が、Claude アプリ内の表示でも Safari でも \`images_unavailable\` で失敗した（実際に送信まで進んで返ってくる）。この環境の \`sample\` は画像をいっさい受け付けない、というのが結論。ブラウザ側では回避できないので、**Claude のチャット側の画像入力を借りる経路**を足した: 「① 指示文をコピー → ② チャットに写真と一緒に貼る → ③ 返事を貼り戻す」。\`parseEstimateText()\` がコードブロックの囲みや前後の文章から JSON を取り出し、\`validateEstimate()\` に通すので、結果画面・分量の修正・記録はすべて写真から推定したときと同じ |
 
+| 41 | 食事が「プランの枠に押し込む」作りで、プラン外のもの（スタバの抹茶ラテ）が時刻から4食目の枠に入り、4食目のプランが打ち消し線で上書きされていた。食べた順と番号もずれていた。**「食べた順の記録」と「今日のプランのチェック」を完全に別物にする**方針へ変更: 時刻からの自動紐づけ・紐づけチップ・「間食」の区分・打ち消し線・「変更あり」・1食ごとのプラン比を全廃し、プランは ✓／○ だけ（\`planSlot\` が一致する記録の有無から導出）、食べたものは \`loggedAt\` 順に番号なしで並べる。記録ボタンも1つにまとめた。既存データは書き換えず、「プラン由来の品目があるか」で \`planSlot\` を導出して移行する |
+
+| 42 | Day 6（Pull）なのに下部タブが「Day 6 休み」「有酸素」になっていた。Day ピッカーの「休みにする」（\`log_daily.isRestOverride\`）が立ったままだったのが原因で、画面上はそれと分からず戻し方も無かった。手で変えた日は今日画面にその旨を出し、タップで予定どおりに戻せるようにした。あわせて、古い \`settings.cardioLabel\` に残っていた「（種類はコーチ確認中）」を SEED_VERSION 12 の移行で既定文に戻す |
+
 
 ## 実行方法
 
@@ -1932,5 +2017,5 @@ db モードの「疑似ランタイム」は \`claude.use()\` の API 形状（
 `;
   fs.writeFileSync(path.join(__dirname, '..', 'artifact', 'TEST.md'), md);
   console.log('\n' + results.length + ' items, ' + fails + ' NG. → artifact/TEST.md');
-  if (fails || errs.mock.length || errs.db.length) process.exit(1);
+  if (fails || (errs.mock||[]).length || (errs.db||[]).length) process.exit(1);
 })().catch(e => { console.error(e); process.exit(1); });

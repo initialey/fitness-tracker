@@ -36,14 +36,14 @@
 | `log_weight` | YYYY-MM-DD | value, unit("kg"), skipped(bool), skipReason, loggedAt(ISO 8601), bodyFatPct（互換: weightKg, time, reason, reasonText） |
 | `log_workout` | YYYY-MM-DD | sets{ "exId_setNo": {exerciseId, setNo, setType(WU/MAIN/FINAL/PRE/TOP/BO/DROP/MID), weightKg, reps, loggedAt} }, choices{ choiceGroup: exerciseId }（その日「A または B」でどれを選んだか。選び直すと選択とその日の記録を消す）, meta{ exId: {note, rpe, subName} }, **warmup{completed, minutes, sets{id:n}, startedAt(ms), done(HH:mm), loggedAt, skipped, skipReason}**, finished(HH:mm), finishedAt(ISO。完了画面の所要時間 = warmup.startedAtIso → finishedAt) |
 | `log_cardio` | YYYY-MM-DD | entries[{type(jog/incline/padel/pickleball/other。旧 walk/stairs も表示可), minutes, hr, note, at, loggedAt, intensity(パデル・ピックルボールのみ: light/normal/hard、既定 normal), kcal(同上: 保存時点の体重×METs×時間で計算。パデル 5.5/7.0/8.5、ピックルボール 4.5/5.5/7.0)}] |
-| `log_meals` | YYYY-MM-DD | meals{ 紐づけ先（mealNo または snack_N）: {linkedSlot(1〜5 / "snack"), linkOverride(手で紐づけ先を変えたら true。以後は自動判定で書き換えない), status(plan / substitute / skip / photo: 品目から自動判定して保存), items[{foodId, grams, kcal, p, f, c, origin(plan/add), eaten, deleted(ソフト削除・シートを閉じると確定), planGrams, estimated}], loggedAt, photoId, reason(スキップ理由), variant(""/"alt"), photo{assetId, confidence, note}, skip{reason, reasonText}} } |
+| `log_meals` | YYYY-MM-DD | meals{ キー: {planSlot(1〜5 = プランのその食事から記録した ／ null = プラン外。プランの ✓ はこれが一致する記録の有無だけで決め、別フラグは持たない。旧 linkedSlot 方式のデータは「プラン由来の品目があるか」で導出), status(plan / substitute / skip / photo), items[{foodId, grams, kcal, p, f, c, origin(plan/add), eaten, deleted(ソフト削除), planGrams, estimated, manual}], loggedAt(記録した瞬間。「食べたもの」の並び順はこれだけで決まる), photoId, reason, variant, photo{assetId, confidence, note}} } |
 | `log_supplements` | YYYY-MM-DD | items{ id: {done, loggedAt} }、今日はなし: {done:false, na:true, reason, reasonText, loggedAt} |
 | `log_routine` | YYYY-MM-DD | items{ id: {done, loggedAt} }、水は {done, value(ml), loggedAt}、今日はなし: {na, reason} |
 | `log_media` | id | date, type(photo/video), category(body/form/meal), assetId, url, exerciseId, note |
 | `log_daily` | YYYY-MM-DD | dayNo(手動上書き), dayChange{from, loggedAt}（その日の Day/部位の差し替え。「未消化キュー」方式はこのフィールドだけで表現し、他の日付は書き換えない）, dayName, notes, waterMl, waterLoggedAt（水タブ）, skippedItems[{item, itemJa, reason, reasonJa}]（できなかった項目の自動集計）, isRestOverride, comment, warmupSkipped{reason, at}, workoutMissed{reason, reasonText, loggedAt}, cardioMissed{reason, reasonText, loggedAt}, restDone{loggedAt}（休みの日の「有酸素はやらない」） |
 
 重量は常に kg で保存。表示時のみ lb 換算（1 lb = 0.45359237 kg、小数 1 桁）。
-初回起動時に `plan_days` が空、または `settings.seedVersion` が `SEED_VERSION`（現在 11 = コーチからのフォーム指摘をカーフ3種・トライセップ プッシュダウン・ショルダープレスに追加）より古ければ、`SEED` 定数（[training-log-spec.md](training-log-spec.md)）で `plan_*` と `foods`(source=plan) を投入し直す。ログは触らない。プランを変えたら `SEED_VERSION` を上げて再公開する。
+初回起動時に `plan_days` が空、または `settings.seedVersion` が `SEED_VERSION`（現在 12 = 食事を「食べた順の記録」と「プランのチェック」に分ける ／ 有酸素の説明から「確認中」を外す）より古ければ、`SEED` 定数（[training-log-spec.md](training-log-spec.md)）で `plan_*` と `foods`(source=plan) を投入し直す。ログは触らない。プランを変えたら `SEED_VERSION` を上げて再公開する。
 
 ### 起動（読み込みが必ず終わるようにする）
 `boot()` は `try / catch / finally` で囲み、**何があっても最後に描き直す**（`LOAD.step` / `LOAD.error`）。
@@ -146,6 +146,15 @@
 - サプリ・ルーティン: 行の ○ を長押し、またはサプリシートの「今日はなし」→ 理由（切れていた／持っていない／忘れた／体調不良）
 - 筋トレ・有酸素: 行の ○ → 「今日はできなかった」→ 理由（仕事／体調不良／旅行／その他）を log_daily に保存するだけでよい。「未消化キュー」方式では「完了しなかった」だけで自動的にその Day がキューの先頭に残り、翌日も同じ Day が繰り越して出る（完了の判定は `log_workout.finished`／休みの日は `log_cardio` の記録の有無で、`workoutMissed` の記録自体は Day の判定に影響しない）
 - 週まとめ: 体重グラフは隣り合う日だけ線で結び欠測日を飛ばす。7 日平均は暦 7 日窓の実測のみ。「体重 N/M 日 測定」、「できなかった項目とその理由」ブロック。レポートは `Weight: … (5/7 days measured, skipped: travel×2)` と Notes に自動集計。CSV に skipped / reason 列
+
+### 食事: 「食べた順の記録」と「今日のプランのチェック」を分ける
+- 今日画面は 上から「いま」→ **今日のプラン**（`planSectionHtml`）→ **食べたもの（食べた順）**（`eatenSectionHtml`）→ **ルーティン**（時刻順のタイムライン）。食事はタイムラインから外してある
+- `eatenRecords(date)` が `log_meals` の全記録を `loggedAt` 順に返し、`planEatenSlots(date)` が「どのプラン枠に記録があるか」を返す。プランの ✓ はこれだけで決まるのでフラグは持たない
+- 新しい記録は必ず `newRecordKey(date)`（プランの枠に入れない）で作り、`planSlot: null` を持つ。プランの行から記録したものは `planSlot: 1〜5`
+- **時刻から枠への自動紐づけ（`autoSlotFor` の旧実装）・紐づけチップ・「間食」の区分・プランの打ち消し線・「変更あり」バッジ・1食ごとのプラン比は廃止**
+- プランの行: ○ タップで記録＋✓、✓ タップで取り消し（記録も消え、元に戻せる）、行タップで品目選択シート。品目を変えても**プランの表示は変わらず ✓ が付くだけ**で、変えた内容は「食べたもの」に出る
+- 食べたもの: 時刻をタップで修正（並び順も変わる）、行タップで中身の修正、長押しで削除。プランの記録を消すとプラン側も ○ に戻る
+- 記録の入口は下部の「＋ 食べたものを記録」1つ（`openRecordSheet`）。文字入力にすぐフォーカスが当たり、よく食べるもの・カロリー直接入力・写真（使える画面のみ）・チャットに貼る、を1枚で選べる
 
 ### 写真からカロリー・PFC を推定
 - 呼び方は `claude.use("sample")` → `sample.json(prompt, { images: [blob], modelTier: 'default', signal })` だけ。`api.anthropic.com` を直接叩かない（公開ページでは遮断される）、画像を base64 でプロンプトに埋めない、`window.claude.sample` を直接読まない。公開時の `capabilities` に `sample: {}` を必ず入れる
