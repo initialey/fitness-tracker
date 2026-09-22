@@ -357,6 +357,8 @@ body:has(#bbar:not([hidden])) main{padding-bottom:calc(230px + env(safe-area-ins
 .elist .erow .nm{font-weight:700;overflow-wrap:anywhere;white-space:normal}
 .elist .erow .l2{font-size:13px;color:var(--mute);margin-top:2px;overflow-wrap:anywhere;white-space:normal}
 .elist .erow .l3{font:500 13px var(--num);color:var(--mute);margin-top:2px}
+.step .waitline{color:var(--yellow);font-weight:600}
+.step.done .waitline{color:var(--yellow)}
 .picks{border-radius:10px;overflow:hidden;background:var(--card)}
 .pick{display:grid;grid-template-columns:30px 1fr auto;gap:6px 10px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line)}
 .pick:last-child{border-bottom:0}
@@ -1142,8 +1144,10 @@ function buildTimeline(t) {
   const wAt = t.weight ? (t.weight.loggedAt || legacyIso(t.date, t.weight.time)) : (t.weightSkipped ? t.weightSkipped.loggedAt : '');
   steps.push({ id: 'weight', kind: 'weight', title: '体重', lines: [t.weight ? disp(t.weight.weightKg) + unit() + (t.prevWeight ? ' ' + deltaArrow(t.weight.weightKg - t.prevWeight.weightKg) + '（前回 ' + disp(t.prevWeight.weightKg) + unit() + '）' : '') + (t.weight.bodyFatPct !== '' ? ' ・ 体脂肪 ' + t.weight.bodyFatPct + '%' : '') : t.weightSkipped ? '測れなかった（' + reasonJa(t.weightSkipped) + '）' : (t.prevWeight ? '前回 ' + disp(t.prevWeight.weightKg) + unit() + '（' + t.prevWeight.date.slice(5) + '）' : '起床後・トイレ後に')], planned: T.weight, done: !!t.weight, handled: !!t.weight || !!t.weightSkipped, mark: t.weight ? 'ok' : t.weightSkipped ? 'na' : '', loggedAt: wAt, na: !!t.weightSkipped });
   const morning = routineSteps('morning'); morning.forEach(x => steps.push(x));
-  const sg = suppGroup('after_meal', T.after_meal); if (sg) steps.push(sg);
-  routineSteps('after_meal').forEach(x => { if (sg) x.after = { step: sg.id, waitMin: Number(s.timerAfterMealMin) || 0 }; steps.push(x); });
+  // 朝の「15分あける」2か所（リンゴ酢 → 1食目 ／ 経口サプリ → サイリウム）。チェックした項目にカウンターを出す
+  if (morning.length) morning[morning.length - 1].waitAnchor = 'acv';
+  const sg = suppGroup('after_meal', T.after_meal); if (sg) { sg.waitAnchor = 'supp'; steps.push(sg); }
+  routineSteps('after_meal').forEach((x, i) => { if (sg && i === 0) x.waitTarget = 'supp'; steps.push(x); });
   if (!t.isRest) {
     const pre = suppGroup('pre', T.warmup); if (pre) steps.push(pre);
     steps.push(warmupStep(T.warmup));
@@ -1713,6 +1717,8 @@ async function resetStateKeepingLogs() {
    7. 今日（「いま」カード ＋ 全文タイムライン ＋ 1日合計）
    ===================================================================== */
 function renderToday(t) {
+  t.waits = waitsFor(t);
+  t.activeWait = t.waits.find(w => waitState(w) !== 'done') || null;
   const dayChangeNote = t.dayChange ? '差し替え・本来は Day ' + t.dayChange.from + ' ' + ((ST.plan_days[String(t.dayChange.from)] || {}).name || '') : '';
   let h = '<h1 class="tap" id="dayHead">Day ' + t.dayNo + ' ・ ' + esc(t.dayName) + (dayChangeNote ? '（' + esc(dayChangeNote) + '）' : (t.dayNotes ? '（' + esc(t.dayNotes) + '）' : '')) + (t.isRest ? ' ・ 休み' : '') + ' ›</h1>';
   if (t.carriedFrom) { const note = t.carriedFromDisplacedNote ? md(t.carriedFrom) + ' は Day ' + t.carriedFromDisplacedNote + ' に差し替えたため持ち越し' : md(t.carriedFrom) + ' にできなかったため持ち越し'; h += '<div class="mute small" style="margin:-6px 0 10px">' + esc(note) + '</div>'; }
@@ -1738,7 +1744,7 @@ function renderToday(t) {
     const openAttr = !isToday ? '' : ' data-open="' + esc(st.id) + '"';
     const chkBtn = '<button class="' + chk + (isToday ? '' : ' off') + '" data-chk="' + esc(st.id) + '"' + (isToday ? '' : ' disabled') + ' aria-label="' + (st.handled ? '記録を取り消す' : '完了') + '">' + (st.mark === 'skip' || st.mark === 'na' ? '−' : st.mark ? '✓' : '') + '</button>';
     const chips = '';
-    h += '<div class="step ' + st.state + '" data-step="' + esc(st.id) + '" data-mark="' + esc(st.mark) + '"><div class="row"' + openAttr + '><div class="body"><div class="t1"><span class="nm">' + esc(st.title) + cam + lbl + '</span>' + tm + '</div>' + st.lines.map((l, i) => '<div class="' + (i === st.lines.length - 1 && st.lines.length > 1 ? 'l3' : 'l2') + '">' + (st.lineHtml ? st.lineHtml[i] : esc(l)) + '</div>').join('') + chips + '</div>' + chkBtn + '</div></div>';
+    h += '<div class="step ' + st.state + '" data-step="' + esc(st.id) + '" data-mark="' + esc(st.mark) + '"><div class="row"' + openAttr + '><div class="body"><div class="t1"><span class="nm">' + esc(st.title) + cam + lbl + '</span>' + tm + '</div>' + st.lines.map((l, i) => '<div class="' + (i === st.lines.length - 1 && st.lines.length > 1 ? 'l3' : 'l2') + '">' + (st.lineHtml ? st.lineHtml[i] : esc(l)) + '</div>').join('') + waitLineHtml(t, st) + chips + '</div>' + chkBtn + '</div></div>';
   });
   h += '</div>';
   h += '<div class="card"><div class="ttl small mute">今日のメモ（週次レポートに載ります）</div><textarea class="txt" id="dayComment" placeholder="体調、違和感など">' + esc(t.comment) + '</textarea></div>';
@@ -1757,9 +1763,59 @@ function renderToday(t) {
     if (!st) return;
     bindLongPress(el, () => askChoice(md(t.date) + ' の記録', st.title, [{ label: '修正する', value: 'go', cls: 'b-yel' }]).then(v => { if (v === 'go') stepAction(t, id, false); })); });
   bindMealSections(t);
+  tickWaits(t);
   renderBottomBar(t);
   every(() => { const c = $('#nowClock'); if (c) c.textContent = nowHm(); }, 60000);
   const ta = $('#dayComment'); ta.onblur = () => { if (ta.value !== t.comment) act(A.setDaily(t.date, { comment: ta.value }), 'メモを保存'); };
+}
+/** チェックした項目の下に出すカウンター行（15分たっても消さず、次の行動を記録したときだけ「◯分後に…」になる） */
+function waitLineHtml(t, st) {
+  const w = (t.waits || []).find(x => x.stepId === st.id); if (!w) return '';
+  return '<div class="l3 waitline" data-waitline="' + esc(w.id) + '" data-state="' + waitState(w) + '">' + esc(waitLineText(w)) + '</div>';
+}
+/** 朝の「15分あける」2か所。チェックした時刻（loggedAt）からの差で数えるので、閉じて開き直しても正しい残り時間になる。
+ *  15分たっても消さず、次の行動を記録したときだけ「◯分後に…」に変わる */
+const WAIT_MEta = { acv: { short: 'リンゴ酢', next: '1食目', verb: 'を食べてOK' }, supp: { short: '経口サプリ', next: 'サイリウム', verb: 'を飲んでOK' } };
+function waitsFor(t) {
+  const out = [];
+  t.timeline.filter(x => x.waitAnchor).forEach(a => {
+    if (!a.done || !a.loggedAt) return;
+    const meta = WAIT_MEta[a.waitAnchor]; if (!meta) return;
+    const waitMin = a.waitAnchor === 'acv' ? (Number(ST.settings.timerMorningMin) || 15) : (Number(ST.settings.timerAfterMealMin) || 15);
+    let doneAt = '';
+    if (a.waitAnchor === 'acv') { const r = eatenRecords(t.date).find(x => x.loggedAt && x.loggedAt >= a.loggedAt); doneAt = r ? r.loggedAt : ''; }
+    else { const tgt = t.timeline.find(x => x.waitTarget === a.waitAnchor); doneAt = tgt && tgt.handled ? (tgt.loggedAt || tgt.planned || '') : ''; }
+    const endAt = new Date(new Date(a.loggedAt).getTime() + waitMin * 60000).toISOString();
+    const gapMin = doneAt ? Math.max(0, Math.round((new Date(doneAt).getTime() - new Date(a.loggedAt).getTime()) / 60000)) : null;
+    out.push({ id: a.waitAnchor, stepId: a.id, short: meta.short, next: meta.next, verb: meta.verb, waitMin, from: a.loggedAt, endAt, doneAt, gapMin });
+  });
+  return out;
+}
+function waitState(w) { return w.doneAt ? 'done' : (Date.now() < new Date(w.endAt).getTime() ? 'counting' : 'ready'); }
+function waitLineText(w) {
+  const st = waitState(w);
+  if (st === 'counting') return w.next + 'まで あと ' + mmss((new Date(w.endAt).getTime() - Date.now()) / 1000);
+  if (st === 'ready') return w.waitMin + '分経過 ・ ' + w.next + 'OK（経過 ' + Math.max(0, Math.round((Date.now() - new Date(w.from).getTime()) / 60000)) + '分）';
+  return w.gapMin + '分後に' + w.next + (w.gapMin < w.waitMin ? '（' + w.waitMin + '分より早い）' : '');
+}
+/** 15分に達したことを 1 回だけ知らせる（日付＋どちらの待ちか で覚える） */
+const WAIT_TOLD = {};
+function tellWaitDone(t, w) {
+  const k = t.date + '#' + w.id; if (WAIT_TOLD[k]) return; WAIT_TOLD[k] = true;
+  vibrate([200, 100, 200]); toast(w.waitMin + '分経ちました。' + w.next + w.verb + 'です');
+}
+/** 1秒ごとに数字だけ書き換える（描き直さない）。15分に達したらその場で表示を切り替えて知らせる */
+function tickWaits(t) {
+  const waits = t.waits || []; if (!waits.length) return;
+  every(() => {
+    waits.forEach(w => {
+      const el = $('[data-waitline="' + w.id + '"]'); const before = el ? el.dataset.state : '';
+      const st = waitState(w);
+      if (el) { el.textContent = waitLineText(w); el.dataset.state = st; }
+      if (before === 'counting' && st === 'ready') { tellWaitDone(t, w); const nt = $('#nowTimer'); if (nt) renderNow(t); }
+      const nt = $('#nowTimer'); if (nt && st === 'counting' && (t.activeWait || {}).id === w.id) nt.textContent = mmss((new Date(w.endAt).getTime() - Date.now()) / 1000);
+    });
+  }, 1000);
 }
 /** 今日のプラン: コーチの5食を固定の順で。状態は「食べた（✓）／食べてない（○）」の2つだけ。
  *  プラン外のものを記録してもここは一切変わらない（打ち消し線も付けない） */
@@ -1981,8 +2037,14 @@ function missWorkout(t) {
 /** サプリ・ルーティンの長押し → 「今日はなし（理由）」 */
 function bindLongPress(el, fn) { let tm = null, fired = false; const start = e => { fired = false; tm = setTimeout(() => { fired = true; vibrate(30); fn(); }, 550); }; const stop = () => { clearTimeout(tm); }; el.addEventListener('pointerdown', start); ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => el.addEventListener(ev, stop)); el.addEventListener('click', e => { if (fired) { e.stopImmediatePropagation(); e.preventDefault(); fired = false; } }, true); el.addEventListener('contextmenu', e => e.preventDefault()); }
 function renderNow(t) {
-  const n = t.now, el = $('#now'); if (!el) return;
+  let n = t.now; const el = $('#now'); if (!el) return;
   if (t.date !== todayYmd()) { el.hidden = true; return; }
+  // 15分あける待ちがあるあいだは「いま」をカウンターにする（15分たっても消さず「OK」表示で残す）
+  const aw = t.activeWait;
+  if (aw) { const st = waitState(aw);
+    n = { kind: 'wait', waitId: aw.id, title: st === 'counting' ? aw.next + 'まで' : aw.next + aw.verb,
+      sub: st === 'counting' ? aw.short + 'を記録 ' + fmtHm(aw.from) : aw.short + 'から ' + aw.waitMin + '分経過',
+      timerUntil: st === 'counting' ? aw.endAt : '', button: aw.id === 'acv' ? '1食目を記録する' : 'サイリウムを完了にする', planned: '' }; }
   let left = null; if (n.timerUntil) { left = (new Date(n.timerUntil).getTime() - Date.now()) / 1000; if (left <= 0) left = null; }
   let title = n.title, sub = n.sub, btn = n.button, btn2 = n.button2;
   if (n.timerUntil && left == null) { if (n.kind === 'meal') { const m = t.meals.find(x => x.mealNo === n.mealNo); title = n.mealNo + '食目を食べる'; btn = 'プラン通り食べた'; btn2 = '変更'; sub = m ? m.planItems.map(p => p.name).join('・') + '\n' + macroLine(m.planMac) : ''; } else { title = n.title.replace(/まで$/, ''); sub = ''; } }
@@ -1993,10 +2055,13 @@ function renderNow(t) {
   // 体重は入力欄が空のあいだ保存できない（測っていないのに前回値で記録される事故を防ぐ）
   if (n.kind !== 'done') h += '<div class="btns"><button id="nowBtn"' + (n.kind === 'weight' ? ' disabled' : '') + '>' + esc(btn) + '</button>' + (btn2 ? '<button class="alt" id="nowBtn2">' + esc(btn2) + '</button>' : '') + '</div>';
   el.innerHTML = h;
-  if (left != null) every(() => { const l = (new Date(n.timerUntil).getTime() - Date.now()) / 1000, te = $('#nowTimer'); if (!te) return; if (l <= 0) { vibrate([200, 100, 200]); render(); } else te.textContent = mmss(l); }, 1000);
+  if (left != null) every(() => { const l = (new Date(n.timerUntil).getTime() - Date.now()) / 1000, te = $('#nowTimer'); if (!te) return;
+    // 15分に達したら、描き直す前に知らせる（描き直すとカウンターの「切り替わり」を取りこぼす）
+    if (l <= 0) { if (n.kind === 'wait') { const w = (t.waits || []).find(x => x.id === n.waitId); if (w) return void (tellWaitDone(t, w), render()); } vibrate([200, 100, 200]); render(); } else te.textContent = mmss(l); }, 1000);
   const b = $('#nowBtn'), b2 = $('#nowBtn2'); if (!b) return;
   const wIn = $('#nowW'); if (wIn) { const sync = () => { b.disabled = wIn.value.trim() === ''; }; wIn.oninput = sync; sync(); }
   b.onclick = () => {
+    if (n.kind === 'wait') { if (n.waitId === 'acv') return openMealPickSheet(t.date, 1); const tgt = t.timeline.find(x => x.waitTarget === 'supp'); return tgt ? stepAction(t, tgt.id, true) : null; }
     if (n.kind === 'weight') { const v = $('#nowW').value; if (!v) return toast('体重を入力', true); b.disabled = true; return act(A.saveWeight(t.date, v, $('#nowBf').value), '体重を保存'); }
     if (n.kind === 'meal' && left != null) return openMealSheet(n.mealNo, false);
     if (n.kind === 'water') return act(A.addWater(t.date, 500));

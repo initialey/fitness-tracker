@@ -156,6 +156,13 @@
 - 食べたもの: 時刻をタップで修正（並び順も変わる）、行タップで中身の修正、長押しで削除。プランの記録を消すとプラン側も ○ に戻る
 - 記録の入口は下部の「＋ 食べたものを記録」1つ（`openRecordSheet`）。文字入力にすぐフォーカスが当たり、よく食べるもの・カロリー直接入力・写真（使える画面のみ）・チャットに貼る、を1枚で選べる
 
+### 朝の「15分あける」カウンター
+- `todayModel` が「リンゴ酢」の行に `waitAnchor:'acv'`、「経口サプリ」のグループに `waitAnchor:'supp'`、サイリウムの行に `waitTarget:'supp'` を付ける
+- `waitsFor(t)` が各アンカーについて `{from: loggedAt, endAt, doneAt, waitMin, gapMin}` を作り、`waitState()` が `counting`／`ready`／`done` を返す。**すべて loggedAt との差で計算**するので、閉じて開き直しても残り時間が正しい（`setInterval` の回数では数えない）
+- 次の行動は acv = その日の最初の食事記録（`eatenRecords` の loggedAt >= from）、supp = サイリウムの行が完了したか
+- 表示は `waitLineText()` の1本で、タイムラインの項目（`[data-waitline]`）と「いま」カード（`renderNow` が `kind:'wait'` に差し替え）の両方に出す。1秒ごとに `tickWaits()` が**数字だけ書き換える**（描き直さない）
+- 15分に達したら `tellWaitDone()` が 1 回だけトースト＋`vibrate`（`WAIT_TOLD` で日付＋種別ごとに記録）。閉じているあいだの通知は実装しない
+
 ### 写真からカロリー・PFC を推定
 - 呼び方は `claude.use("sample")` → `sample.json(prompt, { images: [blob], modelTier: 'default', signal })` だけ。`api.anthropic.com` を直接叩かない（公開ページでは遮断される）、画像を base64 でプロンプトに埋めない、`window.claude.sample` を直接読まない。公開時の `capabilities` に `sample: {}` を必ず入れる
 - **写真を出すかどうかは `canSendPhoto()`**: `sample` があり、かつ `sample.limits()` が「画像は使えない」と答えていなければ写真の入口（`#photoBtn` / 食事シートの「📷 写真で記録」）を出す。`limits()` が「images 無し」と答えた画面では写真ボタンを出さず **「✏️ 文字で推定」（`#textEstBtn`）** に差し替える。文字で推定の下には「それでも写真で試す」（`#phForce` → `CAP.imagesForce`）を残し、申告が実際とズレる環境でも本人の操作でなら試せるようにする（試して `images_unavailable` が返ったら自動で解除）。実際に `images_unavailable` が返った表示は `localStorage['tl.noImages']` に覚えて、次からは黄色いエラー枠ではなく静かな 1 行で文字入力に入る（「それでも写真で試す」は残す）。写真を選ぶのは下部バーと同じ「📷 写真を選ぶ」ボタン＋隠し `input[type=file]`。`limits()` を呼べない環境では送れる前提で出し、実際に `images_unavailable` が返った時点で写真の入口を隠して文字での推定に切り替える

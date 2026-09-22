@@ -201,11 +201,29 @@ async function run(mode) {
   await T(G.today, '全行で「…」省略なし。サプリ名・食材が全部表示', async () => { const rows = await page.$$eval('.step', els => els.map(e => e.textContent)); assert(!rows.some(r => r.includes('…')), 'ellipsis'); assert(rows.some(r => r.includes('経口サプリ') && r.includes('B12＋D3') && r.includes('ベルベリン') && r.includes('フィッシュオイル') && r.includes('亜鉛') && !r.includes('クレアチン')), 'oral supp names, no creatine'); assert(rows.some(r => r.includes('トレ前') && r.includes('クレアチン') && r.includes('タイミング確認中')), 'creatine on its own pre-workout row'); assert(rows.some(r => r.includes('マグネシウム グリシネート 400mg 就寝前') && r.includes('アシュワガンダ 300mg 就寝前')), 'night supps with dose'); assert(rows.some(r => r.includes('腹筋（最終種目のあと）') && r.includes('ケーブルクランチ') && r.includes('ケーブル 片手 オブリーククランチ') && r.includes('ハンギングニーレイズ') && !r.includes('確認中')), 'abs row lists all 3 exercises, no 確認中'); assert(rows.some(r => r.includes('ウォームアップ') && r.includes('各10回×2セット')), 'warm-up 2 sets'); assert((await page.$eval('[data-planrow="1"]', e => e.textContent)).includes('全卵4個（約200g）') && !(await page.$eval('.plist', e => e.textContent)).includes('…'), 'プランの品目は省略せず全部出す'); assert(rows.some(r => r.includes('ケーブルフライ（座位・ミッド角度） または ペックデッキ・インクラインダンベルプレス・マシン インクラインプレス または スミス インクラインプレス') && r.includes('ほか5種目') && !r.includes('アンダーハンド')), 'exercises: first 3 + ほか5種目'); });
   await T(G.today, '朝の順番: 体重 → リンゴ酢 → 1食目 → 経口サプリ → サイリウム。サプリ 07:05・サイリウム 07:20（15分後）、説明に「ゆっくり」「水500ml以上」「水1L以上」', async () => { const ids = await page.$$eval('.step', els => els.map(e => e.dataset.step)); const want = ['weight', 'routine:1', 'supp:after_meal', 'routine:2']; assert(JSON.stringify(ids.slice(0, 4)) === JSON.stringify(want), 'order: ' + ids.slice(0, 6).join(',')); assert(!ids.some(x => /^meal:/.test(x)), '食事はルーティンのタイムラインから外れている: ' + ids.join(',')); const tm = async id => text('[data-step="' + id + '"] .tm'); assert((await tm('weight')).includes('06:40') && (await tm('routine:1')).includes('06:45') && (await tm('supp:after_meal')).includes('07:05') && (await tm('routine:2')).includes('07:20'), 'times: ' + [await tm('weight'), await tm('routine:1'), await tm('supp:after_meal'), await tm('routine:2')].join(' | ')); const r1 = await text('[data-step="routine:1"]'), r2 = await text('[data-step="routine:2"]'); assert(r1.includes('大さじ1') && r1.includes('水500ml以上') && r1.includes('ゆっくり飲む') && r1.includes('食事の15分前'), 'acv row: ' + r1); assert(r2.includes('サイリウムハスク 大さじ1') && r2.includes('水1L以上') && r2.includes('ゆっくり') && r2.includes('15分後'), 'psyllium row: ' + r2); assert((await text('[data-step="supp:night"]')).includes('就寝前サプリ') && (await tm('supp:night')).includes('22:30'), 'night 22:30'); const u = await page.evaluate(() => [window.__tl.warmupMinutesText(289), window.__tl.warmupMinutesText(12), window.__tl.warmupMinutesText(0)]); assert(u[0] === '完了' && u[1] === '完了 12分' && u[2] === '完了', 'warm-up minutes guard: ' + u.join(',')); });
   await T(G.today, '体重 kg⇄lb 切替で換算が正しく、保存は kg', async () => { await goTab('summary'); await page.click('#unitBtn'); await page.waitForTimeout(100); await goTab('today'); assert((await text('#now .w-in .u')) === 'lb', 'unit lb'); await page.fill('#nowW', '160'); await page.click('#nowBtn'); await page.waitForFunction(() => document.querySelector('[data-step="weight"]').className.includes('done')); const row = await text('[data-step="weight"]'); assert(row.includes('160.1lb') || row.includes('160lb'), 'lb display: ' + row); if (mode === 'db') { await page.waitForTimeout(200); assert(rt.DB.log_weight['2026-09-16'].weightKg === 72.6, 'stored kg=' + rt.DB.log_weight['2026-09-16'].weightKg); } await goTab('summary'); await page.click('#unitBtn'); await page.waitForTimeout(100); await goTab('today'); assert((await text('[data-step="weight"]')).includes('72.6kg'), 'kg display'); return '160lb → 72.6kg 保存'; });
-  await T(G.today, 'リンゴ酢✓ → 「いま」が次のルーティンへ進む（食事はタイムラインに無いので「いま」にならない）', async () => {
-    await page.click('[data-chk="routine:1"]'); await page.waitForFunction(() => document.querySelector('[data-step="routine:1"]').className.includes('done'));
-    const title = await text('#now .t');
-    assert(!/^\d食目/.test(title), '「いま」に食事の記録は出ない: ' + title);
-    assert((await page.$eval('#now', e => e.textContent)).length > 0, '「いま」カードは出る');
+  await T(G.today, 'リンゴ酢✓ → 「1食目まで あと 15:00」のカウンターが「いま」カードとタイムラインの両方に出る。15分たっても消さず「15分経過 ・ 1食目OK（経過 ◯分）」で残り、閉じて開き直しても残り時間が正しい', async () => {
+    await page.click('[data-chk="routine:1"]'); await page.waitForSelector('#nowTimer');
+    assert((await text('#now .t')) === '1食目まで', '「いま」の見出し: ' + (await text('#now .t')));
+    assert((await text('#nowTimer')) === '15:00', 'timer 15:00');
+    assert((await text('#now .s')).includes('リンゴ酢を記録'), 'いつ飲んだかを出す: ' + (await text('#now .s')));
+    const line = await page.$eval('[data-waitline="acv"]', e => e.textContent + '|' + e.dataset.state);
+    assert(line === '1食目まで あと 15:00|counting', 'タイムラインの項目にも同じカウンター: ' + line);
+    if (mode === 'db') { await page.waitForTimeout(250); await setTime('2026-09-16T06:55:30+08:00'); await page.reload(); await page.waitForFunction(() => !document.querySelector('#view .loading')); await goTab('today'); await page.waitForSelector('#nowTimer');
+      const left = await text('#nowTimer'); assert(/^9:(2|3)\d$/.test(left), '閉じて開き直しても残り時間が正しい（loggedAt からの差で数える）: ' + left); }
+    // 15分たっても消さない
+    await setTime('2026-09-16T07:06:00+08:00'); await goTab('workout'); await goTab('today');
+    assert((await text('#now .t')) === '1食目を食べてOK', '15分後の「いま」: ' + (await text('#now .t')));
+    const l2 = await page.$eval('[data-waitline="acv"]', e => e.textContent + '|' + e.dataset.state);
+    assert(/^15分経過 ・ 1食目OK（経過 \d+分）\|ready$/.test(l2), '15分たっても消えずに残る: ' + l2);
+    // チェックを取り消すとカウンターも消える
+    await page.click('[data-chk="routine:1"]'); await page.waitForFunction(() => !document.querySelector('[data-waitline="acv"]'));
+    await page.click('[data-chk="routine:1"]'); await page.waitForSelector('[data-waitline="acv"]');
+    // 時刻を直すとカウンターも計算し直される
+    await page.click('[data-time="routine:1"]'); await page.waitForSelector('#dlgTime'); await page.fill('#dlgTime', '07:00'); await page.click('#dlgOk'); await page.waitForSelector('#dlg', { state: 'hidden' }); await page.waitForTimeout(250);
+    const l3 = await page.$eval('[data-waitline="acv"]', e => e.textContent + '|' + e.dataset.state);
+    assert(/^1食目まで あと (8|9):\d\d\|counting$/.test(l3), '時刻を 07:00 に直したら 07:15 までを数え直す: ' + l3);
+    await page.click('[data-time="routine:1"]'); await page.waitForSelector('#dlgTime'); await page.fill('#dlgTime', '06:45'); await page.click('#dlgOk'); await page.waitForSelector('#dlg', { state: 'hidden' }); await page.waitForTimeout(250);
+    return '15分カウンター（いま＋項目）・15分後も残る・再読み込みで正しい・取り消しと時刻修正で再計算';
   });
   await T(G.today, '✓の付け外しが即反映、再読み込み後も残る（db）', async () => { await logIntoSlot(1); assert(await planEaten(1), 'プラン1食目が ✓ になる'); await page.click('[data-chk="routine:1"]'); await page.waitForFunction(() => !document.querySelector('[data-step="routine:1"]').className.includes('done')); await page.click('[data-chk="routine:1"]'); await page.waitForFunction(() => document.querySelector('[data-step="routine:1"]').className.includes('done'));
     if (mode === 'db') { await page.waitForTimeout(300); await page.reload(); await page.waitForFunction(() => !document.querySelector('#view .loading')); await goTab('today'); assert(await planEaten(1), 'meal1 after reload'); assert((await page.$eval('[data-step="weight"]', e => e.className)).includes('done'), 'weight after reload'); return '再読み込み後も維持'; } return 'モックは再読み込み対象外'; });
@@ -1931,6 +1949,35 @@ async function run(mode) {
       return 'Day 6 は筋トレの日。手で休みにした日は戻せる';
     } finally { await p2.close(); rt.op('del', { coll: 'log_daily', id: D }); rt.op('del', { coll: 'log_workout', id: D }); }
   });
+  await T(G.today, '15分カウンターは次の行動を記録したときだけ消え「◯分後に…」が残る。15分より早く進めたら「（15分より早い）」を添える。15分に達したらその場で知らせる', async () => {
+    const D = '2027-11-03';
+    const p2 = await newPage(); p2.setDefaultTimeout(20000);
+    const lineOf = id => p2.$eval('[data-waitline="' + id + '"]', e => e.textContent + '|' + e.dataset.state).catch(() => 'NONE');
+    try {
+      await p2.clock.setFixedTime(new Date(D + 'T06:45:00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading'));
+      await p2.click('.tabs [data-tab="today"]'); await p2.waitForSelector('[data-chk="routine:1"]');
+      // リンゴ酢 → 15分 → 1食目を記録すると消えて「◯分後に1食目」が残る
+      await p2.click('[data-chk="routine:1"]'); await p2.waitForSelector('[data-waitline="acv"]');
+      assert((await lineOf('acv')) === '1食目まで あと 15:00|counting', 'counting: ' + (await lineOf('acv')));
+      // 開いている間に15分たったら知らせる（描き直さずに表示が切り替わる）
+      await p2.clock.setFixedTime(new Date(D + 'T07:00:30+08:00'));
+      await p2.waitForFunction(() => { const e = document.querySelector('[data-waitline="acv"]'); return e && e.dataset.state === 'ready'; });
+      assert((await p2.locator('#toast').textContent()).includes('15分経ちました') && (await p2.locator('#toast').textContent()).includes('1食目'), '15分で知らせる: ' + (await p2.locator('#toast').textContent()));
+      await p2.clock.setFixedTime(new Date(D + 'T07:03:00+08:00'));
+      await p2.click('[data-planchk="1"]'); await p2.waitForTimeout(500);
+      assert((await lineOf('acv')) === '18分後に1食目|done', '記録したら「◯分後に1食目」が残る: ' + (await lineOf('acv')));
+      assert(!/1食目まで|あと/.test(await p2.locator('#now').textContent()), 'カウンターは「いま」からも消える: ' + (await p2.locator('#now').textContent()));
+      // 経口サプリ → 15分より早くサイリウムを完了 → 「（15分より早い）」
+      await p2.click('[data-chk="supp:after_meal"]'); await p2.waitForSelector('[data-waitline="supp"]');
+      assert((await p2.locator('#now .t').textContent()) === 'サイリウムまで', '「いま」はサイリウムまでのカウンター: ' + (await p2.locator('#now .t').textContent()));
+      assert((await lineOf('supp')) === 'サイリウムまで あと 15:00|counting', 'supp counting: ' + (await lineOf('supp')));
+      await p2.clock.setFixedTime(new Date(D + 'T07:12:00+08:00'));
+      await p2.click('[data-chk="routine:2"]'); await p2.waitForTimeout(500);
+      assert((await lineOf('supp')) === '9分後にサイリウム（15分より早い）|done', '15分より早いと添える: ' + (await lineOf('supp')));
+      assert((await lineOf('acv')) === '18分後に1食目|done', 'リンゴ酢側はそのまま残る: ' + (await lineOf('acv')));
+      return 'リンゴ酢 18分後に1食目 ／ 経口サプリ 9分後にサイリウム（15分より早い）';
+    } finally { await p2.close(); ['log_meals', 'log_daily', 'log_routine', 'log_supplements'].forEach(c => rt.op('del', { coll: c, id: D })); }
+  });
 
   await browser.close();
   return errors;
@@ -2005,6 +2052,8 @@ async function run(mode) {
 | 41 | 食事が「プランの枠に押し込む」作りで、プラン外のもの（スタバの抹茶ラテ）が時刻から4食目の枠に入り、4食目のプランが打ち消し線で上書きされていた。食べた順と番号もずれていた。**「食べた順の記録」と「今日のプランのチェック」を完全に別物にする**方針へ変更: 時刻からの自動紐づけ・紐づけチップ・「間食」の区分・打ち消し線・「変更あり」・1食ごとのプラン比を全廃し、プランは ✓／○ だけ（\`planSlot\` が一致する記録の有無から導出）、食べたものは \`loggedAt\` 順に番号なしで並べる。記録ボタンも1つにまとめた。既存データは書き換えず、「プラン由来の品目があるか」で \`planSlot\` を導出して移行する |
 
 | 42 | Day 6（Pull）なのに下部タブが「Day 6 休み」「有酸素」になっていた。Day ピッカーの「休みにする」（\`log_daily.isRestOverride\`）が立ったままだったのが原因で、画面上はそれと分からず戻し方も無かった。手で変えた日は今日画面にその旨を出し、タップで予定どおりに戻せるようにした。あわせて、古い \`settings.cardioLabel\` に残っていた「（種類はコーチ確認中）」を SEED_VERSION 12 の移行で既定文に戻す |
+
+| 43 | 朝の「15分あける」カウンターを足したとき、15分に達した瞬間のトーストが出なかった。「いま」カードのタイマー（\`renderNow\` の \`every\`）が 0 秒で先に \`render()\` してしまい、カウンター行の状態が counting → ready に切り替わる瞬間を \`tickWaits()\` が見られなくなっていたのが原因。描き直す前に \`tellWaitDone()\` を呼ぶ順に直した |
 
 
 ## 実行方法
