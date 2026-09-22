@@ -43,7 +43,7 @@
 | `log_daily` | YYYY-MM-DD | dayNo(手動上書き), dayChange{from, loggedAt}（その日の Day/部位の差し替え。「未消化キュー」方式はこのフィールドだけで表現し、他の日付は書き換えない）, dayName, notes, waterMl, waterLoggedAt（水タブ）, skippedItems[{item, itemJa, reason, reasonJa}]（できなかった項目の自動集計）, isRestOverride, comment, warmupSkipped{reason, at}, workoutMissed{reason, reasonText, loggedAt}, cardioMissed{reason, reasonText, loggedAt}, restDone{loggedAt}（休みの日の「有酸素はやらない」） |
 
 重量は常に kg で保存。表示時のみ lb 換算（1 lb = 0.45359237 kg、小数 1 桁）。
-初回起動時に `plan_days` が空、または `settings.seedVersion` が `SEED_VERSION`（現在 12 = 食事を「食べた順の記録」と「プランのチェック」に分ける ／ 有酸素の説明から「確認中」を外す）より古ければ、`SEED` 定数（[training-log-spec.md](training-log-spec.md)）で `plan_*` と `foods`(source=plan) を投入し直す。ログは触らない。プランを変えたら `SEED_VERSION` を上げて再公開する。
+初回起動時に `plan_days` が空、または `settings.seedVersion` が `SEED_VERSION`（現在 13 = 食品マスタの重複をまとめ、1個あたりの分量と単位を必ず持たせる）より古ければ、`SEED` 定数（[training-log-spec.md](training-log-spec.md)）で `plan_*` と `foods`(source=plan) を投入し直す。ログは触らない。プランを変えたら `SEED_VERSION` を上げて再公開する。
 
 ### 起動（読み込みが必ず終わるようにする）
 `boot()` は `try / catch / finally` で囲み、**何があっても最後に描き直す**（`LOAD.step` / `LOAD.error`）。
@@ -146,6 +146,15 @@
 - サプリ・ルーティン: 行の ○ を長押し、またはサプリシートの「今日はなし」→ 理由（切れていた／持っていない／忘れた／体調不良）
 - 筋トレ・有酸素: 行の ○ → 「今日はできなかった」→ 理由（仕事／体調不良／旅行／その他）を log_daily に保存するだけでよい。「未消化キュー」方式では「完了しなかった」だけで自動的にその Day がキューの先頭に残り、翌日も同じ Day が繰り越して出る（完了の判定は `log_workout.finished`／休みの日は `log_cardio` の記録の有無で、`workoutMissed` の記録自体は Day の判定に影響しない）
 - 週まとめ: 体重グラフは隣り合う日だけ線で結び欠測日を飛ばす。7 日平均は暦 7 日窓の実測のみ。「体重 N/M 日 測定」、「できなかった項目とその理由」ブロック。レポートは `Weight: … (5/7 days measured, skipped: travel×2)` と Notes に自動集計。CSV に skipped / reason 列
+
+### 食事の記録画面（新規・編集 共通）
+- 下部の「＋ 食べたものを記録」→ `openRecordSheet(date, key)`。操作は **チェック・個数・記録する** の3つだけ
+- 一覧は `recordFoods()`（`foodUseCounts()` の多い順）。行は `foodDisplayName(f)` = 名前＋`foodUnit(f)` の分量と単位（「1」だけの表示はしない）。チェックした行だけ **− 個数 +**（0.5 単位）を出し、下部に品数と合計を常に出す
+- 「記録する」で選んだ品目**すべてを1件の記録**として保存（`planSlot: null`）。編集は同じ画面で、チェック済みで開き、外せば品目が消える。編集時だけ一番下に「この記録を削除」（削除はトーストで元に戻せる）
+- 「＋ 新しい食品を登録」（名前・1個の分量＋単位 g/ml/個/袋/枚・kcal 必須・PFC 任意）は登録してそのままチェック済みにする。「＋ カロリーだけ入力」はマスタに残さず（`hidden: true`）この記録にだけ1品として加える
+- 写真は `canSendPhoto()` のときだけ「写真から推定」を出す。チャットに貼る経路は常に出す。**文字の AI 推定（AI計算・文字で推定）は廃止**
+- プランの見出しの「まとめて記録」で複数の食事を選び、**同じ時刻でそれぞれ別の記録**として入れられる
+- 食品マスタは SEED_VERSION 13 の `mergeDuplicateFoods()` で重複をまとめる（正規化した名前と `FOOD_ALIAS_TO` で判定し、過去の記録の `foodId` を付け替えてから重複を削除。**記録は消さない**）
 
 ### 食事: 「食べた順の記録」と「今日のプランのチェック」を分ける
 - 今日画面は 上から「いま」→ **今日のプラン**（`planSectionHtml`）→ **食べたもの（食べた順）**（`eatenSectionHtml`）→ **ルーティン**（時刻順のタイムライン）。食事はタイムラインから外してある
