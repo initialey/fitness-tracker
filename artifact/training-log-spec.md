@@ -35,6 +35,36 @@ Day の判定は「未消化キュー」方式（カレンダー計算だけだ�
 ### トレーニング日の流れ（筋トレタブ）
 ウォームアップ 6 種（各 10 回 × 2 セット）→ 事前疲労 → 種目 1〜7（1 画面 1 セット）→ 腹筋 または カーフ → 「筋トレ完了」→ 完了画面（所要時間・やった内容・有酸素の記録・コーチ報告テキストのコピー）→ 今日の画面へ。
 
+### 種目のスキップと、別の日への持ち越し
+種目画面の下のボタン列の「スキップ」から選ぶ。どちらを選んでも次の種目へ進む。理由（時間がない／疲れ／痛み・違和感／器具が使えない／その他）は任意。
+
+| 選択肢 | 起きること |
+|---|---|
+| 別の日に持ち越す | まだ記録していない必須セットだけを `carryover` に積む。すでに記録したセットは持ち越さない |
+| 今日はやらない | その日のスキップとして残すだけ。持ち越しには積まない |
+
+- スキップ・持ち越しにした種目は、その日の一覧と完了画面で灰色の「持ち越し」「スキップ」になる。もう一度その種目を開けば「やっぱり今日やる」で解除できる（まだ消化していない持ち越しも一緒に消える）
+- スキップ・持ち越しにした種目は **その日の Day 完了を妨げない**。逆に、持ち越して追加した種目は Day 完了の判定には数えない
+- 持ち越しの一覧は筋トレタブのいちばん上（ウォームアップ画面・休みの日の画面）に出す。0 件なら何も出さない。古い順に並べ、7 日より前の日付はオレンジ。行を左スワイプすると削除できる
+- 筋トレが終わったあとの「いま」カードに「持ち越しが◯つあります」の 1 行を出す
+- 消化するには「選んで今日やる」（複数選べる）。選んだ種目は今日の一覧のいちばん下（腹筋・カーフの前）に足し、種目画面には「9/22 Day 6 から持ち越し」と出す。休みの日でも足せる（その種目を終えると有酸素の画面に移る）。その日の最後の種目が終わったあとに 1 回だけ同じことを聞く
+- 途中までしかできなかったら、残りのセットだけが持ち越しに残る
+- 週まとめに「持ち越し 追加 4件 ・ 消化 2件 ・ 残り 2件」「スキップ 1件（痛み・違和感）」の行、コーチ報告テキストに `Skipped / carried over:` のブロックを出す
+
+### 提案重量の出し方
+基準は **前回のセッションの同じセット番号**（同じ番号が無ければ前回のいちばん近いセット番号）。そこに **当日ここまでの実績** で補正をかける。
+
+1. 補正係数 = 当日の直前セットの重量 ÷ そのセットの前回の重量（0.85〜1.15 に収める）
+2. 回数の調整は **当日の直前セット** の回数で: 上限超え → +5%（ダンベルは 1 個 +1kg）／上限ちょうど → +2.5kg／範囲内 → そのまま／下限未満 → −5%
+3. 丸めは器具ごと: バーベル・スミス・マシン 1kg（+2.5kg のようにぴったり 0.5kg 刻みで出た値はそのまま残す） ／ ダンベル 1 個あたりの刻み ／ ケーブル等のウェイトスタック 5kg
+
+セット種別ごとの基準: ウォームアップ・トップ・漸増・腹筋・カーフは「前回の同セット × 補正」、バックオフは「当日のトップ × 0.85」、ミッドは「当日のトップ × 0.70（16 回以上）または × 0.80」、ドロップは「直前のセット × 0.70」。
+
+前回も当日の実績も無いときは **提案を出さない**（入力欄は空のまま、「初回です。軽めから試してください」）。入力ポップアップには根拠を 2 行で出す（「前回の同セット」「今日の前のセット」。無いほうの行は出さない）。「A または B」の種目は選んだ種目の記録だけを見る。代替種目名で記録したものは提案の基準（「前回」）には使わない（履歴の一覧には残す）。
+
+### 記録の決まり（0 回は記録しない）
+回数 0 は記録できない。重量が必要な種目は重量を入れないと記録できない。自重かどうかは種目の定義だけで決まる（重量欄を空にしても自重にはならない）。
+
 ### コーチからのフォーム指摘（9/21）
 種目画面の種目名の直下に、折りたたまずに全文を出す。
 
@@ -229,12 +259,13 @@ Day の判定は「未消化キュー」方式（カレンダー計算だけだ�
 | `settings/main` | startDate, unit, riceBasis, targetKcal 2632 / targetP 210 / targetF 69 / targetC 295（1日の目標・全曜日共通）, restTopSec 180, restMainSec 120, restOtherSec 120, restAccessorySec 90, incDbKg 1, weeklyGainPct 5, times{…}, seedVersion, bioHeightCm, bioAge, bioSex, bioWeightKg 72.4（体重未記録のときの有酸素kcal計算の初期値）, activityBase, rulerScale, activityAdjustedWeek, activityBasePrev（落ちた脂肪の計算・較正・自動補正用） |
 | `plan_days` / `plan_exercises` / `plan_warmup` / `plan_meals` / `plan_supplements` / `plan_routine` / `foods` | 上記マスタ（`SEED_VERSION` を上げると plan_* と plan 由来の foods を差し替え。ログは触らない）。`plan_exercises` は dayNo（数値 または 複数日の配列 = 腹筋 [1,4,6]・カーフ [2,5]）, setScheme（`WU10-12,TOP6-8,BO10-12` / `MAIN8,MAIN10,MAIN12` / `MAIN10-15x3,DROP*` / `MID12-15x2,MID12-15?` = 末尾 `?` は任意のセット）, progressive, pair[2 動作], accessory("abs"/"calves"), choiceGroup（同じ値の種目はその日どれか 1 つだけを選んでやる）, bodyweight（自重・重量欄なし）, formCues[{date, text, videoUrl}]（コーチからのフォーム指摘）を持つ |
 | `log_weight/{date}` | value, unit "kg", skipped(bool), skipReason, loggedAt（互換: weightKg, reason） |
-| `log_workout/{date}` | sets{"exId_setNo": {exerciseId, setNo, setType, weightKg, reps, loggedAt}}（スーパーセットは 1-1/1-2 が別 setNo）, choices{choiceGroup: exerciseId}（その日「A または B」でどれを選んだか。選び直すと選択が消え、そのとき記録済みのセットも消える）, meta{exId: {note, rpe, subName}}, warmup{completed, minutes, sets, loggedAt, skipped, skipReason}, finished, finishedAt（完了画面はここから所要時間を出す） |
+| `log_workout/{date}` | sets{"exId_setNo": {exerciseId, setNo, setType, weightKg, reps, loggedAt}}（スーパーセットは 1-1/1-2 が別 setNo）, choices{choiceGroup: exerciseId}（その日「A または B」でどれを選んだか。選び直すと選択が消え、そのとき記録済みのセットも消える）, meta{exId: {note, rpe, subName}}, skips{exId: {carried, carryId, reason, sets[], loggedAt}}（その日やらないことにした種目）, extra[持ち越しid]（その日に消化する持ち越し）, warmup{completed, minutes, sets, loggedAt, skipped, skipReason}, finished, finishedAt（完了画面はここから所要時間を出す） |
 | `log_meals/{date}` | meals{キー: {planSlot: 1〜5（プランのその食事から記録した）または null（プラン外）, status: plan / substitute / skip / photo, items[{foodId, grams, kcal, p, f, c, origin, eaten, deleted, planGrams, estimated, manual}], loggedAt（記録した瞬間の時刻。並び順はこれだけで決まる）, photoId, reason, variant, photo{assetId, confidence, note}}}。プランの ✓ は「その日に planSlot が一致する記録があるか」で決め、別のフラグは持たない。旧データ（linkedSlot 方式）は「プラン由来の品目があるか」で planSlot を導出する |
 | `log_supplements/{date}` `log_routine/{date}` | items{id: {done, loggedAt}}（今日はなし: na, reason）。水は value(ml) |
 | `log_cardio/{date}` | entries[{type: jog / incline / padel / pickleball / other, minutes, hr, note, loggedAt, intensity（パデル・ピックルボールのみ: light/normal/hard）, kcal（パデル・ピックルボールのみ: 保存時点の体重で計算した消費kcal）}] |
 | `log_daily/{date}` | dayNo（手動上書き。「未消化キュー」の差し替えはこれだけで表現し、他の日付は触らない）, dayChange{from, loggedAt}, dayName, notes, waterMl, waterLoggedAt, skippedItems[{item, reason}], workoutMissed{reason}, cardioMissed, restDone{loggedAt}（休みの日の「有酸素はやらない」）, warmupSkipped |
 | `log_media/{id}` | date, type, category(body/form/meal), assetId, mealNo, exerciseId |
+| `carryover/{id}` | id（`日付_種目id`）, exerciseId, fromDate, fromDay, sets[持ち越す setNo], reason, doneDate（消化した日。空なら未消化）, createdAt |
 
 ## 7. 運用
 
