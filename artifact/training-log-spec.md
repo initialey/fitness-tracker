@@ -161,6 +161,19 @@ Day の判定は「未消化キュー」方式（カレンダー計算だけだ�
 - ボタンと「AIで推定」は `sample` capability があれば常に表示する。`sample.limits().images` の値は当てにせず、実際に画像付きで呼んで判断する（環境によって `limits()` の報告が実態とズレることがあるため）。失敗（`images_unavailable` 等）したときだけ「写真の解析ができない環境です」と案内し、手入力に切り替えられる（写真はメモとして残せる）
 - 今日画面の「📷 食べたものを写真で記録」ボタンのすぐ下に「✏️ カロリーを手で入力」を常設（写真や AI 推定を使わず kcal と PFC を直接入力したい時の入口）。食事シートの「変更・追加」欄にも同じ入口を置く。どの食事か（1〜5食目／間食）を選び、名前（任意・空なら「手入力」）・kcal（必須）・P/F/C（g・任意）を入力。「PFC から計算」ボタンで `P×4+F×9+C×4` を kcal 欄に入れられる。名前を付けると foods に `source:"manual"` で追加し次回から名前で呼び出せる。記録は他の追加品目と同じ仕組み（取り消し・編集も同じルール）で 1 日合計・プラン比・脂肪の塊の計算すべてに反映される。今日画面の行には他の記録方法（写真 📷・AI推定 ※）と同様に手入力を示す「✏️」を付ける
 
+### 食べたものの量
+記録画面でチェックした行に **量の入力欄と単位**を出し、その場で g / ml / 個を直接入れる（同じ食品でも毎回量が違うため）。
+
+- 数字をタップすると数値キーパッドで直接入力できる
+- − / ＋ の刻みは単位で変える: **g 5 ・ ml 10 ・ 個/袋/枚/貫 0.5**。長押しで連続して増減する
+- 量を変えると、その行の kcal・PFC と下部の合計がその場で変わる
+- 初期値は **前回その食品を記録した量**。記録が無ければ食品の登録時の分量
+- 単位をタップすると「個」⇄「g」を切り替えられる（1個の重さが登録されている食品だけ。換算できない食品はグレーで、押しても何も起きない）。切り替えても栄養値は同じ基準から計算する
+- 量の欄を長押しすると「よく使う量」（過去に記録した量の多い順3つ）と「半分」「2倍」が出る
+- 記録した時点の**量・単位・計算後の栄養値は記録側にコピー**する。あとで食品マスタを直しても過去の記録は変わらない
+- 「食べたもの」の一覧には、登録時の分量ではなく**その日に入れた量**を出す
+- 行は2段組みで、品目名は省略せず折り返し、kcal は右端に必ず全部出す。量の調整ボタンと kcal は重ならない
+
 ## 3. サプリ・ルーティン
 
 | 名前 | タイミング | 量 |
@@ -260,7 +273,7 @@ Day の判定は「未消化キュー」方式（カレンダー計算だけだ�
 | `plan_days` / `plan_exercises` / `plan_warmup` / `plan_meals` / `plan_supplements` / `plan_routine` / `foods` | 上記マスタ（`SEED_VERSION` を上げると plan_* と plan 由来の foods を差し替え。ログは触らない）。`plan_exercises` は dayNo（数値 または 複数日の配列 = 腹筋 [1,4,6]・カーフ [2,5]）, setScheme（`WU10-12,TOP6-8,BO10-12` / `MAIN8,MAIN10,MAIN12` / `MAIN10-15x3,DROP*` / `MID12-15x2,MID12-15?` = 末尾 `?` は任意のセット）, progressive, pair[2 動作], accessory("abs"/"calves"), choiceGroup（同じ値の種目はその日どれか 1 つだけを選んでやる）, bodyweight（自重・重量欄なし）, formCues[{date, text, videoUrl}]（コーチからのフォーム指摘）を持つ |
 | `log_weight/{date}` | value, unit "kg", skipped(bool), skipReason, loggedAt（互換: weightKg, reason） |
 | `log_workout/{date}` | sets{"exId_setNo": {exerciseId, setNo, setType, weightKg, reps, loggedAt}}（スーパーセットは 1-1/1-2 が別 setNo）, choices{choiceGroup: exerciseId}（その日「A または B」でどれを選んだか。選び直すと選択が消え、そのとき記録済みのセットも消える）, meta{exId: {note, rpe, subName}}, skips{exId: {carried, carryId, reason, sets[], loggedAt}}（その日やらないことにした種目）, extra[持ち越しid]（その日に消化する持ち越し）, warmup{completed, minutes, sets, loggedAt, skipped, skipReason}, finished, finishedAt（完了画面はここから所要時間を出す） |
-| `log_meals/{date}` | meals{キー: {planSlot: 1〜5（プランのその食事から記録した）または null（プラン外）, status: plan / substitute / skip / photo, items[{foodId, grams, kcal, p, f, c, origin, eaten, deleted, planGrams, estimated, manual}], loggedAt（記録した瞬間の時刻。並び順はこれだけで決まる）, photoId, reason, variant, photo{assetId, confidence, note}}}。プランの ✓ は「その日に planSlot が一致する記録があるか」で決め、別のフラグは持たない。旧データ（linkedSlot 方式）は「プラン由来の品目があるか」で planSlot を導出する |
+| `log_meals/{date}` | meals{キー: {planSlot: 1〜5（プランのその食事から記録した）または null（プラン外）, status: plan / substitute / skip / photo, items[{foodId, amount（記録した量）, unit（記録した単位）, name, grams, kcal, p, f, c, origin, eaten, deleted, planGrams, estimated, manual}]（量・単位・栄養値は記録側にコピーする）, loggedAt（記録した瞬間の時刻。並び順はこれだけで決まる）, photoId, reason, variant, photo{assetId, confidence, note}}}。プランの ✓ は「その日に planSlot が一致する記録があるか」で決め、別のフラグは持たない。旧データ（linkedSlot 方式）は「プラン由来の品目があるか」で planSlot を導出する |
 | `log_supplements/{date}` `log_routine/{date}` | items{id: {done, loggedAt}}（今日はなし: na, reason）。水は value(ml) |
 | `log_cardio/{date}` | entries[{type: jog / incline / padel / pickleball / other, minutes, hr, note, loggedAt, intensity（パデル・ピックルボールのみ: light/normal/hard）, kcal（パデル・ピックルボールのみ: 保存時点の体重で計算した消費kcal）}] |
 | `log_daily/{date}` | dayNo（手動上書き。「未消化キュー」の差し替えはこれだけで表現し、他の日付は触らない）, dayChange{from, loggedAt}, dayName, notes, waterMl, waterLoggedAt, skippedItems[{item, reason}], workoutMissed{reason}, cardioMissed, restDone{loggedAt}（休みの日の「有酸素はやらない」）, warmupSkipped |

@@ -378,16 +378,21 @@ body:has(#bbar:not([hidden])) main{padding-bottom:calc(230px + env(safe-area-ins
 .elist .erow .l2{font-size:13px;color:var(--mute);margin-top:2px;overflow-wrap:anywhere;white-space:normal}
 .elist .erow .l3{font:500 13px var(--num);color:var(--mute);margin-top:2px}
 .foods{margin-top:10px;border-radius:10px;overflow:hidden;background:var(--card2);max-height:46vh;overflow-y:auto}
-.frow{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer}
+.frow{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:6px 10px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer}
 .frow:last-child{border-bottom:0}
 .frow.on{background:rgba(242,195,0,.10)}
-.frow .cb{width:26px;height:26px;border-radius:7px;border:2px solid var(--line);background:transparent;color:transparent;font-size:15px;flex:none;padding:0}
+.frow .cb{grid-column:1;grid-row:1;width:26px;height:26px;border-radius:7px;border:2px solid var(--line);background:transparent;color:transparent;font-size:15px;padding:0}
 .frow .cb.on{background:var(--done);border-color:var(--done);color:#10281A}
-.frow .nm{flex:1;min-width:0;overflow-wrap:anywhere}
-.frow .qty{display:flex;align-items:center;gap:6px;flex:none}
-.frow .qty button{width:32px;height:32px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;font:700 16px var(--num);padding:0}
-.frow .qty b{font:700 15px var(--num);min-width:26px;text-align:center}
-.frow .kc{font:600 13px var(--num);color:var(--mute);white-space:nowrap;flex:none}
+.frow .nm{grid-column:2;grid-row:1;min-width:0;overflow-wrap:anywhere;white-space:normal}
+.frow.on .nm{grid-column:2 / 4}
+.frow .kc{grid-column:3;grid-row:1;justify-self:end;align-self:center;font:600 13px var(--num);color:var(--mute);white-space:nowrap}
+.frow.on .kc{grid-row:2}
+.frow .qty{grid-column:2;grid-row:2;display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}
+.frow .qty button{width:34px;height:34px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;font:700 17px var(--num);padding:0;flex:none}
+.frow .qty input.fa{width:68px;flex:none;min-width:0;background:var(--card);border:1px solid var(--line);border-radius:8px;color:var(--ink);font:700 16px var(--num);text-align:right;padding:6px 8px;outline:none;-moz-appearance:textfield}
+.frow .qty input.fa::-webkit-outer-spin-button,.frow .qty input.fa::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.frow .qty .fu{width:auto;min-width:42px;padding:0 10px;font:700 13px var(--jp);color:var(--yellow);border-color:var(--yellow)}
+.frow .qty .fu.off{color:var(--mute);border-color:var(--line)}
 .rectot{margin-top:12px;padding:10px 12px;border-radius:10px;background:var(--card2);font:600 14px var(--num)}
 .b-time{background:var(--card2);border:0;color:var(--yellow);border-radius:8px;padding:4px 10px;font:700 14px var(--num);white-space:nowrap}
 .step .waitline{color:var(--yellow);font-weight:600}
@@ -453,7 +458,7 @@ body:has(#dlg:not([hidden])) .toast.show,body:has(#sheet:not([hidden])) .toast.s
    ===================================================================== */
 const LB = 0.45359237;
 const WD = ['日', '月', '火', '水', '木', '金', '土'];
-const SEED_VERSION = 14; // 「0回」「自重×0」の記録を未記録に戻す // 初期データを変えたら上げる（db 上の plan_* / foods を再投入する）
+const SEED_VERSION = 15; // 食品に「1個の重さ（gramsPerUnit）」を持たせ、記録時の量を g/ml/個で直接入れられるようにする // 初期データを変えたら上げる（db 上の plan_* / foods を再投入する）
 // セット種類の日本語名と「目的と重さの目安」文言（{reps} と {kg} を置換）
 const SET_TYPES = {
   WU: { name: 'ウォームアップ', purpose: '軽めの重さで {reps}回。フォームを確かめる' },
@@ -737,12 +742,58 @@ function parseSetScheme(scheme) {
 const isRatioPer = per => per === '100g' || per === '100ml';
 const perUnitSuffix = per => per === '100ml' ? 'ml' : per === '100g' ? 'g' : per === '1scoop' ? 'スクープ' : '個';
 /** 個・スクープで数える食品（全卵 1個=50g、ホエイ 1スクープ=30g）。無ければ null */
-const unitOf = f => f && Number(f.unitG) > 0 ? { g: Number(f.unitG), label: f.unitLabel || '個' } : null;
+const unitOf = f => f && Number(f.unitG) > 0 && f.unitLabel ? { g: Number(f.unitG), label: f.unitLabel } : null;
 /** 品目の短い名前（分量は付けない）。白米だけは基準（炊飯後／生米）を添える */
 function foodShortName(foodId) { const f = foodOf(foodId); if (foodId === 'rice_cooked' || foodId === 'rice_raw' || foodId === 'rice') return '白米（' + riceBasisText().replace('・要確認', '') + '）'; return f ? f.nameJa.replace(/[（(].*$/, '') : foodId; }
 /** 分量の表示。単位を持つ食品は「4個」「1スクープ」、それ以外は「200g」 */
 function amountText(f, grams) { const u = unitOf(f); if (u) return r1(Number(grams) / u.g) + u.label; return r1(Number(grams)) + (f ? perUnitSuffix(f.per) : 'g'); }
 function calcMacros(food, amount) { const f = isRatioPer(food.per) ? Number(amount) / 100 : Number(amount); return { kcal: r1(food.kcal * f), p: r1(food.p * f), f: r1(food.f * f), c: r1(food.c * f) }; }
+/** その食品で量を入れられる単位。先頭が既定。
+ *  base(n) = その量を calcMacros に渡す値（100g/100ml 基準なら g・ml、1個基準なら個数）、from(b) はその逆。
+ *  g 換算を持つ食品（全卵 1個=50g など）は「個」と「g」の両方を返すので、記録画面で切り替えられる。 */
+function foodUnitOptions(f) {
+  if (!f) return [];
+  const ratio = isRatioPer(f.per), rLabel = f.per === '100ml' ? 'ml' : 'g';
+  const gpu = Number(f.gramsPerUnit) > 0 ? Number(f.gramsPerUnit) : Number(f.unitG) > 0 ? Number(f.unitG) : 0;
+  const portion = Number(f.portionG) > 0 ? Number(f.portionG) : 0;
+  const out = [];
+  if (ratio) {
+    if (f.unitLabel && gpu > 0) out.push({ unit: f.unitLabel, step: 0.5, def: portion > 0 ? r1(portion / gpu) : 1, base: n => r1(n * gpu), from: b => r1(b / gpu) });
+    out.push({ unit: rLabel, step: rLabel === 'ml' ? 10 : 5, def: portion > 0 ? portion : 100, base: n => r1(n), from: b => r1(b) });
+  } else {
+    out.push({ unit: f.unitLabel || perUnitSuffix(f.per), step: 0.5, def: portion > 0 ? portion : 1, base: n => r1(n), from: b => r1(b) });
+    const g1 = Number(f.gramsPerUnit) > 0 ? Number(f.gramsPerUnit) : 0;
+    if (g1 > 0) out.push({ unit: 'g', step: 5, def: r1((portion > 0 ? portion : 1) * g1), base: n => r1(n / g1), from: b => r1(b * g1) });
+  }
+  return out;
+}
+function unitOptOf(f, unit) { const o = foodUnitOptions(f); return o.find(x => x.unit === unit) || o[0] || null; }
+/** 過去に記録した量（新しい順の末尾が直近）。記録側に量・単位が残っていればそれを、無ければグラム数から戻す */
+function foodAmountLog(foodId) {
+  const f = ST.foods[foodId]; if (!f) return [];
+  const opts = foodUnitOptions(f); if (!opts.length) return [];
+  const out = [];
+  Object.values(ST.log_meals).forEach(day => Object.values(day.meals || {}).forEach(m => (m.items || []).forEach(it => {
+    if (String(it.foodId) !== String(foodId) || it.deleted || it.eaten === false) return;
+    const unit = it.unit && opts.some(o => o.unit === it.unit) ? it.unit : opts[0].unit;
+    const o = unitOptOf(f, unit);
+    const amount = it.amount !== '' && it.amount != null ? Number(it.amount) : o.from(Number(it.grams) || 0);
+    if (!(amount > 0)) return;
+    out.push({ amount: r1(amount), unit, at: m.loggedAt || '' });
+  })));
+  return out.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+}
+/** 記録画面でチェックしたときの初期の量。前回その食品を記録した量があればそれを使う */
+function lastAmountFor(foodId) {
+  const l = foodAmountLog(foodId); if (l.length) { const x = l[l.length - 1]; return { amount: x.amount, unit: x.unit }; }
+  const o = foodUnitOptions(ST.foods[foodId])[0]; return o ? { amount: o.def, unit: o.unit } : { amount: 1, unit: 'g' };
+}
+/** よく使った量（多い順） */
+function topAmountsFor(foodId) {
+  const c = {}; foodAmountLog(foodId).forEach(x => { const k = x.amount + '|' + x.unit; c[k] = (c[k] || 0) + 1; });
+  return Object.keys(c).sort((a, b) => c[b] - c[a] || Number(b.split('|')[0]) - Number(a.split('|')[0]))
+    .map(k => ({ amount: Number(k.split('|')[0]), unit: k.split('|')[1], n: c[k] }));
+}
 function movingAvg(vals, w) { return vals.map((v, i) => { const from = Math.max(0, i - w + 1); let s = 0; for (let j = from; j <= i; j++) s += vals[j].value; return { date: v.date, value: r1(s / (i - from + 1)) }; }); }
 function pct(n, d) { return d ? Math.round(n / d * 100) : 0; }
 /** セット種類の表示キー: 事前疲労の MAIN は「事前疲労」、漸増種目の MAIN は「漸増」として見せる */
@@ -850,7 +901,7 @@ async function seedIfNeeded(say) {
   await replace('plan_meals', SEED.meals.map(m => Object.assign({ _id: m.mealNo }, m)));
   await replace('plan_supplements', SEED.supplements.map((s, i) => ({ _id: s[0], id: s[0], name: s[1], dose: s[3] || '', timing: s[2], order: i + 1, active: true, pending: !s[3] })));
   await replace('plan_routine', SEED.routine.map(r => Object.assign({ _id: r.id }, r)));
-  await inParallel(SEED.foods, async f => { const cur = ST.foods[f[0]]; if (!cur || cur.source === 'plan') await store.set('foods', f[0], { foodId: f[0], nameJa: f[1], nameEn: f[2], per: f[3], kcal: f[4], p: f[5], f: f[6], c: f[7], unitG: f[8] || 0, unitLabel: f[9] || '', portionG: f[10] || 0, source: 'plan', note: '' }); tick(); });
+  await inParallel(SEED.foods, async f => { const cur = ST.foods[f[0]]; if (!cur || cur.source === 'plan') await store.set('foods', f[0], { foodId: f[0], nameJa: f[1], nameEn: f[2], per: f[3], kcal: f[4], p: f[5], f: f[6], c: f[7], unitG: f[8] || 0, unitLabel: f[9] || '', portionG: f[10] || 0, gramsPerUnit: f[11] || 0, source: 'plan', note: '' }); tick(); });
   // v7: 休憩 トップ 180 秒／他 120 秒、ウォームアップ注記を既定に戻す（ユーザーが設定で変えていれば次回以降はそのまま）
   const migrate = Number(ST.settings.seedVersion) < 7 ? { restTopSec: 180, restMainSec: 120, restOtherSec: 120, warmupNote: DEFAULT_SETTINGS.warmupNote } : {};
   // v8: 経口サプリ 07:05、サイリウムはその 15 分後（07:20）
@@ -1049,7 +1100,12 @@ function planToItems(items, choices) {
   });
 }
 /** 記録品目の表示名（短縮） */
-function itemShort(it) { const f = ST.foods[it.foodId]; if (it.foodId === 'rice_cooked' || it.foodId === 'rice_raw') return '白米' + it.grams + 'g（' + (it.foodId === 'rice_raw' ? '生米基準' : '炊飯後基準') + '）'; if (it.manual) return (f ? f.nameJa : '手入力') + '（手入力）'; const nm = f ? f.nameJa.replace(/[（(].*$/, '') : it.foodId; return nm + amountText(f, it.grams); }
+function itemShort(it) { const f = ST.foods[it.foodId];
+  if (it.foodId === 'rice_cooked' || it.foodId === 'rice_raw') return '白米' + it.grams + 'g（' + (it.foodId === 'rice_raw' ? '生米基準' : '炊飯後基準') + '）';
+  if (it.manual) return (f ? f.nameJa : it.name || '手入力') + '（手入力）';
+  const nm = (f ? f.nameJa : it.name || String(it.foodId)).replace(/[（(].*$/, '');
+  // 記録した時点の量と単位が残っていればそれを出す（登録時の分量ではなく、その日に入れた量）
+  return nm + (it.unit && Number(it.amount) > 0 ? r1(Number(it.amount)) + it.unit : amountText(f, it.grams)); }
 /** 記録品目から状態を導く: 何も食べていない=skip / プラン品目を全部そのまま=plan / それ以外=sub */
 /** 保存済み status の正規化: substitute/photo → sub（内部表現） */
 function normStatus(st) { return st === 'substitute' || st === 'photo' ? 'sub' : (st || ''); }
@@ -1610,7 +1666,9 @@ const A = {
   async setMeal(date, n, meal) { const doc = Object.assign({ date, meals: {} }, ST.log_meals[date]); doc.meals = Object.assign({}, doc.meals); if (meal) doc.meals[n] = meal; else delete doc.meals[n]; await store.set('log_meals', date, doc); },
   /** 品目配列から食事ドキュメントを作って保存（履歴に積む） */
   mealCommit(date, n, items, extra) { const cur = (ST.log_meals[date] && ST.log_meals[date].meals || {})[n] || null; mealHistPush(date, n, cur);
-    const clean = items.map(({ foodId, grams, kcal, p, f, c, origin, eaten, deleted, planGrams, estimated, manual }) => Object.assign({ foodId, grams, kcal, p, f, c, origin: origin || 'add', eaten: eaten !== false, deleted: !!deleted, planGrams: planGrams == null ? '' : planGrams }, estimated ? { estimated: true } : {}, manual ? { manual: true } : {}));
+    // 量・単位・計算後の栄養値は記録側にコピーして残す（あとで食品マスタを直しても過去の記録は変わらない）
+    const clean = items.map(({ foodId, amount, unit, name, grams, kcal, p, f, c, origin, eaten, deleted, planGrams, estimated, manual }) => Object.assign({ foodId, grams, kcal, p, f, c, origin: origin || 'add', eaten: eaten !== false, deleted: !!deleted, planGrams: planGrams == null ? '' : planGrams },
+      amount != null && amount !== '' ? { amount: Number(amount), unit: unit || '' } : {}, name ? { name } : {}, estimated ? { estimated: true } : {}, manual ? { manual: true } : {}));
     const slot = extra && 'planSlot' in extra ? extra.planSlot : (cur ? planSlotOf(cur, n) : (isSnack(n) ? null : Number(n)));
     const doc = Object.assign({ variant: cur ? cur.variant || '' : '', loggedAt: (cur && cur.loggedAt) || isoNow(), photo: cur ? cur.photo || null : null }, extra || {}, { items: clean, planSlot: slot });
     const st = deriveStatus(clean); doc.status = st === 'sub' ? (doc.photo && clean.some(i => i.estimated && !i.deleted && i.eaten) ? 'photo' : 'substitute') : st; doc.photoId = doc.photo && doc.photo.assetId ? doc.photo.assetId : ''; doc.reason = doc.skip ? (doc.skip.reasonText || doc.skip.reason) : '';
@@ -1657,7 +1715,7 @@ const A = {
   async addFood(food) { const base = food.foodId || String(food.nameEn || food.nameJa).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'food';
     // 日本語だけの名前は base が同じになるので、空いている id が見つかるまで付け直す（別の食品を上書きしない）
     let id = base; while (ST.foods[id]) id = base + '_' + Math.random().toString(36).slice(2, 7);
-    const row = { foodId: id, nameJa: food.nameJa, nameEn: food.nameEn || '', per: food.per || '100g', kcal: Number(food.kcal) || 0, p: Number(food.p) || 0, f: Number(food.f) || 0, c: Number(food.c) || 0, unitG: Number(food.unitG) || 0, unitLabel: food.unitLabel || '', portionG: Number(food.portionG) || 0, source: food.source || 'user', note: food.note || '' , hidden: !!food.hidden }; await store.set('foods', id, row); return row; },
+    const row = { foodId: id, nameJa: food.nameJa, nameEn: food.nameEn || '', per: food.per || '100g', kcal: Number(food.kcal) || 0, p: Number(food.p) || 0, f: Number(food.f) || 0, c: Number(food.c) || 0, unitG: Number(food.unitG) || 0, unitLabel: food.unitLabel || '', portionG: Number(food.portionG) || 0, gramsPerUnit: Number(food.gramsPerUnit) || 0, source: food.source || 'user', note: food.note || '' , hidden: !!food.hidden }; await store.set('foods', id, row); return row; },
   async setDaily(date, patch) { const next = Object.assign({ date }, ST.log_daily[date], patch); next.dayName = ST.plan_days[String(next.dayNo || calcDayNo(ST.settings.startDate, date))] ? ST.plan_days[String(next.dayNo || calcDayNo(ST.settings.startDate, date))].name : ''; if (patch.comment != null) next.notes = patch.comment; await store.set('log_daily', date, next); await A.syncDaily(date); },
   async saveSet(date, exId, setNo, setType, v, reps) { const doc = workoutDoc(date), sets = Object.assign({}, doc.sets); const at = isoNow(); sets[exId + '_' + setNo] = { exerciseId: exId, setNo, setType, weightKg: toKg(v), reps: reps === '' ? '' : Number(reps), at: fmtHm(at), loggedAt: at }; await store.set('log_workout', date, Object.assign({}, doc, { sets })); },
   async deleteSet(date, exId, setNo) { const doc = workoutDoc(date), sets = Object.assign({}, doc.sets); delete sets[exId + '_' + setNo]; await store.set('log_workout', date, Object.assign({}, doc, { sets })); },
@@ -2024,12 +2082,8 @@ function bindMealSections(t) {
       act(A.mealCancel(t.date, n)).then(() => toastAction('記録を削除しました', '元に戻す', () => act(A.mealUndo(t.date, n)))); })); });
 }
 /** 食品の「1個ぶん」。分量と単位は必ず出す（「1」だけの表示はしない） */
-function foodUnit(f) {
-  const g = Number(f.unitG) > 0 ? Number(f.unitG) : Number(f.portionG) > 0 ? Number(f.portionG) : (isRatioPer(f.per) ? 100 : 1);
-  const label = f.unitLabel || (f.per === '100ml' ? 'ml' : isRatioPer(f.per) ? 'g' : '個');
-  return { g, label };
-}
-function foodDisplayName(f) { const u = foodUnit(f); return f.nameJa + ' ' + r1(u.g) + u.label; }
+/** 一覧に出す名前。既定の単位での分量を必ず添える（「1」だけの表示はしない） */
+function foodDisplayName(f) { const o = foodUnitOptions(f)[0]; return o ? f.nameJa + ' ' + r1(o.def) + o.unit : f.nameJa; }
 /** よく使った順（プラン外の記録での登場回数） */
 function foodUseCounts() {
   const c = {};
@@ -2040,20 +2094,29 @@ function recordFoods() {
   const c = foodUseCounts();
   return Object.values(ST.foods).filter(f => !f.hidden).sort((a, b) => (c[b.foodId] || 0) - (c[a.foodId] || 0) || String(a.nameJa).localeCompare(String(b.nameJa), 'ja'));
 }
-/** 食べたものの記録画面（新規・編集 共通）。操作は「チェック」「個数」「記録する」の3つだけ */
+/** 食べたものの記録画面（新規・編集 共通）。操作は「チェック」「量」「記録する」の3つだけ。
+ *  量は g / ml / 個 をその場で直接入れられる（同じ食品でも毎回量が違うため） */
 function openRecordSheet(date, key) {
   const cur = key ? ((ST.log_meals[date] || {}).meals || {})[key] : null;
   if (!UI.rec || UI.rec.date !== date || UI.rec.key !== (key || null)) {
     const rows = [];
     (cur ? cur.items || [] : []).filter(it => !it.deleted && it.eaten !== false).forEach(it => {
       const f = ST.foods[it.foodId]; if (!f) return;
-      const u = foodUnit(f); rows.push({ foodId: it.foodId, qty: r1((Number(it.grams) || u.g) / u.g) || 1 });
+      const opts = foodUnitOptions(f); if (!opts.length) return;
+      const unit = it.unit && opts.some(o => o.unit === it.unit) ? it.unit : opts[0].unit, o = unitOptOf(f, unit);
+      const amount = it.amount !== '' && it.amount != null ? Number(it.amount) : o.from(Number(it.grams) || 0);
+      rows.push({ foodId: it.foodId, amount: amount > 0 ? r1(amount) : o.def, unit });
     });
     UI.rec = { date, key: key || null, at: cur ? cur.loggedAt || isoNow() : isoNow(), rows, q: '' };
   }
   drawRecordSheet();
 }
-function recRowMac(r) { const f = ST.foods[r.foodId]; if (!f) return { kcal: 0, p: 0, f: 0, c: 0 }; const u = foodUnit(f); return calcMacros(f, u.g * r.qty); }
+function recRowMac(r) { const f = ST.foods[r.foodId]; if (!f) return { kcal: 0, p: 0, f: 0, c: 0 };
+  const o = unitOptOf(f, r.unit); if (!o) return { kcal: 0, p: 0, f: 0, c: 0 };
+  return calcMacros(f, o.base(Number(r.amount) || 0)); }
+/** その行の1品として保存する形（量・単位・計算後の栄養値を記録側にコピーする） */
+function recRowItem(r) { const f = ST.foods[r.foodId], o = unitOptOf(f, r.unit), g = o.base(Number(r.amount) || 0);
+  return Object.assign({ foodId: r.foodId, amount: r1(Number(r.amount) || 0), unit: o.unit, name: f.nameJa, grams: r1(g), origin: 'add', eaten: true, deleted: false, planGrams: '' }, calcMacros(f, g)); }
 function drawRecordSheet() {
   const st = UI.rec, picked = {}; st.rows.forEach(r => { picked[r.foodId] = r; });
   const term = (st.q || '').trim().toLowerCase();
@@ -2062,12 +2125,18 @@ function drawRecordSheet() {
   const tot = macrosOfItems(st.rows.map(recRowMac));
   let h = '<h3>食べたものを記録 <button class="b-time" id="recAt">' + esc(fmtHm(st.at)) + '</button></h3>';
   h += '<input class="txt" id="recQ" placeholder="検索" value="' + esc(st.q || '') + '">';
-  h += '<div class="foods">' + list.map(f => { const r = picked[f.foodId], u = foodUnit(f), mac = calcMacros(f, u.g * (r ? r.qty : 1)), kc = Number(f.kcal) > 0 || Number(mac.kcal) > 0 ? Math.round(mac.kcal) + 'kcal' : '---kcal';
+  h += '<div class="foods">' + list.map(f => { const r = picked[f.foodId], opts = foodUnitOptions(f), o = unitOptOf(f, r ? r.unit : null);
+    const amt = r ? Number(r.amount) || 0 : (o ? o.def : 1), mac = o ? calcMacros(f, o.base(amt)) : { kcal: 0 };
+    const kc = Number(f.kcal) > 0 || Number(mac.kcal) > 0 ? Math.round(mac.kcal) + 'kcal' : '---kcal';
     return '<div class="frow' + (r ? ' on' : '') + '" data-food="' + esc(f.foodId) + '">' +
       '<button class="cb' + (r ? ' on' : '') + '" data-foodchk="' + esc(f.foodId) + '" aria-label="' + (r ? '外す' : '選ぶ') + '">✓</button>' +
-      '<span class="nm">' + esc(foodDisplayName(f)) + '</span>' +
-      (r ? '<span class="qty"><button data-fq="' + esc(f.foodId) + ':-0.5" aria-label="減らす">−</button><b>' + r1(r.qty) + '</b><button data-fq="' + esc(f.foodId) + ':0.5" aria-label="増やす">＋</button></span>' : '') +
-      '<span class="kc">' + kc + '</span></div>'; }).join('') + '</div>';
+      '<span class="nm">' + esc(r ? f.nameJa : foodDisplayName(f)) + '</span>' +
+      (r ? '<span class="qty">' +
+        '<button data-fq="' + esc(f.foodId) + ':-1" aria-label="減らす">−</button>' +
+        '<input class="fa" type="number" inputmode="decimal" step="any" data-fa="' + esc(f.foodId) + '" value="' + esc(r1(amt)) + '" aria-label="量">' +
+        '<button class="fu' + (opts.length < 2 ? ' off' : '') + '" data-fu="' + esc(f.foodId) + '"' + (opts.length < 2 ? ' disabled' : '') + ' aria-label="単位">' + esc(o ? o.unit : '') + '</button>' +
+        '<button data-fq="' + esc(f.foodId) + ':1" aria-label="増やす">＋</button></span>' : '') +
+      '<span class="kc" data-kc="' + esc(f.foodId) + '">' + kc + '</span></div>'; }).join('') + '</div>';
   h += '<button class="b b-sub" style="width:100%;margin-top:10px" id="recNewFood">＋ 新しい食品を登録</button>';
   h += '<button class="b b-sub" style="width:100%;margin-top:8px" id="recKcal">＋ カロリーだけ入力</button>';
   if (canSendPhoto()) h += '<button class="b b-sub" style="width:100%;margin-top:8px" id="recPhoto">写真から推定</button>';
@@ -2078,10 +2147,35 @@ function drawRecordSheet() {
   const sh = openSheet(h);
   const qi = $('#recQ', sh); try { qi.focus(); } catch (e) { /* ignore */ }
   qi.oninput = () => { st.q = qi.value; drawRecordSheet(); const q2 = $('#recQ'); if (q2) { q2.focus(); q2.setSelectionRange(q2.value.length, q2.value.length); } };
-  $$('[data-food]', sh).forEach(el => { el.onclick = e => { if (e.target.closest('[data-fq]')) return; toggleRecFood(el.dataset.food); }; });
+  // 量を変えるたびに描き直すと入力欄からフォーカスが外れるので、kcal と合計だけをその場で書き換える
+  const rowOf = id => st.rows.find(x => x.foodId === id);
+  const refresh = () => {
+    $$('[data-kc]', sh).forEach(el => { const f = ST.foods[el.dataset.kc]; if (!f) return; const r = rowOf(el.dataset.kc), o = unitOptOf(f, r ? r.unit : null);
+      const amt = r ? Number(r.amount) || 0 : (o ? o.def : 1), mac = o ? calcMacros(f, o.base(amt)) : { kcal: 0 };
+      el.textContent = Number(f.kcal) > 0 || Number(mac.kcal) > 0 ? Math.round(mac.kcal) + 'kcal' : '---kcal'; });
+    const te = $('.rectot', sh); if (te) te.innerHTML = '<b>' + st.rows.length + '品</b> ・ ' + esc(macroLine(macrosOfItems(st.rows.map(recRowMac))));
+  };
+  $$('[data-food]', sh).forEach(el => { el.onclick = e => { if (e.target.closest('.qty')) return; toggleRecFood(el.dataset.food); }; });
   $$('[data-foodchk]', sh).forEach(b => { b.onclick = e => { e.stopPropagation(); toggleRecFood(b.dataset.foodchk); }; });
-  $$('[data-fq]', sh).forEach(b => { b.onclick = e => { e.stopPropagation(); const [id, d] = b.dataset.fq.split(':'); const r = st.rows.find(x => x.foodId === id); if (!r) return;
-    r.qty = r1(Math.max(0.5, r.qty + Number(d))); drawRecordSheet(); }; });
+  // − / ＋ は単位ごとの刻み（g 5 ・ ml 10 ・ 個 0.5）。長押しで連続して増減する
+  $$('[data-fq]', sh).forEach(b => {
+    const [id, d] = b.dataset.fq.split(':');
+    const bump = () => { const r = rowOf(id); if (!r) return; const o = unitOptOf(ST.foods[id], r.unit); if (!o) return;
+      r.amount = r1(Math.max(o.step, (Number(r.amount) || 0) + o.step * Number(d)));
+      const inp = $('[data-fa="' + id + '"]', sh); if (inp) inp.value = r1(r.amount); refresh(); };
+    holdRepeat(b, bump);
+  });
+  $$('[data-fa]', sh).forEach(el => {
+    el.onclick = e => e.stopPropagation();
+    el.oninput = () => { const r = rowOf(el.dataset.fa); if (!r) return; const v = Number(el.value); r.amount = v > 0 ? r1(v) : 0; refresh(); };
+    el.onblur = () => { const r = rowOf(el.dataset.fa); if (!r) return; if (!(Number(r.amount) > 0)) { const o = unitOptOf(ST.foods[r.foodId], r.unit); r.amount = o ? o.def : 1; el.value = r1(r.amount); refresh(); } };
+    bindLongPress(el, () => openAmountSheet(el.dataset.fa));
+  });
+  // 単位をタップすると「個」⇄「g」を切り替える。換算できない食品はグレーで押せない
+  $$('[data-fu]', sh).forEach(b => { b.onclick = e => { e.stopPropagation(); const id = b.dataset.fu, r = rowOf(id); if (!r) return;
+    const opts = foodUnitOptions(ST.foods[id]); if (opts.length < 2) return;
+    const i = Math.max(0, opts.findIndex(o => o.unit === r.unit)), cur = opts[i], next = opts[(i + 1) % opts.length];
+    r.amount = r1(Math.max(0.1, next.from(cur.base(Number(r.amount) || 0)))); r.unit = next.unit; drawRecordSheet(); }; });
   $('#recAt', sh).onclick = () => askTime('記録の時刻', '食べた時刻', fmtHm(st.at)).then(hm => { if (hm) { st.at = withHm(st.at, hm); drawRecordSheet(); } });
   $('#recNewFood', sh).onclick = () => drawNewFoodSheet('');
   $('#recKcal', sh).onclick = () => drawKcalOnlySheet();
@@ -2092,7 +2186,8 @@ function drawRecordSheet() {
   $('#recCancel', sh).onclick = () => { UI.rec = null; closeSheet(); };
   $('#recSave', sh).onclick = () => {
     if (!st.rows.length) return toast('食べたものを選んでください', true);
-    const items = st.rows.map(r => { const f = ST.foods[r.foodId], u = foodUnit(f); return Object.assign({ foodId: r.foodId, grams: r1(u.g * r.qty), origin: 'add', eaten: true, deleted: false, planGrams: '' }, calcMacros(f, u.g * r.qty)); });
+    if (st.rows.some(r => !(Number(r.amount) > 0))) return toast('量を入力してください', true);
+    const items = st.rows.map(recRowItem);
     const k = st.key || newRecordKey(st.date), d0 = st.date;
     UI.rec = null;
     act(A.mealCommit(d0, k, items, { planSlot: null, loggedAt: st.at })).then(() => { closeSheet(); toast(items.length + '品を記録しました'); });
@@ -2101,14 +2196,39 @@ function drawRecordSheet() {
     act(A.mealCancel(d0, k)).then(() => { closeSheet(); toastAction('記録を削除しました', '元に戻す', () => act(A.mealUndo(d0, k))); }); };
 }
 function toggleRecFood(foodId) { const st = UI.rec, i = st.rows.findIndex(r => r.foodId === foodId);
-  if (i >= 0) st.rows.splice(i, 1); else st.rows.push({ foodId, qty: 1 });
+  if (i >= 0) st.rows.splice(i, 1); else st.rows.push(Object.assign({ foodId }, lastAmountFor(foodId)));
   drawRecordSheet(); }
+/** ボタンを押している間くり返す（量の連続増減用）。1 回のタップでも 1 段階は動く */
+function holdRepeat(btn, fn) {
+  let t1 = null, t2 = null;
+  const stop = () => { clearTimeout(t1); clearInterval(t2); t1 = t2 = null; };
+  btn.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); fn(); stop(); t1 = setTimeout(() => { t2 = setInterval(fn, 110); }, 450); });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => btn.addEventListener(ev, stop));
+  btn.onclick = e => { e.stopPropagation(); e.preventDefault(); };
+}
+/** 量の欄を長押し → よく使った量と「半分」「2倍」 */
+function openAmountSheet(foodId) {
+  const st = UI.rec, r = st.rows.find(x => x.foodId === foodId); if (!r) return;
+  const f = ST.foods[foodId]; if (!f) return;
+  const top = topAmountsFor(foodId).slice(0, 3);
+  const chips = top.map(t => '<button data-amt="' + t.amount + '|' + esc(t.unit) + '">' + r1(t.amount) + esc(t.unit) + '</button>').join('') +
+    '<button data-amtf="0.5">半分</button><button data-amtf="2">2倍</button>';
+  const d = openDlg('<h3>よく使う量</h3><div class="msg">' + esc(f.nameJa) + '\nいまは ' + r1(r.amount) + esc(r.unit) + '</div>' +
+    '<div class="chips" id="amtChips">' + chips + '</div>' +
+    (top.length ? '' : '<div class="mute small" style="margin-top:8px">まだ記録がないので、よく使った量はありません</div>') +
+    '<button class="b b-ghost" style="width:100%;margin-top:14px" id="amtNo">やめる</button>');
+  const apply = (amount, unit) => { r.amount = r1(Math.max(0.1, amount)); if (unit) r.unit = unit; closeDlg(); drawRecordSheet(); };
+  $$('[data-amt]', d).forEach(b => { b.onclick = () => { const [a, u] = b.dataset.amt.split('|'); apply(Number(a), u); }; });
+  $$('[data-amtf]', d).forEach(b => { b.onclick = () => apply((Number(r.amount) || 0) * Number(b.dataset.amtf), ''); });
+  $('#amtNo', d).onclick = closeDlg;
+}
 /** 新しい食品を登録 → そのまま記録画面でチェック済みにする */
 function drawNewFoodSheet(name) {
   const units = ['g', 'ml', '個', '袋', '枚'];
   const s = openSheet('<h3>新しい食品</h3>' +
     '<label class="lbl" for="nfName">名前</label><input type="text" class="txt" id="nfName" value="' + esc(name) + '" placeholder="例：プロテインバー">' +
     '<label class="lbl">1個の分量</label><div class="row2"><input type="number" inputmode="decimal" class="txt" id="nfG" value="100"><select class="txt" id="nfU">' + units.map(u => '<option>' + u + '</option>').join('') + '</select></div>' +
+    '<label class="lbl" for="nfGpu">1個の重さ（g・任意）<span class="mute small"> 入れると「個」と「g」を切り替えられます</span></label><input type="number" inputmode="decimal" class="txt" id="nfGpu" placeholder="例：80">' +
     '<label class="lbl" for="nfK">カロリー（必須）</label><input type="number" inputmode="decimal" class="txt" id="nfK" placeholder="kcal">' +
     '<div class="stat" style="margin-top:6px">' + [['nfP', 'たんぱく質 (g)'], ['nfF', '脂質 (g)'], ['nfC', '炭水化物 (g)']].map(([id, l]) => '<div><label class="lbl" for="' + id + '">' + l + '</label><input type="number" inputmode="decimal" class="txt" id="' + id + '"></div>').join('') + '</div>' +
     '<div class="btns" style="margin-top:12px"><button class="b-sub" id="nfNo">キャンセル</button><button class="b-yel" id="nfSave">登録して選ぶ</button></div>');
@@ -2120,8 +2240,9 @@ function drawNewFoodSheet(name) {
     const per = u === 'ml' ? '100ml' : u === 'g' ? '100g' : '1pc', kk = 100 / g;
     const base = per === '1pc' ? { kcal: k, p: Number($('#nfP', s).value) || 0, f: Number($('#nfF', s).value) || 0, c: Number($('#nfC', s).value) || 0 }
       : { kcal: r1(k * kk), p: r1((Number($('#nfP', s).value) || 0) * kk), f: r1((Number($('#nfF', s).value) || 0) * kk), c: r1((Number($('#nfC', s).value) || 0) * kk) };
-    try { const f = await A.addFood(Object.assign({ nameJa: nm, per, source: 'user', unitG: per === '1pc' ? 0 : g, unitLabel: per === '1pc' ? u : '', portionG: per === '1pc' ? 0 : g }, base));
-      UI.rec.rows.push({ foodId: f.foodId, qty: 1 }); drawRecordSheet(); toast(nm + ' を登録しました');
+    const gpu = Number($('#nfGpu', s).value) || 0;
+    try { const f = await A.addFood(Object.assign({ nameJa: nm, per, source: 'user', unitG: per === '1pc' ? 0 : g, unitLabel: per === '1pc' ? u : '', portionG: per === '1pc' ? 1 : g, gramsPerUnit: per === '1pc' ? gpu : 0 }, base));
+      UI.rec.rows.push(Object.assign({ foodId: f.foodId }, lastAmountFor(f.foodId))); drawRecordSheet(); toast(nm + ' を登録しました');
     } catch (e) { toast(e.message || String(e), true); }
   };
 }
@@ -2137,7 +2258,7 @@ function drawKcalOnlySheet() {
     const k = Number($('#koK', s).value); if ($('#koK', s).value === '' || isNaN(k)) return toast('カロリーを入力してください', true);
     const nm = $('#koName', s).value.trim() || '記録（カロリーのみ）';
     try { const f = await A.addFood({ nameJa: nm, per: '1pc', kcal: k, p: Number($('#koP', s).value) || 0, f: Number($('#koF', s).value) || 0, c: Number($('#koC', s).value) || 0, source: 'manual', unitLabel: '', hidden: true });
-      UI.rec.rows.push({ foodId: f.foodId, qty: 1 }); drawRecordSheet();
+      UI.rec.rows.push(Object.assign({ foodId: f.foodId }, lastAmountFor(f.foodId))); drawRecordSheet();
     } catch (e) { toast(e.message || String(e), true); }
   };
 }

@@ -681,7 +681,7 @@ async function run(mode) {
       return '差し替えの持ち越し・できなかったの持ち越し・未実施バッジ/バナー・連続日の注意・週まとめ/レポート・元に戻す・差し替え後のキュー順、すべて確認';
     } finally { setStart(origStartDate); clearRange(A0, AD[9]); clearRange(B0, BD[8]); }
   });
-  await T(G.meal, '記録画面: よく食べるものをチェックで複数選んで1件の記録にできる。個数は 0.5 単位、合計はその場で変わる。すべての食品に分量と単位が付き、重複が無い', async () => {
+  await T(G.meal, '記録画面: よく食べるものをチェックで複数選んで1件の記録にできる。合計はその場で変わる。すべての食品に分量と単位が付き、重複が無い', async () => {
     const D = '2027-03-01';
     const p2 = await newPage(); p2.setDefaultTimeout(25000);
     try {
@@ -699,12 +699,13 @@ async function run(mode) {
       await p2.click('[data-foodchk="soya_hoops"]'); await p2.waitForTimeout(120);
       await p2.click('[data-foodchk="selecta_adult"]'); await p2.waitForTimeout(120);
       assert((await p2.locator('.rectot').textContent()).includes('2品') && /390kcal/.test(await p2.locator('.rectot').textContent()), '品数と合計がその場で出る: ' + (await p2.locator('.rectot').textContent()));
-      // 0.5 単位
-      await p2.click('[data-fq="soya_hoops:0.5"]'); await p2.waitForTimeout(150);
-      assert((await p2.$eval('[data-food="soya_hoops"] .qty b', e => e.textContent)) === '1.5', '0.5 単位で増やせる');
-      await p2.click('[data-fq="soya_hoops:-0.5"]'); await p2.click('[data-fq="soya_hoops:-0.5"]'); await p2.waitForTimeout(150);
-      assert((await p2.$eval('[data-food="soya_hoops"] .qty b', e => e.textContent)) === '0.5', '0.5 未満にはしない');
-      await p2.click('[data-fq="soya_hoops:0.5"]'); await p2.waitForTimeout(150);
+      // g は 5 刻み（既定は登録時の 80g）
+      const amtOf = async id => await p2.$eval('[data-fa="' + id + '"]', e => e.value);
+      assert((await amtOf('soya_hoops')) === '80', '既定は登録時の分量 80g: ' + (await amtOf('soya_hoops')));
+      await p2.click('[data-fq="soya_hoops:1"]'); await p2.waitForTimeout(150);
+      assert((await amtOf('soya_hoops')) === '85', 'g は 5 刻みで増える: ' + (await amtOf('soya_hoops')));
+      await p2.click('[data-fq="soya_hoops:-1"]'); await p2.waitForTimeout(150);
+      assert((await amtOf('soya_hoops')) === '80', '5 刻みで減る: ' + (await amtOf('soya_hoops')));
       await p2.click('#recSave'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(300);
       const row = await p2.locator('.elist').textContent();
       assert(row.includes('ソヤ プロテイン フープス80g') && row.includes('セレクタ アダルト アクティブ150ml') && /390kcal/.test(row), '2品が1件の記録になる: ' + row);
@@ -723,7 +724,8 @@ async function run(mode) {
       await p2.click('#recNewFood'); await p2.waitForSelector('#nfSave');
       await p2.fill('#nfName', 'プロテインバー'); await p2.fill('#nfG', '60'); await p2.fill('#nfK', '230'); await p2.fill('#nfP', '20');
       await p2.click('#nfSave'); await p2.waitForSelector('#recQ'); await p2.waitForTimeout(200);
-      assert((await p2.$$eval('.frow.on .nm', els => els.map(e => e.textContent.trim()))).some(n => n.indexOf('プロテインバー 60g') === 0), '登録した食品がチェック済みで入る');
+      assert((await p2.$$eval('.frow.on .nm', els => els.map(e => e.textContent.trim()))).some(n => n === 'プロテインバー'), '登録した食品がチェック済みで入る');
+      assert((await p2.$$eval('.frow.on input.fa', els => els.length)) === (await p2.$$eval('.frow.on', els => els.length)), 'チェックした行すべてに量の欄が出る');
       // カロリーだけ入力した品目も混ぜられる
       await p2.click('#recKcal'); await p2.waitForSelector('#koAdd');
       await p2.fill('#koName', '外食'); await p2.fill('#koK', '800'); await p2.click('#koAdd'); await p2.waitForSelector('#recQ'); await p2.waitForTimeout(200);
@@ -737,8 +739,115 @@ async function run(mode) {
       assert((await p2.locator('#toast').textContent()).includes('元に戻す') || !!(await p2.$('#toast button')), '削除はトーストで元に戻せる');
       await p2.click('#toast button'); await p2.waitForTimeout(400);
       assert(await p2.$('.elist'), '元に戻せる');
-      return 'チェックで複数選択 → 1件の記録。0.5 単位・新規登録・カロリーだけ入力を混ぜられる';
+      return 'チェックで複数選択 → 1件の記録。量の直接入力・新規登録・カロリーだけ入力を混ぜられる';
     } finally { await p2.close(); rt.op('del', { coll: 'log_meals', id: D }); rt.op('del', { coll: 'log_daily', id: D }); }
+  });
+
+  await T(G.meal, '記録画面で量（g / ml / 個）をその場で直接入れられる: 刻み・長押し・単位の切り替え・よく使う量・前回の量・記録側への保存・行が横に切れない', async () => {
+    const D = '2027-04-05';
+    const p2 = await newPage(); p2.setDefaultTimeout(25000);
+    const amtOf = async id => await p2.$eval('[data-fa="' + id + '"]', e => e.value);
+    const kcOf = async id => await p2.$eval('[data-kc="' + id + '"]', e => e.textContent.trim());
+    try {
+      await p2.clock.setFixedTime(new Date(D + 'T09:00:00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading'));
+      await p2.click('.tabs [data-tab="today"]'); await p2.waitForSelector('#addMealBtn');
+      await p2.click('#addMealBtn'); await p2.waitForSelector('#recQ');
+
+      // --- g の食品: 初期値は登録時の分量、数値を直接入力できる ---
+      await p2.click('[data-foodchk="pistachio_meadows"]'); await p2.waitForTimeout(150);
+      assert((await amtOf('pistachio_meadows')) === '20', '初期値は登録時の分量 20g: ' + (await amtOf('pistachio_meadows')));
+      assert((await p2.$eval('[data-fa="pistachio_meadows"]', e => e.getAttribute('inputmode'))) === 'decimal', '数値キーパッドで入力できる');
+      await p2.fill('[data-fa="pistachio_meadows"]', '35'); await p2.waitForTimeout(200);
+      assert((await kcOf('pistachio_meadows')) === '197kcal', '量を変えると kcal が即座に変わる（562/100g × 35g = 197）: ' + (await kcOf('pistachio_meadows')));
+      assert(/197kcal/.test(await p2.locator('.rectot').textContent()), '下部の合計も即座に変わる: ' + (await p2.locator('.rectot').textContent()));
+      assert(/P8 F15 C8/.test(await p2.locator('.rectot').textContent()), 'PFC も再計算される: ' + (await p2.locator('.rectot').textContent()));
+      // g は 5 刻み
+      await p2.click('[data-fq="pistachio_meadows:1"]'); await p2.waitForTimeout(150);
+      assert((await amtOf('pistachio_meadows')) === '40', 'g は 5 刻み: ' + (await amtOf('pistachio_meadows')));
+      // 長押しで連続増減
+      await p2.hover('[data-fq="pistachio_meadows:-1"]');
+      await p2.mouse.down(); await p2.waitForTimeout(900); await p2.mouse.up(); await p2.waitForTimeout(150);
+      assert(Number(await amtOf('pistachio_meadows')) <= 25, '長押しで連続して減る: ' + (await amtOf('pistachio_meadows')));
+      await p2.fill('[data-fa="pistachio_meadows"]', '35'); await p2.waitForTimeout(150);
+
+      // --- ml の食品は 10 刻み ---
+      await p2.click('[data-foodchk="selecta_adult"]'); await p2.waitForTimeout(150);
+      assert((await amtOf('selecta_adult')) === '150', 'ml の初期値: ' + (await amtOf('selecta_adult')));
+      assert((await p2.$eval('[data-food="selecta_adult"] .fu', e => e.textContent.trim())) === 'ml', '単位は ml');
+      await p2.click('[data-fq="selecta_adult:1"]'); await p2.waitForTimeout(150);
+      assert((await amtOf('selecta_adult')) === '160', 'ml は 10 刻み: ' + (await amtOf('selecta_adult')));
+      await p2.click('[data-fq="selecta_adult:-1"]'); await p2.waitForTimeout(150);
+
+      // --- 個の食品は 0.5 刻み、単位を g に切り替えられる ---
+      await p2.click('[data-foodchk="egg_whole"]'); await p2.waitForTimeout(150);
+      assert((await amtOf('egg_whole')) === '1' && (await p2.$eval('[data-food="egg_whole"] .fu', e => e.textContent.trim())) === '個', '個で始まる: ' + (await amtOf('egg_whole')));
+      await p2.click('[data-fq="egg_whole:1"]'); await p2.waitForTimeout(150);
+      assert((await amtOf('egg_whole')) === '1.5', '個は 0.5 刻み: ' + (await amtOf('egg_whole')));
+      await p2.click('[data-fq="egg_whole:1"]'); await p2.waitForTimeout(150);
+      assert((await amtOf('egg_whole')) === '2', '2個');
+      await p2.click('[data-food="egg_whole"] .fu'); await p2.waitForTimeout(250);
+      assert((await p2.$eval('[data-food="egg_whole"] .fu', e => e.textContent.trim())) === 'g' && (await amtOf('egg_whole')) === '100', '「個」⇄「g」に切り替わり、量も換算される（2個 = 100g）: ' + (await amtOf('egg_whole')));
+      assert((await kcOf('egg_whole')) === '151kcal', '栄養値は同じ基準から計算する: ' + (await kcOf('egg_whole')));
+      await p2.click('[data-food="egg_whole"] .fu'); await p2.waitForTimeout(250);
+      assert((await amtOf('egg_whole')) === '2' && (await p2.$eval('[data-food="egg_whole"] .fu', e => e.textContent.trim())) === '個', 'もう一度押すと戻る');
+      // 換算できない食品は単位がグレーで押しても何も起きない
+      assert(await p2.$eval('[data-food="pistachio_meadows"] .fu', e => e.disabled && e.classList.contains('off')), '換算できない食品の単位はグレーで押せない');
+      await p2.click('[data-food="pistachio_meadows"] .fu', { force: true }).catch(() => {}); await p2.waitForTimeout(150);
+      assert((await amtOf('pistachio_meadows')) === '35' && (await p2.$eval('[data-food="pistachio_meadows"] .fu', e => e.textContent.trim())) === 'g', '押しても何も起きない');
+
+      // --- 行が横に切れない・名前は折り返す・kcal は全部出る ---
+      const box = await p2.evaluate(() => { const f = document.querySelector('.foods');
+        const rows = [...document.querySelectorAll('.frow')].map(r => { const kc = r.querySelector('.kc'), q = r.querySelector('.qty');
+          return { over: r.scrollWidth > r.clientWidth + 1, kcRight: kc ? kc.getBoundingClientRect().right : 0, rRight: r.getBoundingClientRect().right,
+            overlap: kc && q ? q.getBoundingClientRect().right > kc.getBoundingClientRect().left + 0.5 : false, ell: kc ? getComputedStyle(kc).textOverflow : '' }; });
+        return { listOver: f.scrollWidth > f.clientWidth + 1, rows, bodyOver: document.body.scrollWidth > document.body.clientWidth + 1 }; });
+      assert(!box.listOver && !box.bodyOver, '記録画面が横に切れない');
+      assert(box.rows.every(r => !r.over), 'どの行も横にはみ出さない');
+      assert(box.rows.every(r => r.kcRight <= r.rRight + 0.5), 'kcal が行の中に収まる');
+      assert(box.rows.every(r => !r.overlap), '量の調整ボタンと kcal が重ならない');
+      const wrap = await p2.evaluate(() => { const el = [...document.querySelectorAll('.frow .nm')].sort((a, b) => b.textContent.length - a.textContent.length)[0];
+        return { txt: el.textContent, ell: getComputedStyle(el).textOverflow, ws: getComputedStyle(el).whiteSpace, h: el.getBoundingClientRect().height }; });
+      assert(wrap.ell !== 'ellipsis' && wrap.ws !== 'nowrap' && !/…/.test(wrap.txt), '長い品目名は省略せず折り返す: ' + JSON.stringify(wrap));
+
+      // --- 記録すると、量・単位・栄養値が記録側に残る ---
+      await p2.click('#recSave'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(350);
+      const row = await p2.locator('.elist').textContent();
+      assert(row.includes('ピスタチオ Meadows35g') && row.includes('セレクタ アダルト アクティブ150ml') && row.includes('全卵2個'), '一覧に実際に記録した量が出る: ' + row);
+      if (mode === 'db') {
+        const k = Object.keys(rt.DB.log_meals[D].meals)[0], rec = rt.DB.log_meals[D].meals[k];
+        const pi = rec.items.find(i => i.foodId === 'pistachio_meadows');
+        assert(pi.amount === 35 && pi.unit === 'g' && pi.grams === 35 && pi.kcal === 196.7, 'db に量・単位・栄養値が残る: ' + JSON.stringify(pi));
+        const eg = rec.items.find(i => i.foodId === 'egg_whole');
+        assert(eg.amount === 2 && eg.unit === '個' && eg.grams === 100, '個で入れた行も量と単位が残る: ' + JSON.stringify(eg));
+        // 食品マスタを直しても過去の記録は変わらない
+        const before = await p2.locator('.elist').textContent();
+        assert(/439kcal/.test(before), '記録の合計: ' + before);
+        rt.op('set', { coll: 'foods', id: 'pistachio_meadows', data: Object.assign({}, rt.DB.foods.pistachio_meadows, { kcal: 1, nameJa: 'ピスタチオ（改名）' }) });
+        await p2.waitForTimeout(600);
+        const after = await p2.locator('.elist').textContent();
+        assert(/439kcal/.test(after) && /35g/.test(after), 'マスタを直しても過去の記録の量と栄養値は変わらない: ' + after);
+        assert(rt.DB.log_meals[D].meals[k].items.find(i => i.foodId === 'pistachio_meadows').kcal === 196.7, '記録側の栄養値もそのまま');
+        rt.op('set', { coll: 'foods', id: 'pistachio_meadows', data: Object.assign({}, rt.DB.foods.pistachio_meadows, { kcal: 562, nameJa: 'ピスタチオ Meadows' }) });
+        await p2.waitForTimeout(600);
+      }
+
+      // --- 前回の量が次の初期値になる ---
+      await p2.click('#addMealBtn'); await p2.waitForSelector('#recQ');
+      await p2.click('[data-foodchk="pistachio_meadows"]'); await p2.waitForTimeout(200);
+      assert((await amtOf('pistachio_meadows')) === '35', '前回記録した量が初期値になる: ' + (await amtOf('pistachio_meadows')));
+      // --- 量の欄を長押し → よく使う量・半分・2倍 ---
+      await p2.hover('[data-fa="pistachio_meadows"]'); await p2.mouse.down(); await p2.waitForTimeout(750); await p2.mouse.up();
+      await p2.waitForSelector('#amtChips'); await p2.waitForTimeout(120);
+      const chips = await p2.$$eval('#amtChips button', els => els.map(e => e.textContent.trim()));
+      assert(chips.includes('35g') && chips.includes('半分') && chips.includes('2倍'), 'よく使った量と「半分」「2倍」が出る: ' + chips.join(' / '));
+      await p2.click('[data-amtf="2"]'); await p2.waitForSelector('#dlg', { state: 'hidden' }); await p2.waitForTimeout(200);
+      assert((await amtOf('pistachio_meadows')) === '70', '「2倍」は今の値に対して計算する: ' + (await amtOf('pistachio_meadows')));
+      await p2.hover('[data-fa="pistachio_meadows"]'); await p2.mouse.down(); await p2.waitForTimeout(750); await p2.mouse.up();
+      await p2.waitForSelector('#amtChips'); await p2.click('[data-amt="35|g"]'); await p2.waitForSelector('#dlg', { state: 'hidden' }); await p2.waitForTimeout(200);
+      assert((await amtOf('pistachio_meadows')) === '35', 'よく使う量を選ぶとその量になる: ' + (await amtOf('pistachio_meadows')));
+      await p2.click('#recCancel'); await p2.waitForSelector('#sheet', { state: 'hidden' });
+      return 'g 5刻み / ml 10刻み / 個 0.5刻み ・ 長押しで連続 ・ 個⇄g の切り替え ・ よく使う量 ・ 前回の量が初期値 ・ 記録側に量と単位を保存';
+    } finally { await resetClock(); await p2.close(); rt.op('del', { coll: 'log_meals', id: D }); rt.op('del', { coll: 'log_daily', id: D }); }
   });
   await T(G.workout, 'スーパーセットの①②は重量・提案・休憩・記録を完全に別々に管理する（Day5 ダンベルショルダープレス＋フロントレイズ）', async () => {
     const D = '2027-05-09'; // 他のテストと日付が衝突しない、履歴の無い孤立した日
@@ -2238,6 +2347,7 @@ async function run(mode) {
 | 44 | 記録の編集画面に要素が多すぎて何をどこで操作するのか分からなかった（説明文・バッジ・「1つ戻す」「半分だけ」「スキップ」「よく使う差替え」「AI計算」で操作が5種類）。**文字の AI 推定を全廃**し、記録は「よく食べるものから複数チェック → 個数 → 記録する」の1画面に作り直した。新規と編集は同じ画面で、編集時だけ「この記録を削除」。食品マスタは重複をまとめて1個あたりの分量と単位を必ず出すようにし、過去の記録は付け替えて残した。この作業中、\`openFoodSheet\` を消すときに終端の目印を広く取りすぎて写真推定のブロックごと消してしまい、\`resizeImage is not defined\` で起動しなくなった（HEAD から復元）。あわせて、日本語だけの食品名は id が全部 \`food\` になり、\`Date.now()\` の接尾辞が衝突すると別の食品を上書きし得たので、空いている id が見つかるまで付け直すようにした |
 | 45 | 「自重×0」「0回」の記録ができてしまっていた。重量欄を空のまま「このセット完了」を押すと \`weightKg: ''\` で保存され、\`setActual()\` が重量なしを自重と読むため、重量が必要な種目まで「自重×0」と表示されていた。原因は記録の判定が「重量か回数のどちらかがあればよい」だったこと。回数 0（または空）は記録できない・重量が必要な種目（\`bodyweight\` でない種目）は重量なしでは記録できないに変え、自重かどうかは種目の定義だけから決めるようにした。過去の記録は \`SEED_VERSION\` 14 の \`clearZeroSets()\` で未記録に戻す。この変更で、テストの「クイック重量ボタンを押したあとに時刻を動かしてから記録する」手順が（再描画で重量欄が空に戻るため）本当に重量なしで保存していたことが露呈したので、テスト側も時刻を先に動かすよう直した。「限界まで」のセットは目標回数が無く回数欄が空なので、テストの共通ヘルパー \`ensureVals()\` で重量と回数の両方を埋めるようにした |
 | 46 | 提案重量が「前回の同じセット」だけを見ていて、当日ここまでの実績を無視していた（1セット目を前回より重くしても2セット目の提案が前回のままだった）。基準は前回の同じセット番号のまま、当日の直前セットの重量比（0.85〜1.15 にクランプ）で補正し、当日の直前セットの回数で上乗せ（上限超え +5%／上限ちょうど +2.5kg／下限未満 −5%）するようにした。丸めも器具ごとに分け（バーベル・スミス・マシン 1kg、ダンベルは1個あたりの刻み、ケーブル等のウェイトスタック 5kg）、+2.5kg のようにぴったり 0.5kg 刻みで出た値はそのまま残す。根拠が何も無いときは推測で埋めず提案を出さない。ウォームアップと漸増だけは「前回の同じセット番号が無ければ前回の重いセットを持ってくる」のが不適切なので、ウォームアップはトップ予定の約55%、漸増は当日ここまでの重量から1段階上げるという以前の動きを残した |
+| 47 | 記録画面で変えられるのが「個数（− 1 +）」だけで、20g 単位で登録したピスタチオを 35g 食べた日が入れられなかった（「1.75個」と数えることになる）。量を **g / ml / 個 で直接入れる**方式に変え、\`foodUnitOptions()\` がその食品で使える単位（既定・g 換算があれば両方）を返すようにした。刻みは g 5・ml 10・個 0.5、長押しで連続増減、単位タップで「個」⇄「g」、量の欄の長押しで「よく使う量・半分・2倍」。初期値は前回その食品を記録した量。記録側に量・単位・計算後の栄養値をコピーするので、あとで食品マスタを直しても過去の記録は変わらない。あわせて、行が横に切れて kcal が「297kc」のように欠けていたのを 2 段組みのグリッドに直し（品目名は折り返し、kcal は右端に全部出す）、単位ラベルの無い食品を \`unitOf()\` が「個」と読んでいた誤りも直した |
 
 
 ## 実行方法

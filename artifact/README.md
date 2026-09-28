@@ -32,11 +32,11 @@
 | `plan_meals` | mealNo | label, note, items[{foodId, grams, label?, short?, choices?}], alt?{label, items}（4食目の代替案）。foodId `rice` は settings.riceBasis で rice_raw / rice_cooked に解決 |
 | `plan_supplements` | id | name, dose, timing(after_meal/night/pre), order, active, pending（量がコーチ確認中なら true。シートでタップ入力すると解除） |
 | `plan_routine` | id | name, timing(morning/after_meal/anytime), order, active, isWater（水は log_daily.waterMl に保存） |
-| `foods` | foodId | nameJa, nameEn, per(100g/100ml/1pc), kcal, p, f, c（100g・100ml・1個あたり）, unitG/unitLabel（個・スクープ・貫で数えるもの。全卵 50g/個、ホエイ 30g/スクープ）, portionG（「＋ 他のものを追加」で出す既定の分量）, source(plan/user/ai/ai_photo), note |
+| `foods` | foodId | nameJa, nameEn, per(100g/100ml/1pc), kcal, p, f, c（100g・100ml・1個あたり）, unitG/unitLabel（個・スクープ・貫で数えるもの。全卵 50g/個、ホエイ 30g/スクープ）, portionG（記録画面の既定の量）, gramsPerUnit（1個あたりの重さ。1個基準の食品を g でも入れられるようにする）, source(plan/user/ai/ai_photo), note |
 | `log_weight` | YYYY-MM-DD | value, unit("kg"), skipped(bool), skipReason, loggedAt(ISO 8601), bodyFatPct（互換: weightKg, time, reason, reasonText） |
 | `log_workout` | YYYY-MM-DD | sets{ "exId_setNo": {exerciseId, setNo, setType(WU/MAIN/FINAL/PRE/TOP/BO/DROP/MID), weightKg, reps, loggedAt} }, choices{ choiceGroup: exerciseId }（その日「A または B」でどれを選んだか。選び直すと選択とその日の記録を消す）, meta{ exId: {note, rpe, subName} }, skips{ exId: {carried, carryId, reason, sets[], loggedAt} }（その日やらないことにした種目）, extra[持ち越しid]（その日に消化する持ち越し）, **warmup{completed, minutes, sets{id:n}, startedAt(ms), done(HH:mm), loggedAt, skipped, skipReason}**, finished(HH:mm), finishedAt(ISO。完了画面の所要時間 = warmup.startedAtIso → finishedAt) |
 | `log_cardio` | YYYY-MM-DD | entries[{type(jog/incline/padel/pickleball/other。旧 walk/stairs も表示可), minutes, hr, note, at, loggedAt, intensity(パデル・ピックルボールのみ: light/normal/hard、既定 normal), kcal(同上: 保存時点の体重×METs×時間で計算。パデル 5.5/7.0/8.5、ピックルボール 4.5/5.5/7.0)}] |
-| `log_meals` | YYYY-MM-DD | meals{ キー: {planSlot(1〜5 = プランのその食事から記録した ／ null = プラン外。プランの ✓ はこれが一致する記録の有無だけで決め、別フラグは持たない。旧 linkedSlot 方式のデータは「プラン由来の品目があるか」で導出), status(plan / substitute / skip / photo), items[{foodId, grams, kcal, p, f, c, origin(plan/add), eaten, deleted(ソフト削除), planGrams, estimated, manual}], loggedAt(記録した瞬間。「食べたもの」の並び順はこれだけで決まる), photoId, reason, variant, photo{assetId, confidence, note}} } |
+| `log_meals` | YYYY-MM-DD | meals{ キー: {planSlot(1〜5 = プランのその食事から記録した ／ null = プラン外。プランの ✓ はこれが一致する記録の有無だけで決め、別フラグは持たない。旧 linkedSlot 方式のデータは「プラン由来の品目があるか」で導出), status(plan / substitute / skip / photo), items[{foodId, amount(記録した量), unit(記録した単位), name(記録時の品目名), grams, kcal, p, f, c, origin(plan/add), eaten, deleted(ソフト削除), planGrams, estimated, manual}]（量・単位・栄養値は記録側にコピーするので、あとで食品マスタを直しても過去の記録は変わらない）, loggedAt(記録した瞬間。「食べたもの」の並び順はこれだけで決まる), photoId, reason, variant, photo{assetId, confidence, note}} } |
 | `log_supplements` | YYYY-MM-DD | items{ id: {done, loggedAt} }、今日はなし: {done:false, na:true, reason, reasonText, loggedAt} |
 | `log_routine` | YYYY-MM-DD | items{ id: {done, loggedAt} }、水は {done, value(ml), loggedAt}、今日はなし: {na, reason} |
 | `log_media` | id | date, type(photo/video), category(body/form/meal), assetId, url, exerciseId, note |
@@ -44,7 +44,7 @@
 | `log_daily` | YYYY-MM-DD | dayNo(手動上書き), dayChange{from, loggedAt}（その日の Day/部位の差し替え。「未消化キュー」方式はこのフィールドだけで表現し、他の日付は書き換えない）, dayName, notes, waterMl, waterLoggedAt（水タブ）, skippedItems[{item, itemJa, reason, reasonJa}]（できなかった項目の自動集計）, isRestOverride, comment, warmupSkipped{reason, at}, workoutMissed{reason, reasonText, loggedAt}, cardioMissed{reason, reasonText, loggedAt}, restDone{loggedAt}（休みの日の「有酸素はやらない」） |
 
 重量は常に kg で保存。表示時のみ lb 換算（1 lb = 0.45359237 kg、小数 1 桁）。
-初回起動時に `plan_days` が空、または `settings.seedVersion` が `SEED_VERSION`（現在 14 = 「0回」「自重×0」の記録を未記録に戻す）より古ければ、`SEED` 定数（[training-log-spec.md](training-log-spec.md)）で `plan_*` と `foods`(source=plan) を投入し直す。ログは触らない。プランを変えたら `SEED_VERSION` を上げて再公開する。
+初回起動時に `plan_days` が空、または `settings.seedVersion` が `SEED_VERSION`（現在 15 = 食品に「1個の重さ」を持たせ、記録時の量を g/ml/個で直接入れられるようにする）より古ければ、`SEED` 定数（[training-log-spec.md](training-log-spec.md)）で `plan_*` と `foods`(source=plan) を投入し直す。ログは触らない。プランを変えたら `SEED_VERSION` を上げて再公開する。
 
 ### 起動（読み込みが必ず終わるようにする）
 `boot()` は `try / catch / finally` で囲み、**何があっても最後に描き直す**（`LOAD.step` / `LOAD.error`）。
@@ -153,10 +153,16 @@
 - 週まとめ: 体重グラフは隣り合う日だけ線で結び欠測日を飛ばす。7 日平均は暦 7 日窓の実測のみ。「体重 N/M 日 測定」、「できなかった項目とその理由」ブロック。レポートは `Weight: … (5/7 days measured, skipped: travel×2)` と Notes に自動集計。CSV に skipped / reason 列
 
 ### 食事の記録画面（新規・編集 共通）
-- 下部の「＋ 食べたものを記録」→ `openRecordSheet(date, key)`。操作は **チェック・個数・記録する** の3つだけ
-- 一覧は `recordFoods()`（`foodUseCounts()` の多い順）。行は `foodDisplayName(f)` = 名前＋`foodUnit(f)` の分量と単位（「1」だけの表示はしない）。チェックした行だけ **− 個数 +**（0.5 単位）を出し、下部に品数と合計を常に出す
+- 下部の「＋ 食べたものを記録」→ `openRecordSheet(date, key)`。操作は **チェック・量・記録する** の3つだけ
+- 一覧は `recordFoods()`（`foodUseCounts()` の多い順）。未チェックの行は `foodDisplayName(f)` = 名前＋既定の分量と単位（「1」だけの表示はしない）、チェックした行は名前だけにして下に **量の入力欄**を出す
+- **量はその場で g / ml / 個 を直接入れる**（同じ食品でも毎回量が違うため）。`foodUnitOptions(f)` がその食品で使える単位を返し、`− [数値入力] 単位 ＋` を出す。数字をタップすれば数値キーパッドで直接入力でき、− / ＋ の刻みは **g 5 ・ ml 10 ・ 個/袋/枚/貫 0.5**。`holdRepeat()` で長押し中は連続して増減する。量を変えるたびにその行の kcal・PFC と下部の合計を**描き直さずにその場で書き換える**（入力欄からフォーカスが外れないように）
+- 初期値は `lastAmountFor(foodId)` = **前回その食品を記録した量**（`foodAmountLog()` が `log_meals` から拾う）。記録が無ければ食品の登録時の分量
+- 単位をタップすると「個」⇄「g」を切り替える（`foodUnitOptions` が 2 つ以上返す食品だけ。`gramsPerUnit` / `unitG` で g 換算を持つもの）。切り替えても栄養値は同じ基準から計算する。換算できない食品は単位がグレー（`disabled`）で押しても何も起きない
+- 量の欄を**長押し**すると `openAmountSheet()` が「よく使う量」を出す。`topAmountsFor(foodId)` の多い順3つ＋「半分」「2倍」（いまの値に対して計算）
+- 行は `grid-template-columns:30px minmax(0,1fr) auto` の2段組み。品目名は省略せず折り返し、kcal は右端に必ず全部出て、量の調整ボタンとは重ならない
+- 下部に品数と合計を常に出す
 - 「記録する」で選んだ品目**すべてを1件の記録**として保存（`planSlot: null`）。編集は同じ画面で、チェック済みで開き、外せば品目が消える。編集時だけ一番下に「この記録を削除」（削除はトーストで元に戻せる）
-- 「＋ 新しい食品を登録」（名前・1個の分量＋単位 g/ml/個/袋/枚・kcal 必須・PFC 任意）は登録してそのままチェック済みにする。「＋ カロリーだけ入力」はマスタに残さず（`hidden: true`）この記録にだけ1品として加える
+- 「＋ 新しい食品を登録」（名前・1個の分量＋単位 g/ml/個/袋/枚・**1個の重さ（g・任意。入れると「個」と「g」を切り替えられる）**・kcal 必須・PFC 任意）は登録してそのままチェック済みにする。「＋ カロリーだけ入力」はマスタに残さず（`hidden: true`）この記録にだけ1品として加える
 - 写真は `canSendPhoto()` のときだけ「写真から推定」を出す。チャットに貼る経路は常に出す。**文字の AI 推定（AI計算・文字で推定）は廃止**
 - プランの見出しの「まとめて記録」で複数の食事を選び、**同じ時刻でそれぞれ別の記録**として入れられる
 - 食品マスタは SEED_VERSION 13 の `mergeDuplicateFoods()` で重複をまとめる（正規化した名前と `FOOD_ALIAS_TO` で判定し、過去の記録の `foodId` を付け替えてから重複を削除。**記録は消さない**）
@@ -167,7 +173,7 @@
 - 新しい記録は必ず `newRecordKey(date)`（プランの枠に入れない）で作り、`planSlot: null` を持つ。プランの行から記録したものは `planSlot: 1〜5`
 - **時刻から枠への自動紐づけ（`autoSlotFor` の旧実装）・紐づけチップ・「間食」の区分・プランの打ち消し線・「変更あり」バッジ・1食ごとのプラン比は廃止**
 - プランの行: ○ タップで記録＋✓、✓ タップで取り消し（記録も消え、元に戻せる）、行タップで品目選択シート。品目を変えても**プランの表示は変わらず ✓ が付くだけ**で、変えた内容は「食べたもの」に出る
-- 食べたもの: 時刻をタップで修正（並び順も変わる）、行タップで中身の修正、長押しで削除。プランの記録を消すとプラン側も ○ に戻る
+- 食べたもの: 時刻をタップで修正（並び順も変わる）、行タップで中身の修正、長押しで削除。プランの記録を消すとプラン側も ○ に戻る。品目の表示（`itemShort`）は**記録した時点の量と単位**（`amount` / `unit`）を出す（登録時の分量ではない）
 - 記録の入口は下部の「＋ 食べたものを記録」1つ（`openRecordSheet`）。文字入力にすぐフォーカスが当たり、よく食べるもの・カロリー直接入力・写真（使える画面のみ）・チャットに貼る、を1枚で選べる
 
 ### 朝の「15分あける」カウンター
