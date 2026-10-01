@@ -970,19 +970,6 @@ const isRestDayNo = n => !!(ST.plan_days[String(n)] || {}).isRest;
  * 過去の日付の記録は書き換えない（このキューはどの日付についても読み取り専用の計算結果で、書き込みは行わない）
  */
 let _queueCache = {}; // uptoDate -> replayQueue 結果（render() の先頭で作り直す。同じレンダー内での再計算を避けるだけの軽いキャッシュ）
-/** 休みの日（Day 3・7）を消化したか。休みの日に求められるのは「トレーニングをしないこと」なので、
- *  有酸素を記録した／その日を普通に過ごした記録（食事・体重・サプリ）が1件以上ある／明示的に終わらせた、のどれかで消化扱いにする。
- *  筋トレの日はこの判定を使わず、今までどおり「筋トレを完了したか」だけで見る */
-function restDayConsumed(date) {
-  if (((ST.log_cardio[date] || {}).entries || []).length > 0) return true;
-  const dd = ST.log_daily[date] || {};
-  if (dd.restDone || dd.cardioMissed) return true; // 「有酸素はやらない」/「今日はできなかった」を押した
-  if ((ST.log_workout[date] || {}).finished) return true; // その日を明示的に完了にした
-  if (ST.log_weight[date]) return true;
-  if (Object.keys((ST.log_meals[date] || {}).meals || {}).length > 0) return true;
-  if (Object.values((ST.log_supplements[date] || {}).items || {}).some(x => x.done || x.na)) return true;
-  return false;
-}
 /** その日の筋トレが終わっているか。「完了」ボタンのフラグではなく、必須セットの記録から導出する
  *  （記録が入っているのに未完了扱いになる／スキップ扱いになるのを防ぐ）。任意のセットは完了を妨げない */
 function workoutCompleteFor(date, dayNo) {
@@ -1009,22 +996,26 @@ function replayQueue(uptoDate) {
   const assignments = {}, pendingSince = {};
   // 開始日が壊れていると日付ループが終わらないので、読めない値は既定に戻す
   const start = /^\d{4}-\d{2}-\d{2}$/.test(ST.settings.startDate || '') ? ST.settings.startDate : DEFAULT_SETTINGS.startDate;
-  const rotateFrontRestPairs = () => { while (queue.length >= 2 && isRestDayNo(queue[0]) && isRestDayNo(queue[1])) queue.push(queue.shift()); };
   for (let date = start, guard = 0; date <= uptoDate && guard < 4000; date = addDays(date, 1), guard++) {
     // 何かの拍子にキューが空・重複・範囲外になっても止まらないよう、毎日ここで整える
     queue = queue.map(Number).filter((v, i, a) => Number.isInteger(v) && v >= 1 && v <= 7 && a.indexOf(v) === i);
     if (!queue.length) queue = [1, 2, 3, 4, 5, 6, 7];
-    rotateFrontRestPairs();
     const dd = dayDoc(date), wouldHaveBeen = queue[0];
     let assigned, swapped = false;
     // 手動で入れた Day 番号が 1〜7 以外（壊れた値）なら無視して、キューの先頭をそのまま使う
     const picked = Number(dd.dayNo); const hasPick = Number.isInteger(picked) && picked >= 1 && picked <= 7;
-    if (hasPick) { assigned = picked; swapped = assigned !== wouldHaveBeen; const idx = queue.indexOf(assigned); if (idx >= 0) queue.splice(idx, 1); else assigned = wouldHaveBeen; if (swapped && idx >= 0 && !pendingSince[wouldHaveBeen]) pendingSince[wouldHaveBeen] = date; }
+    if (hasPick) { assigned = picked; swapped = assigned !== wouldHaveBeen; const idx = queue.indexOf(assigned); if (idx >= 0) queue.splice(idx, 1); else assigned = wouldHaveBeen;
+      // 差し替えで押し出された日は持ち越し。ただし休みの日は持ち越さず、そのまま末尾へ回す
+      if (swapped && idx >= 0) {
+        if (isRestDayNo(wouldHaveBeen)) { const j = queue.indexOf(wouldHaveBeen); if (j >= 0) queue.push(queue.splice(j, 1)[0]); }
+        else if (!pendingSince[wouldHaveBeen]) pendingSince[wouldHaveBeen] = date;
+      } }
     else assigned = queue.shift();
     const carriedFrom = pendingSince[assigned] || null;
     assignments[date] = { dayNo: assigned, swapped, displaced: swapped ? wouldHaveBeen : null, carriedFrom };
     // today より先（未来）はまだ起きていない日なので、実績の有無に関わらず「順調にこなした場合」の見込みとして自動消化する
-    const completed = date > today ? true : (isRestDayNo(assigned) ? restDayConsumed(date) : workoutCompleteFor(date, assigned));
+    // 休みの日は何もしなくても消化（持ち越さない）。筋トレの日は完了しなければキューの先頭に残す
+    const completed = date > today || isRestDayNo(assigned) || workoutCompleteFor(date, assigned);
     if (completed) { queue.push(assigned); delete pendingSince[assigned]; } else { queue.unshift(assigned); if (!pendingSince[assigned]) pendingSince[assigned] = date; }
   }
   return _queueCache[uptoDate] = { queue, assignments, pendingSince };
@@ -1474,7 +1465,7 @@ function summaryModel(weekNo) {
   days.forEach(x => { const w = ST.log_weight[x.date]; if (!w) return; if (w.skipped) { wdays.skipped++; const k = reasonEn('weight', w.reason, w.reasonText); wdays.reasons[k] = (wdays.reasons[k] || 0) + 1; } else wdays.measured++; });
   let photoMeals = 0; days.forEach(x => Object.values((ST.log_meals[x.date] || {}).meals || {}).forEach(m => { if (m.photo) photoMeals++; }));
   const q = replayQueue(today);
-  const doneDateFor = (dayNo, afterDate) => { const ds = Object.keys(q.assignments).filter(d => d > afterDate).sort(); for (const d of ds) { const a = q.assignments[d]; if (a.dayNo !== dayNo) continue; const done = isRestDayNo(dayNo) ? ((ST.log_cardio[d] || {}).entries || []).length > 0 : !!(ST.log_workout[d] && ST.log_workout[d].finished); if (done) return d; } return null; };
+  const doneDateFor = (dayNo, afterDate) => { const ds = Object.keys(q.assignments).filter(d => d > afterDate).sort(); for (const d of ds) { const a = q.assignments[d]; if (a.dayNo !== dayNo) continue; const done = isRestDayNo(dayNo) || !!(ST.log_workout[d] && ST.log_workout[d].finished); if (done) return d; } return null; };
   const dayChanges = Object.keys(ST.log_daily).filter(d => inRange(d) && d <= today && ST.log_daily[d].dayChange).sort().map(d => { const dc = ST.log_daily[d].dayChange; return { date: d, from: dc.from, to: ST.log_daily[d].dayNo, fromName: (ST.plan_days[String(dc.from)] || {}).name || '', toName: (ST.plan_days[String(ST.log_daily[d].dayNo)] || {}).name || '', fromDoneDate: doneDateFor(Number(dc.from), d) }; });
   const pending = pendingDaysAsOf(today).map(p => ({ dayNo: p.dayNo, name: (ST.plan_days[String(p.dayNo)] || {}).name || '', since: p.since }));
   // 持ち越しとスキップの数（週まとめの1行ずつ）
@@ -3435,7 +3426,7 @@ async function boot() {
   use('downloads').then(dl => { CAP.downloads = dl; scheduleRender(); });
 }
 window.addEventListener('beforeunload', () => { try { localStorage.setItem('tl.tab', UI.tab); } catch (e) { /* ignore */ } });
-window.__tl = { resizeImage, validateEstimate, parseEstimateText, isSnack, mealLabel, parseSetScheme, expandPairSets, suggestSets, repsText, setLabel, setActual, dayReport, bumpKg, warmupMinutesText, setUnits, shortExerciseList, bmr, exerciseKcalFor, dayCalorieBalance, fatModel, fatVisual, suggestActivityBase, weightOnOrBefore, cardioWeightKg, restDayConsumed, coachTarget, slotWindows, slotForTime, autoSlotFor, weekAdherence, matchFood, dayNoFor, padelKcal, padelMets, racketKcal, racketMets, isRacket, weeklyReport, openCarryovers, carryoversOn, skipsOn, workoutCompleteFor, summaryModel, settleCarry: d => A.settleCarryovers(d), exOrderFor: d => exercisesFor(d).map(e => ({ id: e.id, nameJa: e.nameJa, accessory: e.accessory || '', carryId: e.carryId || '' })), rerender: render }; // テスト用フック（純粋関数＋再描画）
+window.__tl = { resizeImage, validateEstimate, parseEstimateText, isSnack, mealLabel, parseSetScheme, expandPairSets, suggestSets, repsText, setLabel, setActual, dayReport, bumpKg, warmupMinutesText, setUnits, shortExerciseList, bmr, exerciseKcalFor, dayCalorieBalance, fatModel, fatVisual, suggestActivityBase, weightOnOrBefore, cardioWeightKg, coachTarget, pendingDays: () => pendingDaysAsOf(todayYmd()), queueNow: () => replayQueue(todayYmd()).queue.slice(), slotWindows, slotForTime, autoSlotFor, weekAdherence, matchFood, dayNoFor, padelKcal, padelMets, racketKcal, racketMets, isRacket, weeklyReport, openCarryovers, carryoversOn, skipsOn, workoutCompleteFor, summaryModel, settleCarry: d => A.settleCarryovers(d), exOrderFor: d => exercisesFor(d).map(e => ({ id: e.id, nameJa: e.nameJa, accessory: e.accessory || '', carryId: e.carryId || '' })), rerender: render }; // テスト用フック（純粋関数＋再描画）
 boot();
 })();
 </script>

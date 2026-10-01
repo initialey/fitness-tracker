@@ -137,6 +137,7 @@ async function run(mode) {
   const closeSheet = async () => { if (await has('#sheet:not([hidden])')) { await page.click('#sheet', { position: { x: 5, y: 5 } }); await page.waitForSelector('#sheet', { state: 'hidden' }); await page.waitForTimeout(150); } };
   /** clock.setFixedTime はブラウザコンテキスト全体で共有されるので、孤立日付へ飛ばしたテストは必ずここで今日（T0）へ戻す */
   const resetClock = async () => { await setTime(T0); };
+  const addDaysStr = (d, n) => { const dt = new Date(d + 'T12:00:00Z'); dt.setUTCDate(dt.getUTCDate() + n); return dt.toISOString().slice(0, 10); };
   /** 「A または B」の選択画面が出ていたら選ぶ（既定は先頭の選択肢）。出ていなければ何もしない */
   /** 必須セットが全部記録済みの種目は完了表示になるので、セット行をタップして入力画面（記録の修正）に戻す */
   const enterEdit = async (pg) => { pg = pg || page; if (await pg.$('#exNext')) { await pg.click('[data-set="0"]'); await pg.waitForSelector('#setDone'); await pg.waitForTimeout(60); } };
@@ -1219,16 +1220,24 @@ async function run(mode) {
     throw new Error('gotoExOn ' + i);
   };
 
-  await T(G.workout, '休みの日は「その日を過ごした記録」があれば消化: 食事だけ・体重だけでも翌日に持ち越さない／何も無ければ持ち越す／「有酸素はやらない」で消化／筋トレの日は記録があっても未完了なら持ち越す。休みの日の目標カロリーも平日と同じ', async () => {
+  await T(G.workout, '休みの日は何も記録しなくても持ち越さない: 翌日は次の筋トレの日が来る／「できなかったため持ち越し」も未実施リストも出ない／筋トレの日は今までどおり持ち越す。休みの日の目標カロリーも平日と同じ', async () => {
     const D = '2027-10-06', D1 = '2027-10-07';
     const p2 = await newPage(); p2.setDefaultTimeout(20000);
     // mock モードは reload をまたいだ永続化が無いので、読み込み直すたびに Day 3 を指定し直す
     const reloadAt = async (d, hm, dayNo) => { await p2.click('.tabs [data-tab="today"]'); await p2.clock.setFixedTime(new Date(d + 'T' + hm + ':00+08:00')); await p2.reload(); await p2.waitForFunction(() => !document.querySelector('#view .loading')); await p2.click('.tabs [data-tab="today"]'); await p2.waitForSelector('#dayHead'); if (dayNo) await forceDayP2(p2, dayNo); };
-    const consumed = () => p2.evaluate(d => window.__tl.restDayConsumed(d), D);
+    const pending = () => p2.evaluate(() => window.__tl.pendingDays());
     try {
       await reloadAt(D, '08:00');
       await forceDayP2(p2, 3);
-      assert((await consumed()) === false, '記録が何も無ければ休みの日は未消化のまま');
+      assert((await p2.locator('h1').textContent()).startsWith('Day 3'), 'Day 3（休み）を見ている: ' + (await p2.locator('h1').textContent()));
+      // 休みの日に何も記録していなくても「持ち越し」扱いにしない
+      assert(!(await p2.locator('#view').textContent()).includes('できなかったため持ち越し'), '休みの日に「できなかったため持ち越し」を出さない');
+      assert(!(await pending()).some(x => x.dayNo === 3 || x.dayNo === 7), '未消化リストに休みの日を含めない: ' + JSON.stringify(await pending()));
+      // 差し替えシートでも休みの日に「未実施」バッジを付けない
+      await p2.click('#dayHead'); await p2.waitForSelector('[data-pickday="3"]');
+      const picks = await p2.$$eval('[data-pickday]', els => els.map(e => e.dataset.pickday + ':' + e.textContent));
+      assert(!picks.some(x => (x.startsWith('3:') || x.startsWith('7:')) && x.includes('未実施')), '差し替えシートで休みの日に「未実施」バッジを付けない: ' + picks.join(' / '));
+      await p2.click('#sheet', { position: { x: 5, y: 5 } }); await p2.waitForSelector('#sheet', { state: 'hidden' });
       // 休みの日でも1日の目標はコーチ指定の 2,632 kcal / P210 F69 C295（平日と同じ）
       const bar = await p2.locator('#bbar').textContent();
       assert(bar.includes('2,632 kcal') && bar.includes('210g') && bar.includes('69g') && bar.includes('295g'), '休みの日の目標も平日と同じ: ' + bar);
@@ -1240,27 +1249,33 @@ async function run(mode) {
       assert(await p2.$eval('#nowBtn', e => e.disabled), '空のままでは保存ボタンが押せない');
       await p2.fill('#nowW', '70.4'); await p2.waitForFunction(() => !document.querySelector('#nowBtn').disabled);
       await p2.click('#nowBtn'); await p2.waitForFunction(() => document.querySelector('[data-step="weight"]').className.includes('done'));
-      assert((await consumed()) === true, '体重だけでも休みの日は消化扱い（体脂肪は空でも保存できる）');
       if (mode === 'db') { await p2.waitForTimeout(250); assert(rt.DB.log_weight[D] && rt.DB.log_weight[D].bodyFatPct === '', '体脂肪は空でも保存できる: ' + JSON.stringify(rt.DB.log_weight[D])); }
-      // 翌日は次の Day へ進む（持ち越さない）
-      if (mode === 'db') { await reloadAt(D1, '08:00'); assert(!(await p2.locator('h1').textContent()).startsWith('Day 3'), '消化した休みの日は翌日に持ち越さない: ' + (await p2.locator('h1').textContent()));
-        assert(!(await p2.locator('#view').textContent()).includes('できなかったため持ち越し'), '「できなかったため持ち越し」も出ない'); await reloadAt(D, '08:00', 3); }
-      // 体重を消して食事だけにしても消化扱い
-      rt.op('del', { coll: 'log_weight', id: D }); await reloadAt(D, '08:00', 3);
-      assert((await consumed()) === false, '記録を消したら未消化に戻る');
-      await openRecordWay('recKcal', p2); await p2.waitForSelector('#koAdd'); await p2.fill('#koK', '400'); await p2.click('#koAdd'); await p2.waitForSelector('#recSave'); await p2.click('#recSave'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
-      assert((await consumed()) === true, '食事だけでも休みの日は消化扱い');
-      // 「有酸素はやらない」でも消化扱い（休みの日なので理由は聞かない）
-      rt.op('del', { coll: 'log_meals', id: D }); await reloadAt(D, '08:00', 3);
-      assert((await consumed()) === false, '記録を消したら未消化に戻る');
-      await p2.click('.tabs [data-tab="workout"]'); await p2.waitForSelector('#rcSkip');
-      assert((await p2.locator('#rcSave').textContent()) === '有酸素を記録する' && (await p2.locator('#rcSkip').textContent()) === '有酸素はやらない', '休みの日は2つの選択肢を出す: ' + (await p2.locator('#rcSkip').textContent()));
-      await p2.click('#rcSkip'); await p2.waitForTimeout(400);
-      assert(!(await p2.$('[data-reason]')), '休みの日なので理由は聞かない');
-      assert((await consumed()) === true, '「有酸素はやらない」で消化扱い');
-      if (mode === 'db') { await p2.waitForTimeout(250); assert(rt.DB.log_daily[D] && rt.DB.log_daily[D].restDone, 'restDone を保存: ' + JSON.stringify(rt.DB.log_daily[D] && rt.DB.log_daily[D].restDone)); }
-      // 筋トレの日は記録があっても、トレーニングを完了していなければ持ち越す
       if (mode === 'db') {
+        // 何も記録せずに素通りした休みの日でも、翌日は次の筋トレの日が来る。
+        // キューは開始日から毎日読み直すので、他のテストの記録に影響されない過去日に開始日を退避して検証する
+        rt.op('del', { coll: 'log_weight', id: D });
+        const C0 = '2020-06-01', CD = n => addDaysStr(C0, n - 1);
+        const origStart = ((rt.DB.settings || {}).main || {}).startDate || '2026-09-16';
+        const setStart = nsd => rt.op('set', { coll: 'settings', id: 'main', data: Object.assign({}, (rt.DB.settings || {}).main || {}, { startDate: nsd }) });
+        const finishDay = d => rt.op('set', { coll: 'log_workout', id: d, data: { date: d, finished: '19:00', finishedAt: d + 'T19:00:00+08:00', sets: {}, meta: {}, warmup: { done: '07:00' } } });
+        try {
+          setStart(C0);
+          finishDay(CD(1)); finishDay(CD(2)); // Day1・Day2 を完了 → CD(3) は Day3（休み）
+          await reloadAt(CD(3), '08:00');
+          assert((await p2.locator('h1').textContent()).startsWith('Day 3'), 'CD(3) は Day 3（休み）: ' + (await p2.locator('h1').textContent()));
+          // CD(3) には何も記録しないまま翌日へ
+          await reloadAt(CD(4), '08:00');
+          const h1 = await p2.locator('h1').textContent();
+          assert(h1.startsWith('Day 4'), '何も記録しなくても休みの日は持ち越さず、翌日は次の筋トレの日（Day 4）が来る: ' + h1);
+          assert(!(await p2.locator('#view').textContent()).includes('できなかったため持ち越し'), '「できなかったため持ち越し」も出ない: ' + (await p2.locator('#view').textContent()).slice(0, 200));
+          assert(!(await pending()).some(x => x.dayNo === 3 || x.dayNo === 7), '未消化リストに休みの日が残らない: ' + JSON.stringify(await pending()));
+          assert(!(await p2.$('#pendingBanner')), '未実施バナーも出ない');
+          // 次の周回でまた巡ってくる（末尾へ回っている）
+          finishDay(CD(4)); await p2.waitForTimeout(250);
+          const q = await p2.evaluate(() => window.__tl.queueNow());
+          assert(JSON.stringify(q) === JSON.stringify([5, 6, 7, 1, 2, 3, 4]), '休みの日は末尾へ回り、次の周回で巡ってくる: ' + JSON.stringify(q));
+        } finally { setStart(origStart); for (let i = 1; i <= 5; i++) { rt.op('del', { coll: 'log_workout', id: CD(i) }); rt.op('del', { coll: 'log_daily', id: CD(i) }); } await p2.waitForTimeout(200); }
+        // 筋トレの日は記録があっても、トレーニングを完了していなければ持ち越す
         const E = '2027-10-13', E1 = '2027-10-14';
         try {
           await reloadAt(E, '08:00');
@@ -1268,9 +1283,11 @@ async function run(mode) {
           await openRecordWay('recKcal', p2); await p2.waitForSelector('#koAdd'); await p2.fill('#koK', '400'); await p2.click('#koAdd'); await p2.waitForSelector('#recSave'); await p2.click('#recSave'); await p2.waitForSelector('#sheet', { state: 'hidden' }); await p2.waitForTimeout(250);
           await reloadAt(E1, '08:00');
           assert((await p2.locator('h1').textContent()).startsWith('Day 4'), '筋トレの日は食事の記録があっても未完了なら翌日に持ち越す: ' + (await p2.locator('h1').textContent()));
+          assert((await p2.locator('#view').textContent()).includes('にできなかったため持ち越し'), '筋トレの日には持ち越しの一言を出す: ' + (await p2.locator('#view').textContent()).slice(0, 160));
+          assert((await pending()).some(x => x.dayNo === 4), '未消化リストには筋トレの日が入る: ' + JSON.stringify(await pending()));
         } finally { rt.op('del', { coll: 'log_meals', id: E }); rt.op('del', { coll: 'log_daily', id: E }); rt.op('del', { coll: 'log_daily', id: E1 }); }
       }
-      return '休みの日は 有酸素／食事／体重／サプリ／「有酸素はやらない」のどれかで消化。筋トレの日は今までどおり完了が必要。休みの日の目標も 2,632kcal / P210 F69 C295';
+      return '休みの日は何もしなくても消化（持ち越さない・持ち越し表示なし・未実施にも入らない）。筋トレの日は今までどおり完了が必要。休みの日の目標も 2,632kcal / P210 F69 C295';
     } finally { await resetClock(); await p2.close(); [D, D1].forEach(d => { rt.op('del', { coll: 'log_weight', id: d }); rt.op('del', { coll: 'log_meals', id: d }); rt.op('del', { coll: 'log_daily', id: d }); rt.op('del', { coll: 'log_workout', id: d }); rt.op('del', { coll: 'log_cardio', id: d }); }); }
   });
 
@@ -2348,6 +2365,7 @@ async function run(mode) {
 | 45 | 「自重×0」「0回」の記録ができてしまっていた。重量欄を空のまま「このセット完了」を押すと \`weightKg: ''\` で保存され、\`setActual()\` が重量なしを自重と読むため、重量が必要な種目まで「自重×0」と表示されていた。原因は記録の判定が「重量か回数のどちらかがあればよい」だったこと。回数 0（または空）は記録できない・重量が必要な種目（\`bodyweight\` でない種目）は重量なしでは記録できないに変え、自重かどうかは種目の定義だけから決めるようにした。過去の記録は \`SEED_VERSION\` 14 の \`clearZeroSets()\` で未記録に戻す。この変更で、テストの「クイック重量ボタンを押したあとに時刻を動かしてから記録する」手順が（再描画で重量欄が空に戻るため）本当に重量なしで保存していたことが露呈したので、テスト側も時刻を先に動かすよう直した。「限界まで」のセットは目標回数が無く回数欄が空なので、テストの共通ヘルパー \`ensureVals()\` で重量と回数の両方を埋めるようにした |
 | 46 | 提案重量が「前回の同じセット」だけを見ていて、当日ここまでの実績を無視していた（1セット目を前回より重くしても2セット目の提案が前回のままだった）。基準は前回の同じセット番号のまま、当日の直前セットの重量比（0.85〜1.15 にクランプ）で補正し、当日の直前セットの回数で上乗せ（上限超え +5%／上限ちょうど +2.5kg／下限未満 −5%）するようにした。丸めも器具ごとに分け（バーベル・スミス・マシン 1kg、ダンベルは1個あたりの刻み、ケーブル等のウェイトスタック 5kg）、+2.5kg のようにぴったり 0.5kg 刻みで出た値はそのまま残す。根拠が何も無いときは推測で埋めず提案を出さない。ウォームアップと漸増だけは「前回の同じセット番号が無ければ前回の重いセットを持ってくる」のが不適切なので、ウォームアップはトップ予定の約55%、漸増は当日ここまでの重量から1段階上げるという以前の動きを残した |
 | 47 | 記録画面で変えられるのが「個数（− 1 +）」だけで、20g 単位で登録したピスタチオを 35g 食べた日が入れられなかった（「1.75個」と数えることになる）。量を **g / ml / 個 で直接入れる**方式に変え、\`foodUnitOptions()\` がその食品で使える単位（既定・g 換算があれば両方）を返すようにした。刻みは g 5・ml 10・個 0.5、長押しで連続増減、単位タップで「個」⇄「g」、量の欄の長押しで「よく使う量・半分・2倍」。初期値は前回その食品を記録した量。記録側に量・単位・計算後の栄養値をコピーするので、あとで食品マスタを直しても過去の記録は変わらない。あわせて、行が横に切れて kcal が「297kc」のように欠けていたのを 2 段組みのグリッドに直し（品目名は折り返し、kcal は右端に全部出す）、単位ラベルの無い食品を \`unitOf()\` が「個」と読んでいた誤りも直した |
+| 48 | 休みの日（Day 3・7）が持ち越されていた。10/1 の画面に「Day 3 ・ Rest（有酸素のみ）・ 休み／9/30 にできなかったため持ち越し」と出ていた。休みの日の消化判定を \`restDayConsumed(date)\`（その日を過ごした記録があるか）で見ていたため、何も記録しなかった休みの日が未消化としてキューの先頭に残り続けていたのが原因。休みの日はやることが無いので、**記録の有無に関わらずその日で消化**（キューの末尾へ回す）に変え、\`restDayConsumed()\` ごと削除した。差し替えで押し出された日が休みの日のときも持ち越さず末尾へ回し、「休みの日が2つ連続でキューの先頭に並んだら末尾へ回す」という回避処理も不要になったので消した。キューは \`log_*\` から毎回読み直す純粋な計算なので、過去の記録は書き換えずに表示だけが直る |
 
 
 ## 実行方法
