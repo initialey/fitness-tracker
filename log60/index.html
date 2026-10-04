@@ -77,6 +77,7 @@ h2{margin:24px 0 10px;font:600 13px var(--jp);letter-spacing:.12em;color:var(--i
 .srow .mk{text-align:right;font-size:15px;color:var(--rule)}
 .srow.filled .mk{color:var(--ok)}
 .srow .lab{display:flex;align-items:baseline;justify-content:flex-end}
+.srow .bwtag{font:500 14px var(--jp);color:var(--ink2);padding-bottom:4px}
 
 /* チェックリスト */
 .chk{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:4px 10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--rule);cursor:pointer}
@@ -166,42 +167,44 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
 /* ===== 固定プラン（仕様書どおり。db には入れず、ここが唯一の出どころ） ===== */
 const LB = 0.45359237;
 const WD_JA = ['日', '月', '火', '水', '木', '金', '土'];
-// [id, 名前, セット数, 下限, 上限, スーパーセット記号（同じ記号は休まず続ける）]
+// 種目の名前と、重量を使わない種目（自重）。セット数とレンジは曜日ごとに決まるので DAYS 側に持つ
+// （スミスカーフレイズのように、同じ種目でも曜日でレンジが違うものがある）
 const EX = {
-  incline_smith: ['インクラインスミスプレス', 3, 6, 8, ''],
-  weighted_pullup: ['加重懸垂', 3, 6, 8, ''],
-  cable_fly: ['ケーブルフライ', 3, 10, 12, 'A'],
-  low_row: ['ローロウ', 3, 10, 12, 'A'],
-  smith_squat: ['スミススクワット', 3, 6, 8, ''],
-  bulgarian: ['ブルガリアンスクワット', 2, 8, 10, ''],
-  leg_ext: ['レッグエクステンション', 3, 12, 15, 'A'],
-  calf_raise: ['カーフレイズ', 3, 12, 15, 'A'],
-  db_ohp: ['DBショルダープレス', 3, 8, 10, ''],
-  side_raise: ['サイドレイズ', 3, 12, 15, 'A'],
-  face_pull: ['フェイスプル', 3, 12, 15, 'A'],
-  ez_curl: ['EZカール', 3, 10, 12, 'B'],
-  pushdown: ['プレスダウン', 3, 10, 12, 'B'],
-  db_bench: ['DBベンチプレス', 3, 8, 12, ''],
-  lat_pulldown: ['ラットプルダウン', 3, 10, 12, ''],
-  dip: ['ディップ', 3, 10, 12, 'A'],
-  db_row: ['DBロー', 3, 10, 12, 'A'],
-  rdl: ['RDL（ルーマニアンデッドリフト）', 3, 6, 8, ''],
-  leg_curl: ['レッグカール', 3, 10, 12, ''],
-  cable_crunch: ['ケーブルクランチ', 3, 12, 15, 'A'],
-  cable_side_raise: ['ケーブルサイドレイズ', 3, 12, 15, ''],
-  incline_curl: ['インクラインカール', 3, 10, 12, 'A'],
-  oh_extension: ['オーバーヘッドエクステンション', 3, 10, 12, 'A'],
-  rear_delt: ['リアデルト', 2, 12, 15, 'B'],
-  hammer_curl: ['ハンマーカール', 2, 12, 15, 'B']
+  incline_smith: ['インクラインスミスプレス'],
+  pullup: ['懸垂（自重）', true],
+  cable_fly: ['ケーブルフライ'],
+  low_row: ['ローロウ'],
+  smith_squat: ['スミススクワット'],
+  db_bulgarian: ['DBブルガリアンスクワット'],
+  leg_ext: ['レッグエクステンション（レッグデベロッパー）'],
+  smith_calf: ['スミスカーフレイズ'],
+  db_ohp: ['DBショルダープレス'],
+  db_side_raise: ['DBサイドレイズ'],
+  cable_rear_fly: ['ケーブル・リアデルトフライ'],
+  ez_curl: ['EZカール'],
+  cable_pushdown: ['ケーブルプレスダウン'],
+  db_bench: ['DBベンチプレス'],
+  lat_pulldown: ['ラットプルダウン'],
+  dip: ['ディップ'],
+  db_row: ['DBロー'],
+  bb_rdl: ['バーベルRDL'],
+  leg_curl: ['レッグカール（レッグデベロッパー）'],
+  hanging_leg_raise: ['ハンギングレッグレイズ', true],
+  cable_side_raise: ['ケーブルサイドレイズ'],
+  incline_db_curl: ['インクラインDBカール'],
+  db_oh_ext: ['DBオーバーヘッドエクステンション'],
+  db_rear_delt_raise: ['DBリアデルトレイズ'],
+  hammer_curl: ['ハンマーカール']
 };
-// wd は JavaScript の曜日番号（0=日）。カーフレイズは火・金で同じ id を使い、前回の重量が日をまたいでつながる
+// wd は JavaScript の曜日番号（0=日）。[種目id, セット数, 下限, 上限, スーパーセット記号（同じ記号は休まず続ける）]
+// スミスカーフレイズは火・金で同じ id を使うので、前回の重量が日をまたいでつながる（レンジは曜日ごと）
 const DAYS = {
-  1: { name: '上半身A', ex: ['incline_smith', 'weighted_pullup', 'cable_fly', 'low_row'] },
-  2: { name: '下半身A', ex: ['smith_squat', 'bulgarian', 'leg_ext', 'calf_raise'] },
-  3: { name: '上半身B', ex: ['db_ohp', 'side_raise', 'face_pull', 'ez_curl', 'pushdown'] },
-  4: { name: '上半身C', ex: ['db_bench', 'lat_pulldown', 'dip', 'db_row'] },
-  5: { name: '下半身B', ex: ['rdl', 'leg_curl', 'cable_crunch', 'calf_raise'] },
-  6: { name: '上半身D', ex: ['cable_side_raise', 'incline_curl', 'oh_extension', 'rear_delt', 'hammer_curl'] },
+  1: { name: '上半身A', ex: [['incline_smith', 3, 6, 8, ''], ['pullup', 3, 6, 10, ''], ['cable_fly', 3, 10, 12, 'A'], ['low_row', 3, 10, 12, 'A']] },
+  2: { name: '下半身A', ex: [['smith_squat', 3, 6, 8, ''], ['db_bulgarian', 2, 8, 10, ''], ['leg_ext', 3, 12, 15, 'A'], ['smith_calf', 3, 12, 15, 'A']] },
+  3: { name: '上半身B', ex: [['db_ohp', 3, 8, 10, ''], ['db_side_raise', 3, 12, 15, 'A'], ['cable_rear_fly', 3, 12, 15, 'A'], ['ez_curl', 3, 10, 12, 'B'], ['cable_pushdown', 3, 10, 12, 'B']] },
+  4: { name: '上半身C', ex: [['db_bench', 3, 8, 12, ''], ['lat_pulldown', 3, 10, 12, ''], ['dip', 3, 10, 12, 'A'], ['db_row', 3, 10, 12, 'A']] },
+  5: { name: '下半身B', ex: [['bb_rdl', 3, 6, 8, ''], ['leg_curl', 3, 10, 12, ''], ['hanging_leg_raise', 3, 10, 15, 'A'], ['smith_calf', 3, 10, 15, 'A']] },
+  6: { name: '上半身D', ex: [['cable_side_raise', 3, 12, 15, ''], ['incline_db_curl', 3, 10, 12, 'A'], ['db_oh_ext', 3, 10, 12, 'A'], ['db_rear_delt_raise', 2, 12, 15, 'B'], ['hammer_curl', 2, 12, 15, 'B']] },
   0: { name: '休み or モビリティ', ex: [], rest: true }
 };
 /* 食事: 合計 1,815kcal ・ P154 F67 C162（仕様書の表のとおり） */
@@ -321,18 +324,22 @@ const mealsNow = () => MEALS.map(mealOf);
 function sumMac(list) { const t = { kcal: 0, p: 0, f: 0, c: 0 }; list.forEach(m => { t.kcal += m.kcal; t.p += m.p; t.f += m.f; t.c += m.c; }); return { kcal: Math.round(t.kcal), p: r1(t.p), f: r1(t.f), c: r1(t.c) }; }
 const dietDoc = date => ST.log_diet[date] || { date, meals: {}, supps: {} };
 const woDoc = date => ST.log_workout[date] || { date, sets: {} };
+/** その日に割り当てられている種目の処方（セット数・レンジ）。曜日でレンジが違う種目があるので日付から引く */
+const planOf = date => DAYS[wdOf(date)] || DAYS[0];
+function prescOn(exId, date) { const hit = (planOf(date).ex || []).find(r => r[0] === exId); return hit ? { sets: hit[1], min: hit[2], max: hit[3] } : null; }
 /** その日の種目一覧（疲労抜き週はセット数を半分に） */
 function dayModel(date) {
-  const wd = wdOf(date), plan = DAYS[wd] || DAYS[0], wo = woDoc(date);
-  const exs = plan.ex.map((id, i) => {
-    const e = EX[id], total = setsFor(e[1], date);
+  const plan = planOf(date), wo = woDoc(date);
+  const exs = plan.ex.map(row => {
+    const id = row[0], e = EX[id], total = setsFor(row[1], date), bw = !!e[1];
     const sets = []; for (let n = 1; n <= total; n++) { const l = wo.sets[id + '_' + n]; sets.push({ no: n, weightKg: l ? l.weightKg : '', reps: l ? l.reps : '', done: !!l }); }
     const prev = lastSession(id, date), latest = lastSession(id, addDays(date, 1));
-    return { id, name: e[0], sets, total, min: e[2], max: e[3], ss: e[4], main: !e[4], prev,
+    const lp = latest ? prescOn(id, latest.date) || { sets: row[1], max: row[3] } : null;
+    return { id, name: e[0], bw, sets, total, planSets: row[1], min: row[2], max: row[3], ss: row[4], main: !row[4], prev,
       recorded: sets.filter(s => s.done).length, complete: sets.every(s => s.done),
-      upNext: hitTop(latest, e[3], latest ? setsFor(e[1], latest.date) : 0) };
+      upNext: hitTop(latest, lp ? lp.max : row[3], lp ? setsFor(lp.sets, latest.date) : 0) };
   });
-  return { date, wd, name: plan.name, rest: !!plan.rest, exs, deload: isDeload(date), weekNo: weekNoOf(date),
+  return { date, wd: wdOf(date), name: plan.name, rest: !!plan.rest, exs, deload: isDeload(date), weekNo: weekNoOf(date),
     complete: plan.rest ? true : exs.length > 0 && exs.every(e => e.complete) };
 }
 /** その種目を最後に記録した日（beforeDate より前）。{date, sets:[{weightKg,reps}]} */
@@ -352,8 +359,9 @@ function hitTop(sess, max, need) {
   if (sess.sets.length < (need || sess.sets.length)) return false;
   return sess.sets.every(s => Number(s.reps) >= max);
 }
-function prevText(sess) { if (!sess) return ''; const w = sess.sets[0].weightKg;
-  const same = sess.sets.every(s => Number(s.weightKg) === Number(w));
+function prevText(sess, bw) { if (!sess) return '';
+  if (bw) return md(sess.date) + '　自重×' + sess.sets.map(s => s.reps).join(',');
+  const w = sess.sets[0].weightKg, same = sess.sets.every(s => Number(s.weightKg) === Number(w));
   return md(sess.date) + '　' + (same ? disp(w) + unit() + '×' + sess.sets.map(s => s.reps).join(',')
     : sess.sets.map(s => disp(s.weightKg) + unit() + '×' + s.reps).join('、'));
 }
@@ -382,8 +390,8 @@ function trainedOn(date) {
   const plan = DAYS[wdOf(date)] || DAYS[0];
   if (plan.rest) return true;
   const sets = woDoc(date).sets || {};
-  return plan.ex.length > 0 && plan.ex.every(id => { const total = setsFor(EX[id][1], date);
-    for (let n = 1; n <= total; n++) if (!sets[id + '_' + n]) return false; return true; });
+  return plan.ex.length > 0 && plan.ex.every(row => { const total = setsFor(row[1], date);
+    for (let n = 1; n <= total; n++) if (!sets[row[0] + '_' + n]) return false; return true; });
 }
 const dietOn = date => { const d = dietDoc(date); return MEALS.every(m => d.meals && d.meals[m.id]); };
 const suppOn = date => { const d = dietDoc(date); return SUPPS.filter(s => s.daily).every(s => d.supps && d.supps[s.id]); };
@@ -445,12 +453,13 @@ function drawToday() {
       h += '<div class="' + cls + '">';
       h += '<div class="ex-h"><div class="nm">' + (e.ss ? '<span class="chip ss">SS ' + e.ss + '</span>' : '') + esc(e.name) +
         (e.complete ? '<span class="chip done">完了</span>' : '') + (e.upNext ? '<span class="chip">次回 重量アップ</span>' : '') + '</div>';
-      h += '<div class="tgt">' + e.total + '×' + e.min + '-' + e.max + (m.deload && e.total !== EX[e.id][1] ? '<span class="mute"> 通常' + EX[e.id][1] + '</span>' : '') + '</div>';
-      h += '<div class="meta">' + (e.prev ? '前回 <b>' + esc(prevText(e.prev)) + '</b>' : 'この種目はまだ記録がありません') +
+      h += '<div class="tgt">' + e.total + '×' + e.min + '-' + e.max + (m.deload && e.total !== e.planSets ? '<span class="mute"> 通常' + e.planSets + '</span>' : '') + '</div>';
+      h += '<div class="meta">' + (e.prev ? '前回 <b>' + esc(prevText(e.prev, e.bw)) + '</b>' : 'この種目はまだ記録がありません') +
         '　/　' + (e.ss ? 'SS ' + e.ss + ' は休まず続けて、終わってから休憩' : '休憩 2〜3分') + '</div></div>';
       h += '<div class="rows">' + e.sets.map(s => '<div class="srow' + (s.done ? ' filled' : '') + '">' +
         '<span class="n">' + s.no + '</span>' +
-        '<span class="lab"><input type="number" inputmode="decimal" step="any" min="0" data-w="' + e.id + '_' + s.no + '" value="' + esc(disp(s.weightKg)) + '" placeholder="' + esc(e.prev ? disp(e.prev.sets[Math.min(s.no, e.prev.sets.length) - 1].weightKg) : '—') + '" aria-label="' + esc(e.name) + ' ' + s.no + 'セット目の重量"><span class="u">' + unit() + '</span></span>' +
+        (e.bw ? '<span class="lab bwtag">自重</span>'
+          : '<span class="lab"><input type="number" inputmode="decimal" step="any" min="0" data-w="' + e.id + '_' + s.no + '" value="' + esc(disp(s.weightKg)) + '" placeholder="' + esc(e.prev ? disp(e.prev.sets[Math.min(s.no, e.prev.sets.length) - 1].weightKg) : '—') + '" aria-label="' + esc(e.name) + ' ' + s.no + 'セット目の重量"><span class="u">' + unit() + '</span></span>') +
         '<span class="x">×</span>' +
         '<span class="lab"><input type="number" inputmode="numeric" step="1" min="0" data-r="' + e.id + '_' + s.no + '" value="' + esc(s.reps) + '" placeholder="' + e.min + '" aria-label="' + esc(e.name) + ' ' + s.no + 'セット目の回数"><span class="u">回</span></span>' +
         '<span class="mk">' + (s.done ? '✓' : '○') + '</span></div>').join('') + '</div>';
@@ -663,6 +672,6 @@ render();
   finally { if (ST.mode === 'loading') ST.mode = 'mock'; render(); }
 })();
 // テスト用フック（純粋関数だけ）
-window.__log60 = { ST, weekNoOf, isDeload, setsFor, riceSuggestion, weeklyAvgs, mealsNow, sumMac, streak, trainedOn, dietOn, suppOn, hitTop, dayModel, lastSession, disp, toKg, rerender: render };
+window.__log60 = { ST, EX, DAYS, prescOn, weekNoOf, isDeload, setsFor, riceSuggestion, weeklyAvgs, mealsNow, sumMac, streak, trainedOn, dietOn, suppOn, hitTop, dayModel, lastSession, disp, toKg, rerender: render };
 })();
 </script>
