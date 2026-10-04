@@ -35,6 +35,7 @@ button{cursor:pointer}
 /* ヘッダ */
 header{position:sticky;top:env(safe-area-inset-top,0px);z-index:4;background:var(--paper);padding:14px 0 10px;border-bottom:1px solid var(--rule)}
 header .wd{font:600 12px var(--jp);letter-spacing:.14em;color:var(--ink2)}
+header h1 .dayno{display:inline-block;font:600 13px var(--num);letter-spacing:.04em;color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:4px}
 header h1{margin:2px 0 0;font:700 25px/1.25 var(--jp);text-wrap:balance}
 header h1 .parts{font:500 16px var(--jp);color:var(--ink2);white-space:nowrap}
 header .sub{margin-top:3px;font-size:13px;color:var(--ink2)}
@@ -103,6 +104,15 @@ h2{margin:24px 0 10px;font:600 13px var(--jp);letter-spacing:.12em;color:var(--i
 .meter{height:5px;border-radius:99px;background:var(--rule);overflow:hidden;margin-top:5px}
 .meter i{display:block;height:100%;background:var(--accent);border-radius:99px}
 .meter.full i{background:var(--ok)}
+.meter.over i{background:var(--signal)}
+.chk.ex-row{cursor:default}
+.chk.ex-row .box{border-color:var(--signal);background:var(--signal)}
+.chk .it .xbtn{background:transparent;border:0;color:var(--signal);font:500 12.5px var(--jp);padding:0 2px;text-decoration:underline;margin-left:6px}
+.txtin{width:100%;min-width:0;background:transparent;border:0;border-bottom:1.5px solid var(--rule);color:var(--ink);font:400 17px var(--jp);padding:5px 2px;outline:none;-moz-appearance:textfield}
+.txtin.num{font:500 19px var(--num);text-align:right}
+.txtin::-webkit-outer-spin-button,.txtin::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.txtin:focus{border-bottom-color:var(--accent)}
+.txtin::placeholder{color:var(--ink2);opacity:.5}
 
 /* 体重入力 */
 .win{display:flex;align-items:baseline;gap:8px;border-bottom:1.5px solid var(--rule);padding-bottom:6px}
@@ -197,7 +207,7 @@ const EX = {
   db_rear_delt_raise: ['DBリアデルトレイズ'],
   hammer_curl: ['ハンマーカール']
 };
-// wd は JavaScript の曜日番号（0=日）。[種目id, セット数, 下限, 上限, スーパーセット記号（同じ記号は休まず続ける）]
+// キーは Day 番号（1〜7）。[種目id, セット数, 下限, 上限, スーパーセット記号（同じ記号は休まず続ける）]
 // スミスカーフレイズは火・金で同じ id を使うので、前回の重量が日をまたいでつながる（レンジは曜日ごと）
 const DAYS = {
   1: { name: '上半身A', parts: '胸・背中', ex: [['incline_smith', 3, 6, 8, ''], ['pullup', 3, 6, 10, ''], ['cable_fly', 3, 10, 12, 'A'], ['low_row', 3, 10, 12, 'A']] },
@@ -206,7 +216,7 @@ const DAYS = {
   4: { name: '上半身C', parts: '胸・背中', ex: [['db_bench', 3, 8, 12, ''], ['lat_pulldown', 3, 10, 12, ''], ['dip', 3, 10, 12, 'A'], ['db_row', 3, 10, 12, 'A']] },
   5: { name: '下半身B', parts: '脚（もも裏）・腹', ex: [['bb_rdl', 3, 6, 8, ''], ['leg_curl', 3, 10, 12, ''], ['hanging_leg_raise', 3, 10, 15, 'A'], ['smith_calf', 3, 10, 15, 'A']] },
   6: { name: '上半身D', parts: '肩・腕', ex: [['cable_side_raise', 3, 12, 15, ''], ['incline_db_curl', 3, 10, 12, 'A'], ['db_oh_ext', 3, 10, 12, 'A'], ['db_rear_delt_raise', 2, 12, 15, 'B'], ['hammer_curl', 2, 12, 15, 'B']] },
-  0: { name: '休み or モビリティ', parts: '', ex: [], rest: true }
+  7: { name: '休み or モビリティ', parts: '', ex: [], rest: true }
 };
 /* 食事: 合計 1,815kcal ・ P154 F67 C162（仕様書の表のとおり） */
 const MEALS = [
@@ -221,7 +231,6 @@ const MEALS = [
 const RICE_PER_100G = { kcal: 168, p: 2.5, f: 0.3, c: 37.1 };
 const SUPPS = [
   { id: 'creatine', label: 'クレアチン', dose: '5g', note: '毎日', daily: true },
-  { id: 'caffeine', label: 'カフェイン', dose: '100〜200mg', note: 'トレ前・任意' },
   { id: 'vitd', label: 'ビタミンD', dose: '1,000〜2,000IU', note: '任意' }
 ];
 const DEFAULTS = { startDate: '', unit: 'kg', goalKg: 60, riceAdjustG: 0 };
@@ -279,7 +288,7 @@ const store = {
   /** 1 ドキュメントに同時に書かないよう、パスごとに直列化する */
   set(coll, id, data) {
     if (coll === 'settings') ST.settings = Object.assign({}, DEFAULTS, data); else ST[coll][id] = data;
-    render();
+    _qc = {}; render();
     if (!this.db) return Promise.resolve();
     const key = coll + '/' + id, prev = this.chain[key] || Promise.resolve();
     const p = prev.catch(() => {}).then(() => this.db.doc(key).set(JSON.parse(JSON.stringify(data))));
@@ -288,7 +297,7 @@ const store = {
   },
   del(coll, id) {
     if (coll !== 'settings') delete ST[coll][id];
-    render();
+    _qc = {}; render();
     if (!this.db) return Promise.resolve();
     const key = coll + '/' + id, prev = this.chain[key] || Promise.resolve();
     const p = prev.catch(() => {}).then(() => this.db.doc(key).delete());
@@ -303,12 +312,41 @@ function firstRecord() {
   const ds = Object.keys(ST.log_weight).concat(Object.keys(ST.log_workout), Object.keys(ST.log_diet)).filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
   return ds.length ? ds[0] : '';
 }
-/** 開始日から数えた週番号（1 始まり・7日区切り） */
+/** 体重の週平均に使う週番号（開始日から7日区切り・1 始まり）。Day のサイクルとは別もの */
 function weekNoOf(date) { const n = diffDays(startDate(), date); return n < 0 ? 1 : Math.floor(n / 7) + 1; }
 function weekRangeOf(n) { const from = addDays(startDate(), (n - 1) * 7); return { from, to: addDays(from, 6) }; }
-/** 疲労抜き週: 開始日から5週ごと（5・10・15週目）。セット数を半分にする */
-const isDeload = date => weekNoOf(date) % 5 === 0;
+/** その日にトレーニングの記録があるか（1セットでも入っていれば「やった日」） */
+const recordedOn = date => Object.keys((ST.log_workout[date] || {}).sets || {}).length > 0;
+/** Day1〜7 を順に出す。記録しなかった日は翌日も同じ Day（繰り越し）、記録した日だけ次の Day へ。
+ *  Day7（休み）は記録がなくても翌日 Day1 に進む。今日より先は「順調にこなした場合」の見込みで進める。
+ *  log_* から毎回読み直すだけの計算で、どの日付にも書き込まない */
+let _qc = {};
+function replay(upto) {
+  const start = startDate(), key = upto + '|' + start;
+  if (_qc[key]) return _qc[key];
+  const today = todayYmd(), byDate = {};
+  let day = 1, cycle = 1, carriedFrom = null;
+  for (let d = start, guard = 0; d <= upto && guard < 3000; d = addDays(d, 1), guard++) {
+    byDate[d] = { dayNo: day, cycle, carriedFrom };
+    const advance = d > today || day === 7 || recordedOn(d);
+    if (advance) { if (day === 7) { day = 1; cycle++; } else day++; carriedFrom = null; }
+    else carriedFrom = carriedFrom || d;
+  }
+  return _qc[key] = { byDate, day, cycle };
+}
+function assignOf(date) {
+  if (date < startDate()) return { dayNo: 1, cycle: 1, carriedFrom: null };
+  const a = replay(date > todayYmd() ? date : todayYmd()).byDate[date];
+  return a || { dayNo: 1, cycle: 1, carriedFrom: null };
+}
+const dayNoFor = date => assignOf(date).dayNo;
+const cycleNoFor = date => assignOf(date).cycle;
+/** 疲労抜き: 7日サイクルを5回こなすごとに1サイクル（サイクル 6・12・18…）。セット数を半分にする */
+const isDeloadCycle = cycle => cycle % 6 === 0;
+const isDeload = date => isDeloadCycle(cycleNoFor(date));
 const setsFor = (sets, date) => isDeload(date) ? Math.ceil(sets / 2) : sets;
+/** 次の疲労抜きサイクル */
+const nextDeloadCycle = cycle => (Math.floor((cycle - 1) / 6) + 1) * 6;
 /** ご飯の増減を反映した1食ぶん。rice が 0 の食事は変わらない */
 function mealOf(m) {
   const adj = Number(ST.settings.riceAdjustG) || 0;
@@ -323,10 +361,12 @@ function mealOf(m) {
 }
 const mealsNow = () => MEALS.map(mealOf);
 function sumMac(list) { const t = { kcal: 0, p: 0, f: 0, c: 0 }; list.forEach(m => { t.kcal += m.kcal; t.p += m.p; t.f += m.f; t.c += m.c; }); return { kcal: Math.round(t.kcal), p: r1(t.p), f: r1(t.f), c: r1(t.c) }; }
-const dietDoc = date => ST.log_diet[date] || { date, meals: {}, supps: {} };
+const dietDoc = date => ST.log_diet[date] || { date, meals: {}, supps: {}, extras: [] };
+/** メニュー外に食べたもの（その日の合計に足す） */
+const extrasOf = date => (dietDoc(date).extras || []).filter(x => x && Number(x.kcal) >= 0);
 const woDoc = date => ST.log_workout[date] || { date, sets: {} };
 /** その日に割り当てられている種目の処方（セット数・レンジ）。曜日でレンジが違う種目があるので日付から引く */
-const planOf = date => DAYS[wdOf(date)] || DAYS[0];
+const planOf = date => DAYS[dayNoFor(date)] || DAYS[7];
 function prescOn(exId, date) { const hit = (planOf(date).ex || []).find(r => r[0] === exId); return hit ? { sets: hit[1], min: hit[2], max: hit[3] } : null; }
 /** その日の種目一覧（疲労抜き週はセット数を半分に） */
 function dayModel(date) {
@@ -340,8 +380,10 @@ function dayModel(date) {
       recorded: sets.filter(s => s.done).length, complete: sets.every(s => s.done),
       upNext: hitTop(latest, lp ? lp.max : row[3], lp ? setsFor(lp.sets, latest.date) : 0) };
   });
-  return { date, wd: wdOf(date), name: plan.name, parts: plan.parts || '', rest: !!plan.rest, exs, deload: isDeload(date), weekNo: weekNoOf(date),
-    complete: plan.rest ? true : exs.length > 0 && exs.every(e => e.complete) };
+  const a = assignOf(date);
+  return { date, wd: wdOf(date), dayNo: a.dayNo, cycle: a.cycle, carriedFrom: a.carriedFrom,
+    name: plan.name, parts: plan.parts || '', rest: !!plan.rest, exs, deload: isDeloadCycle(a.cycle), weekNo: weekNoOf(date),
+    recorded: recordedOn(date), complete: plan.rest ? true : exs.length > 0 && exs.every(e => e.complete) };
 }
 /** その種目を最後に記録した日（beforeDate より前）。{date, sets:[{weightKg,reps}]} */
 function lastSession(exId, beforeDate) {
@@ -387,13 +429,8 @@ function riceSuggestion() {
   return { kind: 'none', why: '順調に減っています。いまのご飯の量を続けてください' };
 }
 /* --- 連続達成日数 --- */
-function trainedOn(date) {
-  const plan = DAYS[wdOf(date)] || DAYS[0];
-  if (plan.rest) return true;
-  const sets = woDoc(date).sets || {};
-  return plan.ex.length > 0 && plan.ex.every(row => { const total = setsFor(row[1], date);
-    for (let n = 1; n <= total; n++) if (!sets[row[0] + '_' + n]) return false; return true; });
-}
+/** トレの達成: 休み（Day7）か、その日にトレーニングの記録がある日（Day が進む条件と同じ） */
+const trainedOn = date => planOf(date).rest || recordedOn(date);
 const dietOn = date => { const d = dietDoc(date); return MEALS.every(m => d.meals && d.meals[m.id]); };
 const suppOn = date => { const d = dietDoc(date); return SUPPS.filter(s => s.daily).every(s => d.supps && d.supps[s.id]); };
 function streak(fn) {
@@ -411,6 +448,7 @@ function render() {
   // 数字を入れている最中に描き直すと入力欄からフォーカスが飛ぶので、離れるまで待つ
   if (typing()) { pendingRender = true; return; }
   pendingRender = false;
+  _qc = {}; // キューは log_* から毎回読み直す
   if (ST.mode === 'loading') { $('#hd').innerHTML = '<div class="wd">読み込み中</div><h1>60kgログ</h1>'; $('#view').innerHTML = '<div class="card"><div class="empty">記録を読み込んでいます…</div></div>'; return; }
   $$('nav.tabs button').forEach(b => { if (b.dataset.tab === UI.tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   drawHeader();
@@ -420,8 +458,8 @@ function drawHeader() {
   const d = UI.date, m = dayModel(d), isToday = d === todayYmd();
   let h = '<div class="wd">' + (UI.tab === 'today' ? WD_JA[m.wd] + '曜日' : UI.tab === 'log' ? '記録' : '振り返り') + '</div>';
   if (UI.tab === 'today') {
-    h += '<h1>' + esc(m.name) + (m.parts ? '<span class="parts">【' + esc(m.parts) + '】</span>' : '') + '</h1>';
-    h += '<div class="sub">Week ' + m.weekNo + '　' + (m.rest ? '休み。動きたければ軽くモビリティだけ' : m.exs.length + '種目 ・ 約30分') + '</div>';
+    h += '<h1><span class="dayno">Day ' + m.dayNo + '</span>' + esc(m.name) + (m.parts ? '<span class="parts">【' + esc(m.parts) + '】</span>' : '') + '</h1>';
+    h += '<div class="sub">サイクル ' + m.cycle + (m.deload ? '（疲労抜き）' : '') + '　' + (m.rest ? '休み。動きたければ軽くモビリティだけ' : m.exs.length + '種目 ・ 約30分') + '</div>';
     h += '<div class="nav"><button data-shift="-1" aria-label="前の日">‹</button><div class="d">' + md(d) + '（' + WD_JA[m.wd] + '）' + (isToday ? ' 今日' : '') + '</div>' +
       (isToday ? '' : '<button class="today" data-today="1">今日へ</button>') + '<button data-shift="1" aria-label="次の日">›</button></div>';
   } else if (UI.tab === 'log') {
@@ -436,16 +474,18 @@ function drawHeader() {
 /* --- ① 今日 --- */
 function drawToday() {
   const d = UI.date, m = dayModel(d), diet = dietDoc(d), meals = mealsNow(), target = sumMac(meals);
-  const eaten = sumMac(meals.filter(x => diet.meals && diet.meals[x.id]));
+  const extras = extrasOf(d);
+  const eaten = sumMac(meals.filter(x => diet.meals && diet.meals[x.id]).concat(extras.map(x => ({ kcal: Number(x.kcal) || 0, p: Number(x.p) || 0, f: Number(x.f) || 0, c: Number(x.c) || 0 }))));
   let h = '';
   if (ST.mode === 'mock') h += '<div class="mode">保存されません（db につながっていません）</div>';
-  if (m.deload) h += '<div class="banner"><b>疲労抜き週</b>（Week ' + m.weekNo + '）　セット数を半分にして、重量はそのまま。きつければ重量も少し落とす</div>';
+  if (m.carriedFrom) h += '<div class="small mute" style="margin:10px 0 0">' + esc(md(m.carriedFrom)) + ' に記録がなかったので、Day ' + m.dayNo + ' を繰り越しています</div>';
+  if (m.deload) h += '<div class="banner"><b>疲労抜きサイクル</b>（サイクル ' + m.cycle + '）　セット数を半分にして、重量はそのまま。きつければ重量も少し落とす</div>';
   if (!ST.settings.startDate) h += '<div class="banner">開始日がまだです。<b>振り返り</b>タブで開始日を決めると、週平均と疲労抜き週が出ます</div>';
 
   h += '<h2>トレーニング</h2>';
   if (m.rest) {
-    h += '<div class="card"><div style="font:700 16px var(--jp)">今日は休み</div>' +
-      '<div class="small mute" style="margin-top:6px">やるならモビリティだけ。股関節・肩・胸椎を各1〜2分。記録はいりません</div></div>';
+    h += '<div class="card"><div style="font:700 16px var(--jp)">Day 7 は休み</div>' +
+      '<div class="small mute" style="margin-top:6px">やるならモビリティだけ。股関節・肩・胸椎を各1〜2分。記録はいりません。明日は Day 1 に進みます</div></div>';
   } else {
     m.exs.forEach((e, i) => {
       const nextSS = m.exs[i + 1] && m.exs[i + 1].ss === e.ss && e.ss;
@@ -469,16 +509,29 @@ function drawToday() {
   }
 
   h += '<h2>食事</h2><div class="card">';
-  h += meals.map(x => { const on = !!(diet.meals && diet.meals[x.id]);
+  h += '<div class="chks">' + meals.map(x => { const on = !!(diet.meals && diet.meals[x.id]);
     return '<div class="chk' + (on ? ' on' : '') + '" data-meal="' + x.id + '"><button class="box' + (on ? ' on' : '') + '" aria-pressed="' + on + '" aria-label="' + esc(x.label) + 'を食べた">✓</button>' +
       '<span class="ttl"><span class="lb">' + esc(x.label) + '</span></span><span class="kc">' + fmtN(x.kcal) + 'kcal</span>' +
-      '<span class="it">' + x.items + '　P' + r1(x.p) + ' F' + r1(x.f) + ' C' + r1(x.c) + '</span></div>'; }).join('');
-  const bar = (v, t) => '<div class="meter' + (v >= t ? ' full' : '') + '"><i style="width:' + Math.min(100, t ? v / t * 100 : 0) + '%"></i></div>';
+      '<span class="it">' + x.items + '　P' + r1(x.p) + ' F' + r1(x.f) + ' C' + r1(x.c) + '</span></div>'; }).join('') +
+    extras.map(x => '<div class="chk ex-row"><span class="box on" aria-hidden="true">✓</span>' +
+      '<span class="ttl"><span class="lb">外</span>' + esc(x.name || 'メニュー外') + '</span><span class="kc">' + fmtN(x.kcal) + 'kcal</span>' +
+      '<span class="it">P' + r1(x.p || 0) + ' F' + r1(x.f || 0) + ' C' + r1(x.c || 0) +
+      ' <button class="xbtn" data-exdel="' + esc(x.id) + '" aria-label="この記録を消す">消す</button></span></div>').join('') + '</div>';
+  h += '<button class="btn ghost" id="exOpen" style="margin-top:12px">＋ メニュー外の食事を追加</button>';
+  h += '<div id="exForm" hidden style="margin-top:12px;border-top:1px solid var(--rule);padding-top:12px">' +
+    '<label class="lb" for="exName">食品名</label><input id="exName" class="txtin" type="text" placeholder="例：ジョリビーのチキン">' +
+    '<div class="row2" style="margin-top:10px"><div><label class="lb" for="exK">kcal（必須）</label><input id="exK" class="txtin num" type="number" inputmode="decimal" step="any" min="0" placeholder="0"></div>' +
+    '<div><label class="lb" for="exP">P（任意）</label><input id="exP" class="txtin num" type="number" inputmode="decimal" step="any" min="0" placeholder="—"></div></div>' +
+    '<div class="row2" style="margin-top:10px"><div><label class="lb" for="exF">F（任意）</label><input id="exF" class="txtin num" type="number" inputmode="decimal" step="any" min="0" placeholder="—"></div>' +
+    '<div><label class="lb" for="exC">C（任意）</label><input id="exC" class="txtin num" type="number" inputmode="decimal" step="any" min="0" placeholder="—"></div></div>' +
+    '<div class="btns"><button class="btn ghost" id="exCancel">やめる</button><button class="btn" id="exAdd">合計に足す</button></div></div>';
+  const bar = (v, t) => '<div class="meter' + (v > t ? ' over' : v >= t ? ' full' : '') + '"><i style="width:' + Math.min(100, t ? v / t * 100 : 0) + '%"></i></div>';
   h += '<div class="pfc">' +
     '<div><div class="v">' + fmtN(eaten.kcal) + '</div><div class="l">kcal / ' + fmtN(target.kcal) + '</div>' + bar(eaten.kcal, target.kcal) + '</div>' +
     '<div><div class="v">' + Math.round(eaten.p) + '<s> /' + Math.round(target.p) + '</s></div><div class="l">たんぱく質</div>' + bar(eaten.p, target.p) + '</div>' +
     '<div><div class="v">' + Math.round(eaten.f) + '<s> /' + Math.round(target.f) + '</s></div><div class="l">脂質</div>' + bar(eaten.f, target.f) + '</div>' +
     '<div><div class="v">' + Math.round(eaten.c) + '<s> /' + Math.round(target.c) + '</s></div><div class="l">炭水化物</div>' + bar(eaten.c, target.c) + '</div></div>';
+  if (extras.length) h += '<div class="small mute" style="margin-top:10px">メニュー外 ' + extras.length + '件 ・ ' + fmtN(sumMac(extras.map(x => ({ kcal: Number(x.kcal) || 0, p: Number(x.p) || 0, f: Number(x.f) || 0, c: Number(x.c) || 0 }))).kcal) + 'kcal を合計に足しています</div>';
   if (Number(ST.settings.riceAdjustG)) h += '<div class="small mute" style="margin-top:10px">ご飯は各食 ' + (ST.settings.riceAdjustG > 0 ? '+' : '') + ST.settings.riceAdjustG + 'g で計算しています（振り返りタブで戻せます）</div>';
   h += '</div>';
 
@@ -511,6 +564,24 @@ function bindToday(date) {
   $$('[data-supp]').forEach(el => { el.onclick = () => { const d = dietDoc(date), supps = Object.assign({}, d.supps);
     const id = el.dataset.supp; if (supps[id]) delete supps[id]; else supps[id] = isoNow();
     store.set('log_diet', date, Object.assign({}, d, { date, supps })); }; });
+  // メニュー外の食事
+  const form = $('#exForm'), open = $('#exOpen');
+  if (open) open.onclick = () => { form.hidden = false; open.hidden = true; const n = $('#exName'); if (n) n.focus(); };
+  const close = () => { form.hidden = true; open.hidden = false; ['#exName', '#exK', '#exP', '#exF', '#exC'].forEach(q => { const el = $(q); if (el) el.value = ''; }); };
+  const cx = $('#exCancel'); if (cx) cx.onclick = () => { pendingRender = false; close(); };
+  const add = $('#exAdd'); if (add) add.onclick = () => {
+    const k = $('#exK').value.trim();
+    if (k === '' || !(Number(k) >= 0)) return toast('kcal を入れてください');
+    const num = q => { const v = $(q).value.trim(); return v === '' ? 0 : r1(Number(v)) || 0; };
+    const row = { id: 'x' + Date.now().toString(36), name: $('#exName').value.trim() || 'メニュー外', kcal: r1(Number(k)), p: num('#exP'), f: num('#exF'), c: num('#exC'), at: isoNow() };
+    $$('#exForm input').forEach(el => el.blur()); pendingRender = false;
+    const d = dietDoc(date);
+    store.set('log_diet', date, Object.assign({}, d, { date, extras: extrasOf(date).concat([row]) }))
+      .then(() => toast(row.name + ' を合計に足しました'));
+  };
+  $$('[data-exdel]').forEach(b => { b.onclick = e => { e.stopPropagation(); const id = b.dataset.exdel, d = dietDoc(date);
+    store.set('log_diet', date, Object.assign({}, d, { date, extras: extrasOf(date).filter(x => String(x.id) !== String(id)) }))
+      .then(() => toast('メニュー外の記録を消しました')); }; });
 }
 /* --- ② 記録（体重） --- */
 function drawLog() {
@@ -610,9 +681,10 @@ function drawReview() {
   let h = '';
   if (ST.mode === 'mock') h += '<div class="mode">保存されません（db につながっていません）</div>';
   h += '<h2>連続達成日数</h2><div class="streaks">' +
-    '<div><div class="v">' + streak(trainedOn) + '<small> 日</small></div><div class="l">トレーニング<br>（休みの日も続く）</div></div>' +
+    '<div><div class="v">' + streak(trainedOn) + '<small> 日</small></div><div class="l">トレーニング<br>（Day7 も続く）</div></div>' +
     '<div><div class="v">' + streak(dietOn) + '<small> 日</small></div><div class="l">食事<br>（6項目すべて）</div></div>' +
     '<div><div class="v">' + streak(suppOn) + '<small> 日</small></div><div class="l">サプリ<br>（クレアチン）</div></div></div>';
+  h += '<div class="small mute" style="margin-top:8px">トレは「Day7 か、その日に記録がある」で数えます（Day が進む条件と同じ）。今日がまだなら前日から数えます</div>';
 
   h += '<h2>ご飯の調整</h2>';
   if (sug.kind === 'none') {
@@ -631,18 +703,20 @@ function drawReview() {
   else {
     h += '<div class="scroll"><table class="wk"><tr><th>週</th><th>期間</th><th>週平均</th><th>前週比</th><th>測定</th></tr>' +
       wa.map((w, i) => { const d = i > 0 ? r1(w.avg - wa[i - 1].avg) : null;
-        return '<tr><td>' + w.week + (isDeload(w.from) ? ' <span class="mute">抜</span>' : '') + '</td><td>' + md(w.from) + '–' + md(w.to) + (w.done ? '' : ' <span class="mute">途中</span>') + '</td>' +
+        return '<tr><td>' + w.week + '</td><td>' + md(w.from) + '–' + md(w.to) + (w.done ? '' : ' <span class="mute">途中</span>') + '</td>' +
           '<td class="d">' + disp(w.avg) + unit() + '</td>' +
           '<td class="d ' + (d == null ? '' : d < 0 ? 'dn' : d > 0 ? 'up' : '') + '">' + (d == null ? '—' : (d > 0 ? '+' : '') + disp(d) + unit()) + '</td>' +
           '<td class="d">' + w.n + '日</td></tr>'; }).join('') + '</table></div>';
-    h += '<div class="small mute" style="margin-top:8px">「抜」は疲労抜き週。前週比は終わった週どうしで比べています</div>';
+    h += '<div class="small mute" style="margin-top:8px">週は開始日から7日区切り（Day のサイクルとは別）。前週比は終わった週どうしで比べています</div>';
   }
   h += '</div>';
 
-  h += '<h2>疲労抜き週</h2><div class="card">';
-  const wn = weekNoOf(today), nextDeload = (Math.floor((wn - 1) / 5) + 1) * 5;
-  h += '<div class="small">' + (isDeload(today) ? '<b>今週（Week ' + wn + '）が疲労抜き週</b>。セット数を半分にします' :
-    '次は <b class="num">Week ' + nextDeload + '</b>（' + md(weekRangeOf(nextDeload).from) + '〜' + md(weekRangeOf(nextDeload).to) + '）。開始日から5週ごと') + '</div></div>';
+  h += '<h2>サイクルと疲労抜き</h2><div class="card">';
+  const cy = cycleNoFor(today), dn = dayNoFor(today), nd = nextDeloadCycle(cy);
+  h += '<div class="small">いまは <b class="num">サイクル ' + cy + ' の Day ' + dn + '</b>' + (DAYS[dn] ? '（' + esc(DAYS[dn].name) + '）' : '') + '</div>';
+  h += '<div class="small mute" style="margin-top:6px">' + (isDeloadCycle(cy) ? '<b>このサイクルが疲労抜き</b>。セット数を半分にします' :
+    '次の疲労抜きは <b class="num">サイクル ' + nd + '</b>（7日サイクルを5回こなすごとに1サイクル）') + '</div>';
+  h += '<div class="small mute" style="margin-top:6px">記録しなかった日はその Day が翌日に繰り越されるので、1サイクルに何日かかるかは日によって変わります</div></div>';
 
   h += '<h2>設定</h2><div class="card">' +
     '<div class="row2"><div><label class="lb" for="sdIn">開始日</label><input id="sdIn" class="num" type="date" value="' + esc(ST.settings.startDate || '') + '" style="width:100%;background:transparent;border:0;border-bottom:1.5px solid var(--rule);padding:4px 0;font-size:17px"></div>' +
@@ -673,6 +747,6 @@ render();
   finally { if (ST.mode === 'loading') ST.mode = 'mock'; render(); }
 })();
 // テスト用フック（純粋関数だけ）
-window.__log60 = { ST, EX, DAYS, prescOn, weekNoOf, isDeload, setsFor, riceSuggestion, weeklyAvgs, mealsNow, sumMac, streak, trainedOn, dietOn, suppOn, hitTop, dayModel, lastSession, disp, toKg, rerender: render };
+window.__log60 = { ST, EX, DAYS, prescOn, weekNoOf, isDeload, isDeloadCycle, nextDeloadCycle, setsFor, dayNoFor, cycleNoFor, assignOf, recordedOn, extrasOf, riceSuggestion, weeklyAvgs, mealsNow, sumMac, streak, trainedOn, dietOn, suppOn, hitTop, dayModel, lastSession, disp, toKg, rerender: render };
 })();
 </script>
