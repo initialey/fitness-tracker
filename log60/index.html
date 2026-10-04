@@ -35,7 +35,8 @@ button{cursor:pointer}
 /* ヘッダ */
 header{position:sticky;top:env(safe-area-inset-top,0px);z-index:4;background:var(--paper);padding:14px 0 10px;border-bottom:1px solid var(--rule)}
 header .wd{font:600 12px var(--jp);letter-spacing:.14em;color:var(--ink2)}
-header h1{margin:2px 0 0;font:700 25px/1.2 var(--jp);text-wrap:balance}
+header h1{margin:2px 0 0;font:700 25px/1.25 var(--jp);text-wrap:balance}
+header h1 .parts{font:500 16px var(--jp);color:var(--ink2);white-space:nowrap}
 header .sub{margin-top:3px;font-size:13px;color:var(--ink2)}
 header .nav{display:flex;align-items:center;gap:6px;margin-top:8px}
 header .nav button{flex:none;border:1px solid var(--rule);background:var(--card);color:var(--ink2);border-radius:8px;width:34px;height:30px;font:600 15px var(--num);padding:0}
@@ -199,13 +200,13 @@ const EX = {
 // wd は JavaScript の曜日番号（0=日）。[種目id, セット数, 下限, 上限, スーパーセット記号（同じ記号は休まず続ける）]
 // スミスカーフレイズは火・金で同じ id を使うので、前回の重量が日をまたいでつながる（レンジは曜日ごと）
 const DAYS = {
-  1: { name: '上半身A', ex: [['incline_smith', 3, 6, 8, ''], ['pullup', 3, 6, 10, ''], ['cable_fly', 3, 10, 12, 'A'], ['low_row', 3, 10, 12, 'A']] },
-  2: { name: '下半身A', ex: [['smith_squat', 3, 6, 8, ''], ['db_bulgarian', 2, 8, 10, ''], ['leg_ext', 3, 12, 15, 'A'], ['smith_calf', 3, 12, 15, 'A']] },
-  3: { name: '上半身B', ex: [['db_ohp', 3, 8, 10, ''], ['db_side_raise', 3, 12, 15, 'A'], ['cable_rear_fly', 3, 12, 15, 'A'], ['ez_curl', 3, 10, 12, 'B'], ['cable_pushdown', 3, 10, 12, 'B']] },
-  4: { name: '上半身C', ex: [['db_bench', 3, 8, 12, ''], ['lat_pulldown', 3, 10, 12, ''], ['dip', 3, 10, 12, 'A'], ['db_row', 3, 10, 12, 'A']] },
-  5: { name: '下半身B', ex: [['bb_rdl', 3, 6, 8, ''], ['leg_curl', 3, 10, 12, ''], ['hanging_leg_raise', 3, 10, 15, 'A'], ['smith_calf', 3, 10, 15, 'A']] },
-  6: { name: '上半身D', ex: [['cable_side_raise', 3, 12, 15, ''], ['incline_db_curl', 3, 10, 12, 'A'], ['db_oh_ext', 3, 10, 12, 'A'], ['db_rear_delt_raise', 2, 12, 15, 'B'], ['hammer_curl', 2, 12, 15, 'B']] },
-  0: { name: '休み or モビリティ', ex: [], rest: true }
+  1: { name: '上半身A', parts: '胸・背中', ex: [['incline_smith', 3, 6, 8, ''], ['pullup', 3, 6, 10, ''], ['cable_fly', 3, 10, 12, 'A'], ['low_row', 3, 10, 12, 'A']] },
+  2: { name: '下半身A', parts: '脚（前もも）', ex: [['smith_squat', 3, 6, 8, ''], ['db_bulgarian', 2, 8, 10, ''], ['leg_ext', 3, 12, 15, 'A'], ['smith_calf', 3, 12, 15, 'A']] },
+  3: { name: '上半身B', parts: '肩・腕', ex: [['db_ohp', 3, 8, 10, ''], ['db_side_raise', 3, 12, 15, 'A'], ['cable_rear_fly', 3, 12, 15, 'A'], ['ez_curl', 3, 10, 12, 'B'], ['cable_pushdown', 3, 10, 12, 'B']] },
+  4: { name: '上半身C', parts: '胸・背中', ex: [['db_bench', 3, 8, 12, ''], ['lat_pulldown', 3, 10, 12, ''], ['dip', 3, 10, 12, 'A'], ['db_row', 3, 10, 12, 'A']] },
+  5: { name: '下半身B', parts: '脚（もも裏）・腹', ex: [['bb_rdl', 3, 6, 8, ''], ['leg_curl', 3, 10, 12, ''], ['hanging_leg_raise', 3, 10, 15, 'A'], ['smith_calf', 3, 10, 15, 'A']] },
+  6: { name: '上半身D', parts: '肩・腕', ex: [['cable_side_raise', 3, 12, 15, ''], ['incline_db_curl', 3, 10, 12, 'A'], ['db_oh_ext', 3, 10, 12, 'A'], ['db_rear_delt_raise', 2, 12, 15, 'B'], ['hammer_curl', 2, 12, 15, 'B']] },
+  0: { name: '休み or モビリティ', parts: '', ex: [], rest: true }
 };
 /* 食事: 合計 1,815kcal ・ P154 F67 C162（仕様書の表のとおり） */
 const MEALS = [
@@ -339,7 +340,7 @@ function dayModel(date) {
       recorded: sets.filter(s => s.done).length, complete: sets.every(s => s.done),
       upNext: hitTop(latest, lp ? lp.max : row[3], lp ? setsFor(lp.sets, latest.date) : 0) };
   });
-  return { date, wd: wdOf(date), name: plan.name, rest: !!plan.rest, exs, deload: isDeload(date), weekNo: weekNoOf(date),
+  return { date, wd: wdOf(date), name: plan.name, parts: plan.parts || '', rest: !!plan.rest, exs, deload: isDeload(date), weekNo: weekNoOf(date),
     complete: plan.rest ? true : exs.length > 0 && exs.every(e => e.complete) };
 }
 /** その種目を最後に記録した日（beforeDate より前）。{date, sets:[{weightKg,reps}]} */
@@ -419,7 +420,7 @@ function drawHeader() {
   const d = UI.date, m = dayModel(d), isToday = d === todayYmd();
   let h = '<div class="wd">' + (UI.tab === 'today' ? WD_JA[m.wd] + '曜日' : UI.tab === 'log' ? '記録' : '振り返り') + '</div>';
   if (UI.tab === 'today') {
-    h += '<h1>' + esc(m.name) + '</h1>';
+    h += '<h1>' + esc(m.name) + (m.parts ? '<span class="parts">【' + esc(m.parts) + '】</span>' : '') + '</h1>';
     h += '<div class="sub">Week ' + m.weekNo + '　' + (m.rest ? '休み。動きたければ軽くモビリティだけ' : m.exs.length + '種目 ・ 約30分') + '</div>';
     h += '<div class="nav"><button data-shift="-1" aria-label="前の日">‹</button><div class="d">' + md(d) + '（' + WD_JA[m.wd] + '）' + (isToday ? ' 今日' : '') + '</div>' +
       (isToday ? '' : '<button class="today" data-today="1">今日へ</button>') + '<button data-shift="1" aria-label="次の日">›</button></div>';
