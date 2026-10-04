@@ -63,6 +63,14 @@ h2{margin:24px 0 10px;font:600 13px var(--jp);letter-spacing:.12em;color:var(--i
 .ex-h .tgt{grid-column:2;grid-row:1;justify-self:end;white-space:nowrap;font:500 14px var(--num);color:var(--ink2)}
 .ex-h .meta{grid-column:1/3;font-size:12.5px;color:var(--ink2);overflow-wrap:anywhere}
 .ex-h .meta b{color:var(--ink);font-family:var(--num);font-weight:500}
+.sug{grid-column:1/3;margin-top:6px;padding:8px 10px;border-radius:8px;background:color-mix(in srgb,var(--accent) 9%,transparent);font-size:13px}
+.sug b{font:600 15px var(--num);color:var(--accent);margin-left:2px}
+.sug .why{display:block;margin-top:2px;font-size:12px;color:var(--ink2);overflow-wrap:anywhere}
+.rirrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 14px;border-top:1px dashed var(--rule)}
+.rirrow .rl{font-size:12.5px;color:var(--ink2);min-width:0}
+.rirrow .chips{display:flex;gap:5px;margin-left:auto}
+.rirrow .rc{width:32px;height:32px;border:1px solid var(--rule);background:var(--card);color:var(--ink2);border-radius:8px;font:600 14px var(--num);padding:0;flex:none}
+.rirrow .rc.on{background:var(--accent);border-color:var(--accent);color:var(--paper)}
 .chip{display:inline-block;font:700 11px var(--jp);letter-spacing:.04em;padding:2px 7px;border-radius:5px;background:color-mix(in srgb,var(--signal) 15%,transparent);color:var(--signal);margin-left:6px;vertical-align:1px}
 .chip.ss{background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent);margin:0 6px 0 0}
 .chip.done{background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--ok)}
@@ -178,37 +186,40 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
 /* ===== 固定プラン（仕様書どおり。db には入れず、ここが唯一の出どころ） ===== */
 const LB = 0.45359237;
 const WD_JA = ['日', '月', '火', '水', '木', '金', '土'];
-// 種目の名前と、重量を使わない種目（自重）。セット数とレンジは曜日ごとに決まるので DAYS 側に持つ
-// （スミスカーフレイズのように、同じ種目でも曜日でレンジが違うものがある）
+// 種目: [名前, 器具, 初期重量kg]。器具で1段階の刻みが変わる
+//   smith/bar = +2.5kg（バー込み） ／ db = +2kg（片手） ／ stack = ケーブル・マシンの +1枚（settings.plateKg、既定5kg） ／ bw = 自重
+// セット数とレンジは曜日ではなく Day ごとなので DAYS 側に持つ（同じ種目でも Day でレンジが違うものがある）
 const EX = {
-  incline_smith: ['インクラインスミスプレス'],
-  pullup: ['懸垂（自重）', true],
-  cable_fly: ['ケーブルフライ'],
-  low_row: ['ローロウ'],
-  smith_squat: ['スミススクワット'],
-  db_bulgarian: ['DBブルガリアンスクワット'],
-  leg_ext: ['レッグエクステンション（レッグデベロッパー）'],
-  smith_calf: ['スミスカーフレイズ'],
-  db_ohp: ['DBショルダープレス'],
-  db_side_raise: ['DBサイドレイズ'],
-  cable_rear_fly: ['ケーブル・リアデルトフライ'],
-  ez_curl: ['EZカール'],
-  cable_pushdown: ['ケーブルプレスダウン'],
-  db_bench: ['DBベンチプレス'],
-  lat_pulldown: ['ラットプルダウン'],
-  dip: ['ディップ'],
-  db_row: ['DBロー'],
-  bb_rdl: ['バーベルRDL'],
-  leg_curl: ['レッグカール（レッグデベロッパー）'],
-  hanging_leg_raise: ['ハンギングレッグレイズ', true],
-  cable_side_raise: ['ケーブルサイドレイズ'],
-  incline_db_curl: ['インクラインDBカール'],
-  db_oh_ext: ['DBオーバーヘッドエクステンション'],
-  db_rear_delt_raise: ['DBリアデルトレイズ'],
-  hammer_curl: ['ハンマーカール']
+  incline_smith: ['インクラインスミスプレス', 'smith', 45],
+  pullup: ['懸垂', 'bw', 0],
+  cable_fly: ['ケーブルフライ', 'stack', 10],
+  low_row: ['ローロウ', 'stack', 40],
+  smith_squat: ['スミススクワット', 'smith', 60],
+  db_bulgarian: ['DBブルガリアンスクワット', 'db', 12],
+  leg_ext: ['レッグエクステンション', 'stack', 25],
+  smith_calf: ['スミスカーフレイズ', 'smith', 60],
+  db_ohp: ['DBショルダープレス', 'db', 14],
+  db_side_raise: ['DBサイドレイズ', 'db', 6],
+  cable_rear_fly: ['ケーブル・リアデルトフライ', 'stack', 5],
+  ez_curl: ['EZカール', 'bar', 25],
+  cable_pushdown: ['ケーブルプレスダウン', 'stack', 25],
+  db_bench: ['DBベンチプレス', 'db', 22],
+  lat_pulldown: ['ラットプルダウン', 'stack', 45],
+  dip: ['ディップ', 'bw', 0],
+  db_row: ['DBロー', 'db', 24],
+  bb_rdl: ['バーベルRDL', 'bar', 70],
+  leg_curl: ['レッグカール', 'stack', 20],
+  hanging_leg_raise: ['ハンギングレッグレイズ', 'bw', 0],
+  cable_side_raise: ['ケーブルサイドレイズ', 'stack', 5],
+  incline_db_curl: ['インクラインDBカール', 'db', 8],
+  db_oh_ext: ['DBオーバーヘッドエクステンション', 'db', 16],
+  db_rear_delt_raise: ['DBリアデルトレイズ', 'db', 6],
+  hammer_curl: ['ハンマーカール', 'db', 10]
 };
+// DBオーバーヘッドエクステンションは両手で1個を持つので、初期重量もその1個の重さ
+const EX_NOTE = { db_oh_ext: '両手で1個', db_bulgarian: '片手', db_ohp: '片手', db_side_raise: '片手', db_bench: '片手', db_row: '片手', incline_db_curl: '片手', db_rear_delt_raise: '片手', hammer_curl: '片手', cable_fly: '片側', cable_rear_fly: '片側', cable_side_raise: '片側' };
 // キーは Day 番号（1〜7）。[種目id, セット数, 下限, 上限, スーパーセット記号（同じ記号は休まず続ける）]
-// スミスカーフレイズは火・金で同じ id を使うので、前回の重量が日をまたいでつながる（レンジは曜日ごと）
+// スミスカーフレイズは Day2・Day5 で同じ id を使うので、前回の重量が日をまたいでつながる（レンジは Day ごと）
 const DAYS = {
   1: { name: '上半身A', parts: '胸・背中', ex: [['incline_smith', 3, 6, 8, ''], ['pullup', 3, 6, 10, ''], ['cable_fly', 3, 10, 12, 'A'], ['low_row', 3, 10, 12, 'A']] },
   2: { name: '下半身A', parts: '脚（前もも）', ex: [['smith_squat', 3, 6, 8, ''], ['db_bulgarian', 2, 8, 10, ''], ['leg_ext', 3, 12, 15, 'A'], ['smith_calf', 3, 12, 15, 'A']] },
@@ -233,7 +244,7 @@ const SUPPS = [
   { id: 'creatine', label: 'クレアチン', dose: '5g', note: '毎日', daily: true },
   { id: 'vitd', label: 'ビタミンD', dose: '1,000〜2,000IU', note: '任意' }
 ];
-const DEFAULTS = { startDate: '', unit: 'kg', goalKg: 60, riceAdjustG: 0 };
+const DEFAULTS = { startDate: '', unit: 'kg', goalKg: 60, riceAdjustG: 0, plateKg: 5 };
 
 /* ===== 小道具 ===== */
 const $ = (s, r) => (r || document).querySelector(s);
@@ -368,15 +379,23 @@ const woDoc = date => ST.log_workout[date] || { date, sets: {} };
 /** その日に割り当てられている種目の処方（セット数・レンジ）。曜日でレンジが違う種目があるので日付から引く */
 const planOf = date => DAYS[dayNoFor(date)] || DAYS[7];
 function prescOn(exId, date) { const hit = (planOf(date).ex || []).find(r => r[0] === exId); return hit ? { sets: hit[1], min: hit[2], max: hit[3] } : null; }
+/** プラン上のその種目の処方。見ている日付の Day に無ければ、その種目が入っている Day のものを使う */
+function basePresc(exId, date) {
+  const p = date ? prescOn(exId, date) : null; if (p) return p;
+  for (let k = 1; k <= 6; k++) { const hit = ((DAYS[k] || {}).ex || []).find(r => r[0] === exId); if (hit) return { sets: hit[1], min: hit[2], max: hit[3] }; }
+  return { sets: 3, min: 8, max: 12 };
+}
 /** その日の種目一覧（疲労抜き週はセット数を半分に） */
 function dayModel(date) {
   const plan = planOf(date), wo = woDoc(date);
   const exs = plan.ex.map(row => {
-    const id = row[0], e = EX[id], total = setsFor(row[1], date), bw = !!e[1];
+    const id = row[0], e = EX[id], total = setsFor(row[1], date), bw = e[1] === 'bw';
     const sets = []; for (let n = 1; n <= total; n++) { const l = wo.sets[id + '_' + n]; sets.push({ no: n, weightKg: l ? l.weightKg : '', reps: l ? l.reps : '', done: !!l }); }
     const prev = lastSession(id, date), latest = lastSession(id, addDays(date, 1));
     const lp = latest ? prescOn(id, latest.date) || { sets: row[1], max: row[3] } : null;
-    return { id, name: e[0], bw, sets, total, planSets: row[1], min: row[2], max: row[3], ss: row[4], main: !row[4], prev,
+    const prog = progression(id, date);
+    return { id, name: e[0], kind: e[1], bw, note: EX_NOTE[id] || '', sets, total, planSets: row[1], min: row[2],
+      max: bw && prog ? prog.maxReps : row[3], ss: row[4], main: !row[4], prev, prog, rir: rirOf(date, id),
       recorded: sets.filter(s => s.done).length, complete: sets.every(s => s.done),
       upNext: hitTop(latest, lp ? lp.max : row[3], lp ? setsFor(lp.sets, latest.date) : 0) };
   });
@@ -385,16 +404,73 @@ function dayModel(date) {
     name: plan.name, parts: plan.parts || '', rest: !!plan.rest, exs, deload: isDeloadCycle(a.cycle), weekNo: weekNoOf(date),
     recorded: recordedOn(date), complete: plan.rest ? true : exs.length > 0 && exs.every(e => e.complete) };
 }
+/** その日のその種目の記録（セット番号順）。1回も入っていなければ null */
+function sessionOf(exId, d) {
+  const sets = (ST.log_workout[d] || {}).sets || {};
+  const out = Object.keys(sets).filter(k => k.slice(0, k.lastIndexOf('_')) === exId)
+    .sort((a, b) => Number(a.slice(a.lastIndexOf('_') + 1)) - Number(b.slice(b.lastIndexOf('_') + 1)))
+    .map(k => sets[k]).filter(x => Number(x.reps) > 0);
+  return out.length ? out : null;
+}
 /** その種目を最後に記録した日（beforeDate より前）。{date, sets:[{weightKg,reps}]} */
 function lastSession(exId, beforeDate) {
   const dates = Object.keys(ST.log_workout).filter(d => d < beforeDate).sort().reverse();
-  for (const d of dates) {
-    const sets = Object.keys(ST.log_workout[d].sets || {}).filter(k => k.slice(0, k.lastIndexOf('_')) === exId)
-      .sort((a, b) => Number(a.slice(a.lastIndexOf('_') + 1)) - Number(b.slice(b.lastIndexOf('_') + 1)))
-      .map(k => ST.log_workout[d].sets[k]).filter(x => Number(x.reps) > 0);
-    if (sets.length) return { date: d, sets };
-  }
+  for (const d of dates) { const ses = sessionOf(exId, d); if (ses) return { date: d, sets: ses }; }
   return null;
+}
+/** 最終セットの「あと何回できたか」（0〜5）。未入力は '' */
+const rirOf = (date, exId) => { const v = ((ST.log_workout[date] || {}).rir || {})[exId]; return v === 0 || v > 0 ? Number(v) : ''; };
+/** 1段階の刻み。ケーブル・マシンは「1枚」= settings.plateKg（既定5kg） */
+const plateKg = () => Number(ST.settings.plateKg) > 0 ? Number(ST.settings.plateKg) : 5;
+const stepOf = kind => kind === 'db' ? 2 : kind === 'stack' ? plateKg() : 2.5;
+const stepText = kind => kind === 'db' ? '+2kg' : kind === 'stack' ? '+1枚（' + plateKg() + 'kg）' : '+2.5kg';
+const roundStep = (kg, step) => Math.max(step, Math.round(kg / step) * step);
+/** 次回の重量（と自重種目の回数レンジ）を、前回までの記録から決める。
+ *  ・全セット上限到達＋あと3回以上の余裕 → 2段階アップ
+ *  ・全セット上限到達 → 1段階アップ
+ *  ・レンジ内 → 同じ重量で、回数を1回増やすのを目標に
+ *  ・2回続けて下限未満 → −10%
+ *  ・自重種目は上限到達で回数レンジを15回まで1回ずつ広げる
+ *  ・疲労抜きサイクルの日は基準にしない（明けはその前の重量から再開）
+ *  ・記録が1つも無ければ初期重量 */
+function progression(exId, date) {
+  const e = EX[exId]; if (!e) return null;
+  const kind = e[1], bw = kind === 'bw', step = stepOf(kind);
+  const base = basePresc(exId, date);
+  let kg = Number(e[2]) || 0, maxReps = base.max, targetReps = base.min, belowStreak = 0, n = 0, deloadSkipped = false;
+  let reason = '初回です。まずはこの重量から', kgChanged = false;
+  Object.keys(ST.log_workout).filter(d => d < date).sort().forEach(d => {
+    const ses = sessionOf(exId, d); if (!ses) return;
+    const p = basePresc(exId, d), need = setsFor(p.sets, d);
+    if (isDeload(d)) { deloadSkipped = true; return; } // 疲労抜きの日
+    n++;
+    const effMax = bw ? maxReps : p.max;
+    const full = ses.length >= need;
+    const lowest = Math.min.apply(null, ses.map(x => Number(x.reps) || 0));
+    const used = bw ? 0 : (Math.max.apply(null, ses.map(x => Number(x.weightKg) || 0)) || kg);
+    const rir = rirOf(d, exId);
+    if (!full) { if (!bw) kg = used; targetReps = p.min;
+      reason = md(d) + ' は ' + ses.length + '/' + need + 'セットで途中。同じ重量でもう一度'; return; }
+    if (lowest >= effMax) {
+      if (bw) { const before = maxReps; maxReps = Math.min(15, maxReps + 1); targetReps = maxReps;
+        reason = before >= 15 ? md(d) + ' に全セット15回。これ以上は加重を足す段階' : md(d) + ' に全セット上限到達 → 回数の上限を ' + maxReps + '回に';
+      } else { const up = rir !== '' && rir >= 3 ? 2 : 1; kg = r1(used + step * up); kgChanged = true; targetReps = p.min;
+        reason = md(d) + ' に全セット上限到達' + (up === 2 ? '＋あと' + rir + '回の余裕 → 2段階アップ' : ' → 1段階アップ') + '（' + stepText(kind) + (up === 2 ? '×2' : '') + '）'; }
+      belowStreak = 0;
+    } else if (lowest >= p.min) {
+      if (!bw) kg = used;
+      targetReps = Math.min(effMax, lowest + 1); belowStreak = 0;
+      reason = md(d) + ' はレンジ内（' + lowest + '回）。同じ重量で ' + targetReps + '回を目標に';
+    } else {
+      belowStreak++;
+      if (belowStreak >= 2) { if (!bw) { kg = roundStep(used * 0.9, step); kgChanged = true; } targetReps = p.min; belowStreak = 0;
+        reason = md(d) + ' も下限未満（2回続けて）→ 10%下げる';
+      } else { if (!bw) kg = used; targetReps = p.min;
+        reason = md(d) + ' は下限未満（' + lowest + '回）。同じ重量でもう一度'; }
+    }
+  });
+  if (n === 0 && deloadSkipped) reason = '疲労抜きのあとなので、その前の重量から再開';
+  return { kind, bw, kg, maxReps, minReps: base.min, targetReps: targetReps || base.min, reason, step, stepText: stepText(kind), first: n === 0, up: kgChanged };
 }
 /** そのセッションの全セットがレンジ上限に届いたか（＝次回は重量アップ）。セット数が足りない日は対象外 */
 function hitTop(sess, max, need) {
@@ -496,14 +572,19 @@ function drawToday() {
         (e.complete ? '<span class="chip done">完了</span>' : '') + (e.upNext ? '<span class="chip">次回 重量アップ</span>' : '') + '</div>';
       h += '<div class="tgt">' + e.total + '×' + e.min + '-' + e.max + (m.deload && e.total !== e.planSets ? '<span class="mute"> 通常' + e.planSets + '</span>' : '') + '</div>';
       h += '<div class="meta">' + (e.prev ? '前回 <b>' + esc(prevText(e.prev, e.bw)) + '</b>' : 'この種目はまだ記録がありません') +
-        '　/　' + (e.ss ? 'SS ' + e.ss + ' は休まず続けて、終わってから休憩' : '休憩 2〜3分') + '</div></div>';
+        '　/　' + (e.ss ? 'SS ' + e.ss + ' は休まず続けて、終わってから休憩' : '休憩 2〜3分') + (e.note ? '　/　' + esc(e.note) : '') + '</div>';
+      if (e.prog) h += '<div class="sug">今日の目安 <b>' + (e.bw ? '自重 ' + e.prog.targetReps + '回' : disp(e.prog.kg) + unit() + ' × ' + e.prog.targetReps + '回') + '</b>' +
+        '<span class="why">' + esc(e.prog.reason) + '</span></div>';
+      h += '</div>';
       h += '<div class="rows">' + e.sets.map(s => '<div class="srow' + (s.done ? ' filled' : '') + '">' +
         '<span class="n">' + s.no + '</span>' +
         (e.bw ? '<span class="lab bwtag">自重</span>'
-          : '<span class="lab"><input type="number" inputmode="decimal" step="any" min="0" data-w="' + e.id + '_' + s.no + '" value="' + esc(disp(s.weightKg)) + '" placeholder="' + esc(e.prev ? disp(e.prev.sets[Math.min(s.no, e.prev.sets.length) - 1].weightKg) : '—') + '" aria-label="' + esc(e.name) + ' ' + s.no + 'セット目の重量"><span class="u">' + unit() + '</span></span>') +
+          : '<span class="lab"><input type="number" inputmode="decimal" step="any" min="0" data-w="' + e.id + '_' + s.no + '" value="' + esc(disp(s.weightKg)) + '" placeholder="' + esc(e.prog && e.prog.kg > 0 ? disp(e.prog.kg) : '—') + '" aria-label="' + esc(e.name) + ' ' + s.no + 'セット目の重量"><span class="u">' + unit() + '</span></span>') +
         '<span class="x">×</span>' +
-        '<span class="lab"><input type="number" inputmode="numeric" step="1" min="0" data-r="' + e.id + '_' + s.no + '" value="' + esc(s.reps) + '" placeholder="' + e.min + '" aria-label="' + esc(e.name) + ' ' + s.no + 'セット目の回数"><span class="u">回</span></span>' +
-        '<span class="mk">' + (s.done ? '✓' : '○') + '</span></div>').join('') + '</div>';
+        '<span class="lab"><input type="number" inputmode="numeric" step="1" min="0" data-r="' + e.id + '_' + s.no + '" value="' + esc(s.reps) + '" placeholder="' + (e.prog ? e.prog.targetReps : e.min) + '" aria-label="' + esc(e.name) + ' ' + s.no + 'セット目の回数"><span class="u">回</span></span>' +
+        '<span class="mk">' + (s.done ? '✓' : '○') + '</span></div>').join('') +
+        '<div class="rirrow"><span class="rl">最終セットのあと何回できた？</span><span class="chips">' +
+        [0, 1, 2, 3, 4, 5].map(v => '<button class="rc' + (e.rir === v ? ' on' : '') + '" data-rir="' + e.id + ':' + v + '">' + v + '</button>').join('') + '</span></div></div>';
       h += '</div>';
     });
   }
@@ -558,6 +639,9 @@ function bindToday(date) {
     commit(el.dataset.w, { weightKg: v === '' ? '' : toKg(v) }); }; });
   $$('[data-r]').forEach(el => { el.onchange = () => { const v = el.value.trim(), n = Math.round(Number(v));
     commit(el.dataset.r, { reps: v === '' || isNaN(n) || n <= 0 ? '' : n }); }; });
+  $$('[data-rir]').forEach(b => { b.onclick = () => { const [id, v] = b.dataset.rir.split(':'), wo = woDoc(date);
+    const rir = Object.assign({}, wo.rir); if (rir[id] === Number(v)) delete rir[id]; else rir[id] = Number(v);
+    store.set('log_workout', date, Object.assign({}, wo, { date, rir })); }; });
   $$('[data-meal]').forEach(el => { el.onclick = () => { const d = dietDoc(date), meals = Object.assign({}, d.meals);
     const id = el.dataset.meal; if (meals[id]) delete meals[id]; else meals[id] = isoNow();
     store.set('log_diet', date, Object.assign({}, d, { date, meals })); }; });
@@ -721,9 +805,10 @@ function drawReview() {
   h += '<h2>設定</h2><div class="card">' +
     '<div class="row2"><div><label class="lb" for="sdIn">開始日</label><input id="sdIn" class="num" type="date" value="' + esc(ST.settings.startDate || '') + '" style="width:100%;background:transparent;border:0;border-bottom:1.5px solid var(--rule);padding:4px 0;font-size:17px"></div>' +
     '<div><label class="lb" for="goalIn">目標体重（' + unit() + '）</label><div class="win"><input id="goalIn" type="number" inputmode="decimal" step="any" min="0" style="font-size:22px" value="' + esc(disp(Number(ST.settings.goalKg) || 60)) + '"><span class="u">' + unit() + '</span></div></div></div>' +
+    '<div class="row2" style="margin-top:14px"><div><label class="lb" for="plateIn">ケーブル・マシンの1枚（kg）</label><div class="win"><input id="plateIn" type="number" inputmode="decimal" step="any" min="0.5" style="font-size:22px" value="' + esc(plateKg()) + '"><span class="u">kg</span></div></div></div>' +
     '<div class="btns"><button class="btn" id="setSave">保存する</button></div>' +
     '<div class="btns"><button class="btn ghost" id="unitBtn2">単位を ' + (unit() === 'kg' ? 'lb' : 'kg') + ' に切り替える</button></div>' +
-    '<div class="small mute" style="margin-top:10px">開始日は週平均と疲労抜き週の起点です。空のままだと一番古い記録の日を使います' +
+    '<div class="small mute" style="margin-top:10px">開始日は Day のサイクルと週平均の起点です。「1枚」はケーブル・マシンの1段階ぶん。空のままだと一番古い記録の日を使います' +
     (ST.settings.startDate ? '' : '（いま ' + md(startDate()) + '）') + '</div></div>';
 
   h += '<div class="card"><div class="small mute">写真・動画の記録と Telegram Bot からの入力はフェーズ2。このアプリにはまだありません</div></div>';
@@ -731,10 +816,10 @@ function drawReview() {
   $('#view').innerHTML = h;
   const go = $('#riceGo'); if (go) go.onclick = () => { saveSettings({ riceAdjustG: adj + sug.delta }); toast('ご飯を各食 ' + (adj + sug.delta > 0 ? '+' : '') + (adj + sug.delta) + 'g にしました'); };
   const rr = $('#riceReset'); if (rr) rr.onclick = () => { saveSettings({ riceAdjustG: 0 }); toast('ご飯を基準の150gに戻しました'); };
-  $('#setSave').onclick = () => { const sd = $('#sdIn').value, g = $('#goalIn').value.trim();
-    $('#sdIn').blur(); $('#goalIn').blur(); pendingRender = false;
+  $('#setSave').onclick = () => { const sd = $('#sdIn').value, g = $('#goalIn').value.trim(), pl = $('#plateIn').value.trim();
+    $('#sdIn').blur(); $('#goalIn').blur(); $('#plateIn').blur(); pendingRender = false;
     if (sd && !/^\d{4}-\d{2}-\d{2}$/.test(sd)) return toast('開始日の形式が読めません');
-    saveSettings({ startDate: sd || '', goalKg: g === '' ? 60 : toKg(g) }).then(() => toast('設定を保存しました')); };
+    saveSettings({ startDate: sd || '', goalKg: g === '' ? 60 : toKg(g), plateKg: Number(pl) > 0 ? r1(Number(pl)) : 5 }).then(() => toast('設定を保存しました')); };
   $('#unitBtn2').onclick = () => saveSettings({ unit: unit() === 'kg' ? 'lb' : 'kg' });
 }
 
@@ -747,6 +832,6 @@ render();
   finally { if (ST.mode === 'loading') ST.mode = 'mock'; render(); }
 })();
 // テスト用フック（純粋関数だけ）
-window.__log60 = { ST, EX, DAYS, prescOn, weekNoOf, isDeload, isDeloadCycle, nextDeloadCycle, setsFor, dayNoFor, cycleNoFor, assignOf, recordedOn, extrasOf, riceSuggestion, weeklyAvgs, mealsNow, sumMac, streak, trainedOn, dietOn, suppOn, hitTop, dayModel, lastSession, disp, toKg, rerender: render };
+window.__log60 = { ST, EX, DAYS, prescOn, basePresc, progression, sessionOf, rirOf, stepOf, plateKg, weekNoOf, isDeload, isDeloadCycle, nextDeloadCycle, setsFor, dayNoFor, cycleNoFor, assignOf, recordedOn, extrasOf, riceSuggestion, weeklyAvgs, mealsNow, sumMac, streak, trainedOn, dietOn, suppOn, hitTop, dayModel, lastSession, disp, toKg, rerender: render };
 })();
 </script>
