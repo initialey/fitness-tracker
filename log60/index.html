@@ -588,7 +588,7 @@ function drawToday() {
   const eaten = sumMac(meals.filter(x => diet.meals && diet.meals[x.id]).concat(extras.map(x => ({ kcal: Number(x.kcal) || 0, p: Number(x.p) || 0, f: Number(x.f) || 0, c: Number(x.c) || 0 }))));
   let h = '';
   if (ST.mode === 'mock') h += '<div class="mode">保存されません（db につながっていません）</div>';
-  if (m.carriedFrom) h += '<div class="small mute" style="margin:10px 0 0">' + esc(md(m.carriedFrom)) + ' に記録がなかったので、Day ' + m.dayNo + ' を繰り越しています</div>';
+  if (m.carriedFrom) h += '<div class="small mute" style="margin:10px 0 0">' + esc(md(m.carriedFrom)) + ' に記録がなかったので、Day ' + m.dayNo + ' を繰り越しています。以降の予定は休みの日も含めて1日ずつ後ろにずれます</div>';
   if (m.deload) h += '<div class="banner"><b>疲労抜きサイクル</b>（サイクル ' + m.cycle + '）　セット数を半分にして、重量はそのまま。きつければ重量も少し落とす</div>';
   if (!ST.settings.startDate) h += '<div class="banner">開始日がまだです。<b>振り返り</b>タブで開始日を決めると、週平均と疲労抜き週が出ます</div>';
 
