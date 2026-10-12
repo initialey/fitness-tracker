@@ -342,14 +342,14 @@ const CARDIO = [
 const CARDIO_MIN = [30, 60, 90, 120];
 /** ご飯1g あたりの kcal（炊飯後）。有酸素の消費を補う量の計算に使う */
 const RICE_KCAL_PER_G = 1.56;
-/* 食事: 合計 1,815kcal ・ P154 F67 C162（仕様書の表のとおり） */
+/* 食事: 合計 1,760kcal ・ P154 F61 C162（指示書の表のとおり）。
+   調理で使った油は表に含めず、その日だけ「メニュー外の食事」として足す */
 const MEALS = [
   { id: 'breakfast', label: '朝', items: '卵4個', kcal: 300, p: 25, f: 21, c: 1, rice: 0 },
   { id: 'lunch', label: '昼', items: '鶏むね150g、ご飯{rice}、Baguio beans150g', kcal: 440, p: 42, f: 4, c: 66, rice: 150 },
   { id: 'pre', label: 'トレ前', items: 'シリアル48g、牛乳200ml', kcal: 310, p: 25, f: 13, c: 26, rice: 0 },
   { id: 'post', label: 'トレ後', items: 'プロテイン30g（水）', kcal: 120, p: 24, f: 2, c: 3, rice: 0 },
-  { id: 'dinner', label: '夕', items: 'サーモン150g、ご飯{rice}、Baguio beans150g', kcal: 590, p: 38, f: 21, c: 66, rice: 150 },
-  { id: 'oil', label: '油', items: '大さじ1/2', kcal: 55, p: 0, f: 6, c: 0, rice: 0 }
+  { id: 'dinner', label: '夕', items: 'サーモン150g、ご飯{rice}、Baguio beans150g', kcal: 590, p: 38, f: 21, c: 66, rice: 150 }
 ];
 // ご飯（炊飯後）100g あたり。「ご飯を各食 ±30g」の提案を適用したときの差分計算に使う
 const RICE_PER_100G = { kcal: 168, p: 2.5, f: 0.3, c: 37.1 };
@@ -929,6 +929,7 @@ function drawToday() {
       '<span class="ttl"><span class="lb">外</span>' + esc(x.name || 'メニュー外') + '</span><span class="kc">' + fmtN(x.kcal) + 'kcal</span>' +
       '<span class="it">P' + r1(x.p || 0) + ' F' + r1(x.f || 0) + ' C' + r1(x.c || 0) +
       ' <button class="xbtn" data-exdel="' + esc(x.id) + '" aria-label="この記録を消す">消す</button></span></div>').join('') + '</div>';
+  h += '<div class="small mute" style="margin-top:10px">調理で油を使った日は、下の「メニュー外の食事」に足してください（大さじ1/2 ＝ 約55kcal・F6）</div>';
   h += '<button class="btn ghost" id="exOpen" style="margin-top:12px">＋ メニュー外の食事を追加</button>';
   h += '<div id="exForm" hidden style="margin-top:12px;border-top:1px solid var(--rule);padding-top:12px">' +
     '<label class="lb" for="exName">食品名</label><input id="exName" class="txtin" type="text" placeholder="例：ジョリビーのチキン">' +
@@ -1221,7 +1222,7 @@ function drawReview() {
   if (ST.mode === 'mock') h += '<div class="mode">保存されません（db につながっていません）</div>';
   h += '<h2>連続達成日数</h2><div class="streaks">' +
     '<div><div class="v">' + streak(trainedOn) + '<small> 日</small></div><div class="l">トレーニング<br>（Day7 も続く）</div></div>' +
-    '<div><div class="v">' + streak(dietOn) + '<small> 日</small></div><div class="l">食事<br>（6項目すべて）</div></div>' +
+    '<div><div class="v">' + streak(dietOn) + '<small> 日</small></div><div class="l">食事<br>（5項目すべて）</div></div>' +
     '<div><div class="v">' + streak(suppOn) + '<small> 日</small></div><div class="l">サプリ<br>（クレアチン）</div></div>' +
     '<div><div class="v">' + cardioStreak() + '<small> 日</small></div><div class="l">有酸素<br>（記録した日）</div></div></div>';
   h += '<div class="small mute" style="margin-top:8px">トレは「Day7 か、その日に記録がある」で数えます（Day が進む条件と同じ）。今日がまだなら前日から数えます</div>';
