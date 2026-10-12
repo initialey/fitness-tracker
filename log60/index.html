@@ -164,7 +164,18 @@ table.wk tr:last-child td{border-bottom:0}
 .scroll{overflow-x:auto}
 
 /* タブ */
-nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:5;display:flex;justify-content:center;gap:4px;background:var(--card);border-top:1px solid var(--rule);padding:6px 8px calc(8px + env(safe-area-inset-bottom,0px))}
+.bottom{position:fixed;left:0;right:0;bottom:0;z-index:5}
+nav.tabs{display:flex;justify-content:center;gap:4px;background:var(--card);border-top:1px solid var(--rule);padding:6px 8px calc(8px + env(safe-area-inset-bottom,0px))}
+/* 休憩タイマー: タブの上に出す。残り時間と次のセット、飛ばすボタン */
+.restbar{background:var(--card);border-top:1px solid var(--rule)}
+.restbar .rb{max-width:460px;margin:0 auto;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:4px 12px;align-items:center;padding:9px 16px}
+.restbar .rbn{font:600 30px/1 var(--num);color:var(--accent);font-variant-numeric:tabular-nums;white-space:nowrap}
+.restbar .rbt{min-width:0;font-size:12px;color:var(--ink2);line-height:1.4}
+.restbar .rbt b{display:block;font:600 13px var(--jp);color:var(--ink)}
+.restbar .rbt span{display:block;overflow-wrap:anywhere}
+.restbar button{flex:none;border:1px solid var(--rule);background:transparent;color:var(--ink2);border-radius:8px;padding:8px 12px;font:600 12.5px var(--jp)}
+.restbar .rb.over .rbn{font:700 20px var(--jp);color:var(--signal)}
+body:has(#restbar:not([hidden])) .wrap{padding-bottom:calc(166px + env(safe-area-inset-bottom,0px))}
 nav.tabs button{flex:1 1 0;max-width:150px;background:transparent;border:0;border-radius:9px;color:var(--ink2);font:600 12px var(--jp);padding:8px 0 7px}
 nav.tabs button .ic{display:block;font:700 16px var(--jp);margin-bottom:1px}
 nav.tabs button[aria-current="page"]{color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
@@ -178,11 +189,14 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
   <header id="hd"></header>
   <main id="view"></main>
 </div>
-<nav class="tabs" aria-label="画面切替">
-  <button data-tab="today" aria-current="page"><span class="ic">今日</span></button>
-  <button data-tab="log"><span class="ic">記録</span></button>
-  <button data-tab="review"><span class="ic">振り返り</span></button>
-</nav>
+<div class="bottom">
+  <div class="restbar" id="restbar" role="status" hidden></div>
+  <nav class="tabs" aria-label="画面切替">
+    <button data-tab="today" aria-current="page"><span class="ic">今日</span></button>
+    <button data-tab="log"><span class="ic">記録</span></button>
+    <button data-tab="review"><span class="ic">振り返り</span></button>
+  </nav>
+</div>
 <div id="toast" class="toast" role="status"></div>
 
 <script>
@@ -278,7 +292,7 @@ const SUPPS = [
   { id: 'creatine', label: 'クレアチン', dose: '5g', note: '毎日', daily: true },
   { id: 'vitd', label: 'ビタミンD', dose: '1,000〜2,000IU', note: '任意' }
 ];
-const DEFAULTS = { startDate: '', unit: 'kg', goalKg: 60, riceAdjustG: 0, plateKg: 5 };
+const DEFAULTS = { startDate: '', unit: 'kg', goalKg: 60, riceAdjustG: 0, plateKg: 5, soundOn: true };
 
 /* ===== 小道具 ===== */
 const $ = (s, r) => (r || document).querySelector(s);
@@ -362,7 +376,9 @@ function weekNoOf(date) { const n = diffDays(startDate(), date); return n < 0 ? 
 function weekRangeOf(n) { const from = addDays(startDate(), (n - 1) * 7); return { from, to: addDays(from, 6) }; }
 /** その日にトレーニングの記録があるか（1セットでも入っていれば「やった日」） */
 const recordedOn = date => Object.keys((ST.log_workout[date] || {}).sets || {}).length > 0;
-/** Day1〜7 を順に出す。記録しなかった日は翌日も同じ Day（繰り越し）、記録した日だけ次の Day へ。
+/** Day1〜7 を順に出す。記録しなかった日はそのメニューを翌日に持ち越し、記録した日だけ次の Day へ。
+ *  予定外に休んだら「休みの前借り」として、そのサイクルの Day7 を消化済みにしてトレーニング日に変える
+ *  （全体の日程は後ろ倒しにしない）。前借りできる休みがない＝同じサイクルで2回目の未記録のときだけ1日ずつ後ろ倒しになる。
  *  Day7（休み）は記録がなくても翌日 Day1 に進む。今日より先は「順調にこなした場合」の見込みで進める。
  *  log_* から毎回読み直すだけの計算で、どの日付にも書き込まない */
 let _qc = {};
@@ -370,19 +386,22 @@ function replay(upto) {
   const start = startDate(), key = upto + '|' + start;
   if (_qc[key]) return _qc[key];
   const today = todayYmd(), byDate = {};
-  let day = 1, cycle = 1, carriedFrom = null;
+  let day = 1, cycle = 1, carriedFrom = null, misses = 0;
   for (let d = start, guard = 0; d <= upto && guard < 3000; d = addDays(d, 1), guard++) {
-    byDate[d] = { dayNo: day, cycle, carriedFrom };
+    // 休みの前借り: このサイクルに未記録があれば Day7 を消化済みにして、この日からもう次のサイクルに入る
+    let borrowed = false;
+    if (day === 7 && misses >= 1) { day = 1; cycle++; misses = 0; borrowed = true; }
+    byDate[d] = { dayNo: day, cycle, carriedFrom, misses, borrowed };
     const advance = d > today || day === 7 || recordedOn(d);
-    if (advance) { if (day === 7) { day = 1; cycle++; } else day++; carriedFrom = null; }
-    else carriedFrom = carriedFrom || d;
+    if (advance) { if (day === 7) { day = 1; cycle++; misses = 0; } else day++; carriedFrom = null; }
+    else { carriedFrom = carriedFrom || d; misses++; }
   }
-  return _qc[key] = { byDate, day, cycle };
+  return _qc[key] = { byDate, day, cycle, misses };
 }
+const NO_ASSIGN = { dayNo: 1, cycle: 1, carriedFrom: null, misses: 0, borrowed: false };
 function assignOf(date) {
-  if (date < startDate()) return { dayNo: 1, cycle: 1, carriedFrom: null };
-  const a = replay(date > todayYmd() ? date : todayYmd()).byDate[date];
-  return a || { dayNo: 1, cycle: 1, carriedFrom: null };
+  if (date < startDate()) return NO_ASSIGN;
+  return replay(date > todayYmd() ? date : todayYmd()).byDate[date] || NO_ASSIGN;
 }
 const dayNoFor = date => assignOf(date).dayNo;
 const cycleNoFor = date => assignOf(date).cycle;
@@ -434,7 +453,7 @@ function dayModel(date) {
       upNext: hitTop(latest, lp ? lp.max : row[3], lp ? setsFor(lp.sets, latest.date) : 0) };
   });
   const a = assignOf(date);
-  return { date, wd: wdOf(date), dayNo: a.dayNo, cycle: a.cycle, carriedFrom: a.carriedFrom,
+  return { date, wd: wdOf(date), dayNo: a.dayNo, cycle: a.cycle, carriedFrom: a.carriedFrom, misses: a.misses, borrowed: a.borrowed,
     name: plan.name, parts: plan.parts || '', rest: !!plan.rest, exs, deload: isDeloadCycle(a.cycle), weekNo: weekNoOf(date),
     recorded: recordedOn(date), complete: plan.rest ? true : exs.length > 0 && exs.every(e => e.complete) };
 }
@@ -550,6 +569,61 @@ function streak(fn) {
   return n;
 }
 
+/* ===== 休憩タイマー =====
+ * セットを記入すると自動で始まる。メイン種目（各 Day の1種目目）は2分30秒、それ以外は75秒。
+ * 次のセットを記入すると、新しい記録時刻から数え直す（＝リセット）。
+ * スーパーセットの①は「休まず②へ」なので休憩を入れない。 */
+const REST_MAIN_SEC = 150, REST_OTHER_SEC = 75;
+let AC = null, restTick = null, restRang = '';
+/** 音は必ずユーザー操作のなかで用意する（あとから鳴らせるように） */
+function primeAudio() { try { if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); } catch (e) { AC = null; } }
+function beep() {
+  if (!AC || ST.settings.soundOn === false) return;
+  try { const t = AC.currentTime; [0, 0.3].forEach(off => { const o = AC.createOscillator(), g = AC.createGain();
+    o.type = 'sine'; o.frequency.value = 880;
+    g.gain.setValueAtTime(0, t + off); g.gain.linearRampToValueAtTime(0.22, t + off + 0.02); g.gain.exponentialRampToValueAtTime(0.0005, t + off + 0.24);
+    o.connect(g); g.connect(AC.destination); o.start(t + off); o.stop(t + off + 0.26); }); } catch (e) { /* 鳴らせない環境では黙って諦める */ }
+}
+function buzz(pat) { try { if (navigator.vibrate) navigator.vibrate(pat || [180, 90, 180]); } catch (e) { /* ignore */ } }
+const mmss = sec => Math.floor(sec / 60) + ':' + pad2(Math.max(0, sec % 60));
+/** いま休憩中か。今日の最後に記録したセットから決める */
+function restState() {
+  const date = todayYmd();
+  if (UI.date !== date) return null;
+  const sets = woDoc(date).sets || {};
+  let last = null;
+  Object.keys(sets).forEach(k => { const x = sets[k]; if (!x.loggedAt) return; if (!last || x.loggedAt > last.loggedAt) last = Object.assign({ key: k }, x); });
+  if (!last || UI.restSkipped === last.key) return null;
+  const m = dayModel(date), i = m.exs.findIndex(e => String(e.id) === String(last.exerciseId));
+  if (i < 0) return null;
+  const ex = m.exs[i], nextEx = m.exs[i + 1];
+  if (ex.ss && nextEx && nextEx.ss === ex.ss) return null; // SS の①は休まず②へ
+  const sec = i === 0 ? REST_MAIN_SEC : REST_OTHER_SEC;
+  const until = new Date(last.loggedAt).getTime() + sec * 1000;
+  if (Date.now() > until + 180000) return null; // ずっと前の記録なら出さない
+  const nextSet = ex.sets.find(x => !x.done);
+  return { key: last.key, until, sec, exName: ex.subName || ex.name, main: i === 0,
+    next: nextSet ? ex.name + ' ' + nextSet.no + 'セット目' : (m.exs.find(e => !e.complete) || {}).name || '' };
+}
+function paintRest() {
+  const bar = $('#restbar'), r = UI.tab === 'today' ? restState() : null;
+  if (!bar) return;
+  if (!r) { bar.hidden = true; if (restTick) { clearInterval(restTick); restTick = null; } return; }
+  const draw = () => {
+    const left = Math.round((r.until - Date.now()) / 1000);
+    const over = left <= 0;
+    if (over && restRang !== r.key) { restRang = r.key; beep(); buzz(); }
+    bar.innerHTML = '<div class="rb' + (over ? ' over' : '') + '">' +
+      '<div class="rbn">' + (over ? '休憩おわり' : mmss(left)) + '</div>' +
+      '<div class="rbt"><b>休憩 ' + mmss(r.sec) + '</b>' + (r.main ? '（メイン種目）' : '') +
+      (r.next ? '<span>次 ' + esc(r.next) + '</span>' : '') + '</div>' +
+      '<button id="restSkip">' + (over ? '閉じる' : '飛ばす') + '</button></div>';
+    const sk = $('#restSkip'); if (sk) sk.onclick = () => { UI.restSkipped = r.key; paintRest(); };
+  };
+  bar.hidden = false; draw();
+  if (restTick) clearInterval(restTick);
+  restTick = setInterval(() => { const b = $('#restbar'); if (!b || b.hidden) { clearInterval(restTick); restTick = null; return; } draw(); }, 1000);
+}
 /* ===== 画面 ===== */
 const UI = { tab: 'today', date: todayYmd(), howto: {} };
 let pendingRender = false;
@@ -563,6 +637,7 @@ function render() {
   $$('nav.tabs button').forEach(b => { if (b.dataset.tab === UI.tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   drawHeader();
   ({ today: drawToday, log: drawLog, review: drawReview }[UI.tab] || drawToday)();
+  paintRest();
 }
 function drawHeader() {
   const d = UI.date, m = dayModel(d), isToday = d === todayYmd();
@@ -588,7 +663,9 @@ function drawToday() {
   const eaten = sumMac(meals.filter(x => diet.meals && diet.meals[x.id]).concat(extras.map(x => ({ kcal: Number(x.kcal) || 0, p: Number(x.p) || 0, f: Number(x.f) || 0, c: Number(x.c) || 0 }))));
   let h = '';
   if (ST.mode === 'mock') h += '<div class="mode">保存されません（db につながっていません）</div>';
-  if (m.carriedFrom) h += '<div class="small mute" style="margin:10px 0 0">' + esc(md(m.carriedFrom)) + ' に記録がなかったので、Day ' + m.dayNo + ' を繰り越しています。以降の予定は休みの日も含めて1日ずつ後ろにずれます</div>';
+  if (m.borrowed) h += '<div class="small mute" style="margin:10px 0 0">今日は Day 7（休み）の予定でしたが、休んだ日のぶんを<b>前借りで消化</b>したので Day 1 です</div>';
+  if (m.carriedFrom) h += '<div class="small mute" style="margin:10px 0 0">' + esc(md(m.carriedFrom)) + ' に記録がなかったので、Day ' + m.dayNo + ' を繰り越しています。' +
+    (m.misses >= 2 ? '前借りできる休みがもうないので、以降の予定は1日ずつ後ろにずれます' : 'このサイクルの休み（Day 7）を前借りで消化するので、全体の日程はずれません') + '</div>';
   if (m.deload) h += '<div class="banner"><b>疲労抜きサイクル</b>（サイクル ' + m.cycle + '）　セット数を半分にして、重量はそのまま。きつければ重量も少し落とす</div>';
   if (!ST.settings.startDate) h += '<div class="banner">開始日がまだです。<b>振り返り</b>タブで開始日を決めると、週平均と疲労抜き週が出ます</div>';
 
@@ -610,7 +687,7 @@ function drawToday() {
         (e.complete ? '<span class="chip done">完了</span>' : '') + (e.upNext ? '<span class="chip">次回 重量アップ</span>' : '') + '</div>';
       h += '<div class="tgt">' + e.total + '×' + e.min + '-' + e.max + (m.deload && e.total !== e.planSets ? '<span class="mute"> 通常' + e.planSets + '</span>' : '') + '</div>';
       h += '<div class="meta">' + (e.prev ? '前回 <b>' + esc(prevText(e.prev, e.bw)) + '</b>' : 'この種目はまだ記録がありません') +
-        '　/　' + (e.ss ? 'SS ' + e.ss + ' は休まず続けて、終わってから休憩' : '休憩 2〜3分') + (e.note ? '　/　' + esc(e.note) : '') + '</div>';
+        '　/　' + (e.ss ? 'SS ' + e.ss + ' は休まず続けて、終わってから休憩 75秒' : '休憩 ' + (i === 0 ? '2分30秒' : '75秒')) + (e.note ? '　/　' + esc(e.note) : '') + '</div>';
       if (hoOpen) h += '<div class="howto">' + esc(HOWTO[e.id] || 'やり方は未登録です') + '</div>';
       if (e.prog) h += '<div class="sug">今日の目安 <b>' + (e.bw ? '自重 ' + e.prog.targetReps + '回' : disp(e.prog.kg) + unit() + ' × ' + e.prog.targetReps + '回') + '</b>' +
         '<span class="why">' + esc(e.prog.reason) + '</span></div>';
@@ -665,7 +742,7 @@ function drawToday() {
   bindToday(d);
 }
 function bindToday(date) {
-  const commit = (key, patch) => { const wo = woDoc(date), sets = Object.assign({}, wo.sets);
+  const commit = (key, patch) => { primeAudio(); const wo = woDoc(date), sets = Object.assign({}, wo.sets);
     const cur = Object.assign({ exerciseId: key.slice(0, key.lastIndexOf('_')), setNo: Number(key.slice(key.lastIndexOf('_') + 1)), weightKg: '', reps: '' }, sets[key], patch);
     // 重量と回数のどちらかが入っていれば残す。両方空になったらその記録を消す
     if ((cur.weightKg === '' || cur.weightKg == null) && (cur.reps === '' || cur.reps == null)) delete sets[key];
@@ -673,6 +750,12 @@ function bindToday(date) {
     store.set('log_workout', date, Object.assign({}, wo, { date, sets }));
     const row = ($('[data-w="' + key + '"]') || {}).closest ? $('[data-w="' + key + '"]').closest('.srow') : null;
     if (row) { const on = !!sets[key]; row.classList.toggle('filled', on); const mk = $('.mk', row); if (mk) mk.textContent = on ? '✓' : '○'; }
+    if (sets[key]) { UI.restSkipped = ''; restRang = '';
+      const mm = dayModel(date), exId = key.slice(0, key.lastIndexOf('_')), i = mm.exs.findIndex(e => String(e.id) === String(exId));
+      const ex = mm.exs[i], nx = mm.exs[i + 1];
+      if (ex && ex.ss && nx && nx.ss === ex.ss) toast('休まず ' + nx.name + ' へ');
+      paintRest();
+    }
   };
   $$('[data-w]').forEach(el => { el.onchange = () => { const v = el.value.trim();
     commit(el.dataset.w, { weightKg: v === '' ? '' : toKg(v) }); }; });
@@ -841,13 +924,18 @@ function drawReview() {
   h += '<div class="small">いまは <b class="num">サイクル ' + cy + ' の Day ' + dn + '</b>' + (DAYS[dn] ? '（' + esc(DAYS[dn].name) + '）' : '') + '</div>';
   h += '<div class="small mute" style="margin-top:6px">' + (isDeloadCycle(cy) ? '<b>このサイクルが疲労抜き</b>。セット数を半分にします' :
     '次の疲労抜きは <b class="num">サイクル ' + nd + '</b>（7日サイクルを5回こなすごとに1サイクル）') + '</div>';
-  h += '<div class="small mute" style="margin-top:6px">記録しなかった日はその Day が翌日に繰り越されるので、1サイクルに何日かかるかは日によって変わります</div></div>';
+  { const a = assignOf(today);
+    h += '<div class="small mute" style="margin-top:6px">' + (a.misses >= 2 ? 'このサイクルの未記録は ' + a.misses + ' 回。前借りできる休みがもうないので、以降は1日ずつ後ろにずれます'
+      : a.misses === 1 ? 'このサイクルの未記録は1回。休み（Day 7）を前借りで消化するので、全体の日程はずれません'
+      : '未記録なし。予定どおり進んでいます') + '</div>'; }
+  h += '<div class="small mute" style="margin-top:6px">記録しなかった日はその Day が翌日に持ち越され、そのサイクルの休みを1回ぶん前借りして埋めます</div></div>';
 
   h += '<h2>設定</h2><div class="card">' +
     '<div class="row2"><div><label class="lb" for="sdIn">開始日</label><input id="sdIn" class="num" type="date" value="' + esc(ST.settings.startDate || '') + '" style="width:100%;background:transparent;border:0;border-bottom:1.5px solid var(--rule);padding:4px 0;font-size:17px"></div>' +
     '<div><label class="lb" for="goalIn">目標体重（' + unit() + '）</label><div class="win"><input id="goalIn" type="number" inputmode="decimal" step="any" min="0" style="font-size:22px" value="' + esc(disp(Number(ST.settings.goalKg) || 60)) + '"><span class="u">' + unit() + '</span></div></div></div>' +
     '<div class="row2" style="margin-top:14px"><div><label class="lb" for="plateIn">ケーブル・マシンの1枚（kg）</label><div class="win"><input id="plateIn" type="number" inputmode="decimal" step="any" min="0.5" style="font-size:22px" value="' + esc(plateKg()) + '"><span class="u">kg</span></div></div></div>' +
     '<div class="btns"><button class="btn" id="setSave">保存する</button></div>' +
+    '<div class="btns"><button class="btn ghost" id="soundBtn">休憩おわりの音を ' + (ST.settings.soundOn === false ? 'オンにする' : 'オフにする') + '</button></div>' +
     '<div class="btns"><button class="btn ghost" id="unitBtn2">単位を ' + (unit() === 'kg' ? 'lb' : 'kg') + ' に切り替える</button></div>' +
     '<div class="small mute" style="margin-top:10px">開始日は Day のサイクルと週平均の起点です。「1枚」はケーブル・マシンの1段階ぶん。空のままだと一番古い記録の日を使います' +
     (ST.settings.startDate ? '' : '（いま ' + md(startDate()) + '）') + '</div></div>';
@@ -861,6 +949,7 @@ function drawReview() {
     $('#sdIn').blur(); $('#goalIn').blur(); $('#plateIn').blur(); pendingRender = false;
     if (sd && !/^\d{4}-\d{2}-\d{2}$/.test(sd)) return toast('開始日の形式が読めません');
     saveSettings({ startDate: sd || '', goalKg: g === '' ? 60 : toKg(g), plateKg: Number(pl) > 0 ? r1(Number(pl)) : 5 }).then(() => toast('設定を保存しました')); };
+  $('#soundBtn').onclick = () => { const on = ST.settings.soundOn === false; if (on) primeAudio(); saveSettings({ soundOn: on }).then(() => toast('休憩おわりの音を ' + (on ? 'オン' : 'オフ') + ' にしました')); };
   $('#unitBtn2').onclick = () => saveSettings({ unit: unit() === 'kg' ? 'lb' : 'kg' });
 }
 
@@ -873,6 +962,6 @@ render();
   finally { if (ST.mode === 'loading') ST.mode = 'mock'; render(); }
 })();
 // テスト用フック（純粋関数だけ）
-window.__log60 = { ST, EX, DAYS, HOWTO, HOWTO_COMMON, prescOn, basePresc, progression, sessionOf, rirOf, stepOf, plateKg, weekNoOf, isDeload, isDeloadCycle, nextDeloadCycle, setsFor, dayNoFor, cycleNoFor, assignOf, recordedOn, extrasOf, riceSuggestion, weeklyAvgs, mealsNow, sumMac, streak, trainedOn, dietOn, suppOn, hitTop, dayModel, lastSession, disp, toKg, rerender: render };
+window.__log60 = { ST, EX, DAYS, HOWTO, HOWTO_COMMON, restState, paintRest, REST_MAIN_SEC, REST_OTHER_SEC, prescOn, basePresc, progression, sessionOf, rirOf, stepOf, plateKg, weekNoOf, isDeload, isDeloadCycle, nextDeloadCycle, setsFor, dayNoFor, cycleNoFor, assignOf, recordedOn, extrasOf, riceSuggestion, weeklyAvgs, mealsNow, sumMac, streak, trainedOn, dietOn, suppOn, hitTop, dayModel, lastSession, disp, toKg, rerender: render };
 })();
 </script>
