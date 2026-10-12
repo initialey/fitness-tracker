@@ -60,6 +60,11 @@ h2{margin:24px 0 10px;font:600 13px var(--jp);letter-spacing:.12em;color:var(--i
 .ex.ss-top{border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom:0;margin-bottom:0}
 .ex-h{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;padding:12px 14px 10px}
 .ex-h .nm{grid-column:1;font:700 16px/1.3 var(--jp);overflow-wrap:anywhere}
+.ex-h .nmbtn{background:transparent;border:0;padding:0;font:inherit;color:inherit;text-align:left;text-decoration:underline dotted;text-underline-offset:4px;text-decoration-color:var(--ink2)}
+.ex-h .nmbtn[aria-expanded="true"]{text-decoration-style:solid;text-decoration-color:var(--accent)}
+.howto{grid-column:1/3;margin-top:8px;padding:10px 12px;border-radius:8px;background:var(--paper);border:1px solid var(--rule);font-size:13px;line-height:1.65;overflow-wrap:anywhere}
+.tips{font-size:12.5px;line-height:1.6;padding:11px 14px}
+.tips b{color:var(--accent)}
 .ex-h .tgt{grid-column:2;grid-row:1;justify-self:end;white-space:nowrap;font:500 14px var(--num);color:var(--ink2)}
 .ex-h .meta{grid-column:1/3;font-size:12.5px;color:var(--ink2);overflow-wrap:anywhere}
 .ex-h .meta b{color:var(--ink);font-family:var(--num);font-weight:500}
@@ -218,6 +223,35 @@ const EX = {
 };
 // DBオーバーヘッドエクステンションは両手で1個を持つので、初期重量もその1個の重さ
 const EX_NOTE = { db_oh_ext: '両手で1個', db_bulgarian: '片手', db_ohp: '片手', db_side_raise: '片手', db_bench: '片手', db_row: '片手', incline_db_curl: '片手', db_rear_delt_raise: '片手', hammer_curl: '片手', cable_fly: '片側', cable_rear_fly: '片側', cable_side_raise: '片側' };
+// 種目のやり方（種目名をタップすると出る）
+const HOWTO_COMMON = '下ろす2秒・上げる1秒、反動なし。メイン種目の前に軽い重量で1〜2セット';
+const HOWTO = {
+  incline_smith: 'ベンチ30度。肩甲骨を寄せて下げ、バーを鎖骨の下に下ろす。肘は体から45〜60度',
+  pullup: '肩幅より少し広い順手。胸をバーに近づける意識で引き、下で腕を伸ばし切る',
+  cable_fly: '滑車は肩の高さ。肘を軽く曲げたまま固定し、胸の前で手を合わせる',
+  low_row: '胸を張り背中はまっすぐ。ハンドルをみぞおちへ引き、肩甲骨を寄せる。上体は反らさない',
+  smith_squat: '足はバーより少し前・肩幅。太ももが床と平行以下まで。膝はつま先と同じ向き',
+  db_bulgarian: '後ろ足の甲をベンチに乗せ、前足は大股1歩前。真下にしゃがむ',
+  leg_ext: '膝をマシンの回転軸に合わせる。上で1秒止めてゆっくり下ろす',
+  smith_calf: 'つま先をプレートに乗せ、かかとを深く下ろしてから最大まで上げ、上で1秒',
+  db_ohp: 'ベンチ80〜90度。耳の横から頭上へ押す。腰を反らない',
+  db_side_raise: '肘を軽く曲げ、肩の高さまで横に上げる。肩をすくめない',
+  cable_rear_fly: '高い滑車で左右を交差して持ち、腕をほぼ伸ばしたまま横に開く',
+  ez_curl: '肘を体の横に固定し、上で絞ってゆっくり下ろす',
+  cable_pushdown: '高い滑車。肘を脇に固定し、腕を伸ばし切る',
+  db_bench: 'フラット。肩甲骨を寄せ、DBを胸の横まで下ろす。肘は体から45〜60度',
+  lat_pulldown: '肩幅より広め。胸を張り、肘を下に引く意識で鎖骨まで引く',
+  dip: '上体をやや前傾。肩が肘の高さまで下ろす。肩が痛ければ浅めに',
+  db_row: '片手片膝をベンチにつき、背中はまっすぐ。DBを腰の方へ引く',
+  bb_rdl: '膝は軽く曲げて固定。お尻を後ろに引き、バーを太ももに沿わせて膝下まで。背中は丸めない',
+  leg_curl: 'うつ伏せでパッドをかかとの上に。膝を曲げてお尻へ寄せ、ゆっくり戻す',
+  hanging_leg_raise: '懸垂バーにぶら下がり、膝を曲げてOK、骨盤を丸めるように脚を上げる',
+  cable_side_raise: '低い滑車。体の反対側の手でDハンドルを持ち、肩の高さまで横に上げる',
+  incline_db_curl: 'ベンチ45〜60度。腕を真下に垂らし、肘を動かさず巻き上げる',
+  db_oh_ext: '両手で1個を頭上に。肘を前に向けたまま頭の後ろへ下ろし、伸ばす',
+  db_rear_delt_raise: '上体を床と平行近くまで倒し、肘を軽く曲げて横に開く',
+  hammer_curl: '手のひらを内向きのまま、肘を固定して巻き上げる'
+};
 // キーは Day 番号（1〜7）。[種目id, セット数, 下限, 上限, スーパーセット記号（同じ記号は休まず続ける）]
 // スミスカーフレイズは Day2・Day5 で同じ id を使うので、前回の重量が日をまたいでつながる（レンジは Day ごと）
 const DAYS = {
@@ -517,7 +551,7 @@ function streak(fn) {
 }
 
 /* ===== 画面 ===== */
-const UI = { tab: 'today', date: todayYmd() };
+const UI = { tab: 'today', date: todayYmd(), howto: {} };
 let pendingRender = false;
 const typing = () => { const a = document.activeElement; return !!(a && a.tagName === 'INPUT' && a.closest('#view')); };
 function render() {
@@ -563,16 +597,21 @@ function drawToday() {
     h += '<div class="card"><div style="font:700 16px var(--jp)">Day 7 は休み</div>' +
       '<div class="small mute" style="margin-top:6px">やるならモビリティだけ。股関節・肩・胸椎を各1〜2分。記録はいりません。明日は Day 1 に進みます</div></div>';
   } else {
+    h += '<div class="card tips"><div><b>共通</b>　' + esc(HOWTO_COMMON) + '</div>' +
+      '<div class="mute" style="margin-top:4px">種目名をタップするとやり方が出ます</div></div>';
     m.exs.forEach((e, i) => {
       const nextSS = m.exs[i + 1] && m.exs[i + 1].ss === e.ss && e.ss;
       const prevSS = i > 0 && m.exs[i - 1].ss === e.ss && e.ss;
       const cls = 'ex' + (nextSS ? ' ss-top' : '') + (prevSS ? ' ss-mid' : '');
       h += '<div class="' + cls + '">';
-      h += '<div class="ex-h"><div class="nm">' + (e.ss ? '<span class="chip ss">SS ' + e.ss + '</span>' : '') + esc(e.name) +
+      const hoOpen = !!UI.howto[e.id];
+      h += '<div class="ex-h"><div class="nm">' + (e.ss ? '<span class="chip ss">SS ' + e.ss + '</span>' : '') +
+        '<button class="nmbtn" data-howto="' + esc(e.id) + '" aria-expanded="' + hoOpen + '">' + esc(e.name) + '</button>' +
         (e.complete ? '<span class="chip done">完了</span>' : '') + (e.upNext ? '<span class="chip">次回 重量アップ</span>' : '') + '</div>';
       h += '<div class="tgt">' + e.total + '×' + e.min + '-' + e.max + (m.deload && e.total !== e.planSets ? '<span class="mute"> 通常' + e.planSets + '</span>' : '') + '</div>';
       h += '<div class="meta">' + (e.prev ? '前回 <b>' + esc(prevText(e.prev, e.bw)) + '</b>' : 'この種目はまだ記録がありません') +
         '　/　' + (e.ss ? 'SS ' + e.ss + ' は休まず続けて、終わってから休憩' : '休憩 2〜3分') + (e.note ? '　/　' + esc(e.note) : '') + '</div>';
+      if (hoOpen) h += '<div class="howto">' + esc(HOWTO[e.id] || 'やり方は未登録です') + '</div>';
       if (e.prog) h += '<div class="sug">今日の目安 <b>' + (e.bw ? '自重 ' + e.prog.targetReps + '回' : disp(e.prog.kg) + unit() + ' × ' + e.prog.targetReps + '回') + '</b>' +
         '<span class="why">' + esc(e.prog.reason) + '</span></div>';
       h += '</div>';
@@ -639,6 +678,8 @@ function bindToday(date) {
     commit(el.dataset.w, { weightKg: v === '' ? '' : toKg(v) }); }; });
   $$('[data-r]').forEach(el => { el.onchange = () => { const v = el.value.trim(), n = Math.round(Number(v));
     commit(el.dataset.r, { reps: v === '' || isNaN(n) || n <= 0 ? '' : n }); }; });
+  $$('[data-howto]').forEach(b => { b.onclick = () => { const id = b.dataset.howto;
+    if (UI.howto[id]) delete UI.howto[id]; else UI.howto[id] = true; render(); }; });
   $$('[data-rir]').forEach(b => { b.onclick = () => { const [id, v] = b.dataset.rir.split(':'), wo = woDoc(date);
     const rir = Object.assign({}, wo.rir); if (rir[id] === Number(v)) delete rir[id]; else rir[id] = Number(v);
     store.set('log_workout', date, Object.assign({}, wo, { date, rir })); }; });
@@ -832,6 +873,6 @@ render();
   finally { if (ST.mode === 'loading') ST.mode = 'mock'; render(); }
 })();
 // テスト用フック（純粋関数だけ）
-window.__log60 = { ST, EX, DAYS, prescOn, basePresc, progression, sessionOf, rirOf, stepOf, plateKg, weekNoOf, isDeload, isDeloadCycle, nextDeloadCycle, setsFor, dayNoFor, cycleNoFor, assignOf, recordedOn, extrasOf, riceSuggestion, weeklyAvgs, mealsNow, sumMac, streak, trainedOn, dietOn, suppOn, hitTop, dayModel, lastSession, disp, toKg, rerender: render };
+window.__log60 = { ST, EX, DAYS, HOWTO, HOWTO_COMMON, prescOn, basePresc, progression, sessionOf, rirOf, stepOf, plateKg, weekNoOf, isDeload, isDeloadCycle, nextDeloadCycle, setsFor, dayNoFor, cycleNoFor, assignOf, recordedOn, extrasOf, riceSuggestion, weeklyAvgs, mealsNow, sumMac, streak, trainedOn, dietOn, suppOn, hitTop, dayModel, lastSession, disp, toKg, rerender: render };
 })();
 </script>
