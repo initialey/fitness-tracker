@@ -71,16 +71,23 @@ h2{margin:24px 0 10px;font:600 13px var(--jp);letter-spacing:.12em;color:var(--i
 .sug{grid-column:1/3;margin-top:6px;padding:8px 10px;border-radius:8px;background:color-mix(in srgb,var(--accent) 9%,transparent);font-size:13px}
 .sug b{font:600 15px var(--num);color:var(--accent);margin-left:2px}
 .sug .why{display:block;margin-top:2px;font-size:12px;color:var(--ink2);overflow-wrap:anywhere}
-.rirrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 14px;border-top:1px dashed var(--rule)}
-.rirrow .rl{font-size:12.5px;color:var(--ink2);min-width:0}
-.rirrow .chips{display:flex;gap:5px;margin-left:auto}
-.rirrow .rc{width:32px;height:32px;border:1px solid var(--rule);background:var(--card);color:var(--ink2);border-radius:8px;font:600 14px var(--num);padding:0;flex:none}
-.rirrow .rc.on{background:var(--accent);border-color:var(--accent);color:var(--paper)}
+/* セットごとの手応え。記録した行の下に3つだけ出す */
+.srow .feel{grid-column:2/6;display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:2px}
+.srow .feel i{font-style:normal;font-size:11.5px;color:var(--ink2);margin-right:2px}
+.srow .feel.ask i{color:var(--signal);font-weight:600}
+.srow .feel .fc{flex:1 1 0;min-width:0;border:1px solid var(--rule);background:var(--card);color:var(--ink2);border-radius:8px;padding:7px 4px;font:600 12.5px var(--jp)}
+.srow .feel.ask .fc{border-color:color-mix(in srgb,var(--signal) 45%,var(--rule))}
+.srow .feel .fc.on{color:var(--paper)}
+.srow .feel .fc.on.easy{background:var(--accent);border-color:var(--accent)}
+.srow .feel .fc.on.ok{background:var(--ok);border-color:var(--ok)}
+.srow .feel .fc.on.hard{background:var(--signal);border-color:var(--signal)}
+.srow .nsug{grid-column:2/6;margin-top:1px;font-size:11.5px;color:var(--ink2);overflow-wrap:anywhere}
+.srow .nsug b{font:600 13px var(--num);color:var(--accent)}
 .chip{display:inline-block;font:700 11px var(--jp);letter-spacing:.04em;padding:2px 7px;border-radius:5px;background:color-mix(in srgb,var(--signal) 15%,transparent);color:var(--signal);margin-left:6px;vertical-align:1px}
 .chip.ss{background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent);margin:0 6px 0 0}
 .chip.done{background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--ok)}
 .rows{border-top:1px solid var(--rule)}
-.srow{display:grid;grid-template-columns:28px minmax(0,1fr) 12px minmax(0,1fr) 30px;gap:8px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--rule)}
+.srow{display:grid;grid-template-columns:28px minmax(0,1fr) 12px minmax(0,1fr) 30px;gap:4px 8px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--rule)}
 .srow:last-child{border-bottom:0}
 .srow .n{font:500 13px var(--num);color:var(--ink2)}
 .srow .x{text-align:center;color:var(--ink2);font-size:13px}
@@ -269,12 +276,12 @@ const HOWTO = {
 // キーは Day 番号（1〜7）。[種目id, セット数, 下限, 上限, スーパーセット記号（同じ記号は休まず続ける）]
 // スミスカーフレイズは Day2・Day5 で同じ id を使うので、前回の重量が日をまたいでつながる（レンジは Day ごと）
 const DAYS = {
-  1: { name: '上半身A', parts: '胸・背中', ex: [['incline_smith', 3, 6, 8, ''], ['pullup', 3, 6, 10, ''], ['cable_fly', 3, 10, 12, 'A'], ['low_row', 3, 10, 12, 'A']] },
+  1: { name: '上半身A', parts: '胸・背中', ex: [['incline_smith', 3, 6, 8, ''], ['pullup', 3, 6, 10, ''], ['cable_fly', 3, 10, 12, ''], ['low_row', 3, 10, 12, '']] },
   2: { name: '下半身A', parts: '脚（前もも）', ex: [['smith_squat', 3, 6, 8, ''], ['db_bulgarian', 2, 8, 10, ''], ['leg_ext', 3, 12, 15, 'A'], ['smith_calf', 3, 12, 15, 'A']] },
   3: { name: '上半身B', parts: '肩・腕', ex: [['db_ohp', 3, 8, 10, ''], ['db_side_raise', 3, 12, 15, 'A'], ['cable_rear_fly', 3, 12, 15, 'A'], ['ez_curl', 3, 10, 12, 'B'], ['cable_pushdown', 3, 10, 12, 'B']] },
   4: { name: '上半身C', parts: '胸・背中', ex: [['db_bench', 3, 8, 12, ''], ['lat_pulldown', 3, 10, 12, ''], ['dip', 3, 10, 12, 'A'], ['db_row', 3, 10, 12, 'A']] },
   5: { name: '下半身B', parts: '脚（もも裏）・腹', ex: [['bb_rdl', 3, 6, 8, ''], ['leg_curl', 3, 10, 12, ''], ['hanging_leg_raise', 3, 10, 15, 'A'], ['smith_calf', 3, 10, 15, 'A']] },
-  6: { name: '上半身D', parts: '肩・腕', ex: [['cable_side_raise', 3, 12, 15, ''], ['incline_db_curl', 3, 10, 12, 'A'], ['db_oh_ext', 3, 10, 12, 'A'], ['db_rear_delt_raise', 2, 12, 15, 'B'], ['hammer_curl', 2, 12, 15, 'B']] },
+  6: { name: '上半身D', parts: '肩・腕', ex: [['cable_side_raise', 3, 12, 15, ''], ['incline_db_curl', 3, 10, 12, ''], ['db_oh_ext', 3, 10, 12, ''], ['db_rear_delt_raise', 2, 12, 15, ''], ['hammer_curl', 2, 12, 15, '']] },
   7: { name: '休み or モビリティ', parts: '', ex: [], rest: true }
 };
 /* 食事: 合計 1,815kcal ・ P154 F67 C162（仕様書の表のとおり） */
@@ -443,7 +450,8 @@ function dayModel(date) {
   const plan = planOf(date), wo = woDoc(date);
   const exs = plan.ex.map(row => {
     const id = row[0], e = EX[id], total = setsFor(row[1], date), bw = e[1] === 'bw';
-    const sets = []; for (let n = 1; n <= total; n++) { const l = wo.sets[id + '_' + n]; sets.push({ no: n, weightKg: l ? l.weightKg : '', reps: l ? l.reps : '', done: !!l }); }
+    const sets = []; for (let n = 1; n <= total; n++) { const l = wo.sets[id + '_' + n];
+      sets.push({ no: n, weightKg: l ? l.weightKg : '', reps: l ? l.reps : '', feel: l ? l.feel || '' : '', done: !!l }); }
     const prev = lastSession(id, date), latest = lastSession(id, addDays(date, 1));
     const lp = latest ? prescOn(id, latest.date) || { sets: row[1], max: row[3] } : null;
     const prog = progression(id, date);
@@ -471,13 +479,39 @@ function lastSession(exId, beforeDate) {
   for (const d of dates) { const ses = sessionOf(exId, d); if (ses) return { date: d, sets: ses }; }
   return null;
 }
-/** 最終セットの「あと何回できたか」（0〜5）。未入力は '' */
+/** セットごとの手応え（3段階）。セットを記録したらその場で聞く */
+const FEELS = [['easy', '余裕あり'], ['ok', 'ちょうど'], ['hard', 'きつい']];
+const FEEL_JA = { easy: '余裕あり', ok: 'ちょうど', hard: 'きつい' };
+const FEEL_WHY = { easy: '余裕があったので', ok: 'ちょうどだったので', hard: 'きつかったので' };
+/** 旧データ（最終セットの「あと何回」0〜5）が残っていれば手応えとして読む */
 const rirOf = (date, exId) => { const v = ((ST.log_workout[date] || {}).rir || {})[exId]; return v === 0 || v > 0 ? Number(v) : ''; };
+const feelFromRir = r => r === '' ? '' : r >= 3 ? 'easy' : r <= 0 ? 'hard' : 'ok';
 /** 1段階の刻み。ケーブル・マシンは「1枚」= settings.plateKg（既定5kg） */
 const plateKg = () => Number(ST.settings.plateKg) > 0 ? Number(ST.settings.plateKg) : 5;
 const stepOf = kind => kind === 'db' ? 2 : kind === 'stack' ? plateKg() : 2.5;
 const stepText = kind => kind === 'db' ? '+2kg' : kind === 'stack' ? '+1枚（' + plateKg() + 'kg）' : '+2.5kg';
 const roundStep = (kg, step) => Math.max(step, Math.round(kg / step) * step);
+/** 直前のセットの手応えから、次のセットの重さと回数をその場で出す。
+ *  余裕あり → 上限まで回数を伸ばす（すでに上限なら1段階重く、回数は下限から）
+ *  ちょうど → 同じ重さ・同じ回数でもう1セット
+ *  きつい   → 回数を下限まで落とす（すでに下限なら1段階軽く） */
+function nextSetSug(ex, i) {
+  const prev = ex.sets[i - 1]; if (!prev || !prev.done) return null;
+  const f = prev.feel || ''; if (!f) return null;
+  const r = Number(prev.reps) || 0, w = Number(prev.weightKg) || 0, step = stepOf(ex.kind);
+  const why = FEEL_WHY[f];
+  if (ex.bw) {
+    const reps = f === 'easy' ? Math.min(ex.max, r + 1) : f === 'hard' ? Math.max(ex.min, r - 1) : r;
+    return { kg: 0, reps, why: why + (reps > r ? '1回増やす' : reps < r ? '1回減らす' : '同じ回数でもう1セット') };
+  }
+  if (f === 'easy') return r >= ex.max
+    ? { kg: r1(w + step), reps: ex.min, why: why + '1段階重く（' + stepText(ex.kind) + '）' }
+    : { kg: w, reps: ex.max, why: why + '同じ重さで上限の ' + ex.max + '回まで' };
+  if (f === 'hard') return r > ex.min
+    ? { kg: w, reps: ex.min, why: why + '同じ重さで ' + ex.min + '回に落とす' }
+    : { kg: roundStep(Math.max(step, w - step), step), reps: ex.min, why: why + '1段階軽く' };
+  return { kg: w, reps: r, why: why + '同じ重さ・同じ回数で' };
+}
 /** 次回の重量（と自重種目の回数レンジ）を、前回までの記録から決める。
  *  ・全セット上限到達＋あと3回以上の余裕 → 2段階アップ
  *  ・全セット上限到達 → 1段階アップ
@@ -501,19 +535,21 @@ function progression(exId, date) {
     const full = ses.length >= need;
     const lowest = Math.min.apply(null, ses.map(x => Number(x.reps) || 0));
     const used = bw ? 0 : (Math.max.apply(null, ses.map(x => Number(x.weightKg) || 0)) || kg);
-    const rir = rirOf(d, exId);
+    const lastFeel = ses[ses.length - 1].feel || feelFromRir(rirOf(d, exId));
     if (!full) { if (!bw) kg = used; targetReps = p.min;
       reason = md(d) + ' は ' + ses.length + '/' + need + 'セットで途中。同じ重量でもう一度'; return; }
     if (lowest >= effMax) {
-      if (bw) { const before = maxReps; maxReps = Math.min(15, maxReps + 1); targetReps = maxReps;
-        reason = before >= 15 ? md(d) + ' に全セット15回。これ以上は加重を足す段階' : md(d) + ' に全セット上限到達 → 回数の上限を ' + maxReps + '回に';
-      } else { const up = rir !== '' && rir >= 3 ? 2 : 1; kg = r1(used + step * up); kgChanged = true; targetReps = p.min;
-        reason = md(d) + ' に全セット上限到達' + (up === 2 ? '＋あと' + rir + '回の余裕 → 2段階アップ' : ' → 1段階アップ') + '（' + stepText(kind) + (up === 2 ? '×2' : '') + '）'; }
+      if (bw) { const before = maxReps; maxReps = Math.min(15, maxReps + (lastFeel === 'easy' ? 2 : 1)); targetReps = maxReps;
+        reason = before >= 15 ? md(d) + ' に全セット15回。これ以上は加重を足す段階' : md(d) + ' に全セット上限到達' + (lastFeel === 'easy' ? '＋余裕あり' : '') + ' → 回数の上限を ' + maxReps + '回に';
+      } else { const up = lastFeel === 'easy' ? 2 : 1; kg = r1(used + step * up); kgChanged = true; targetReps = p.min;
+        reason = md(d) + ' に全セット上限到達' + (up === 2 ? '＋余裕あり → 2段階アップ' : (lastFeel ? '（' + FEEL_JA[lastFeel] + '）' : '') + ' → 1段階アップ') + '（' + stepText(kind) + (up === 2 ? '×2' : '') + '）'; }
       belowStreak = 0;
     } else if (lowest >= p.min) {
       if (!bw) kg = used;
-      targetReps = Math.min(effMax, lowest + 1); belowStreak = 0;
-      reason = md(d) + ' はレンジ内（' + lowest + '回）。同じ重量で ' + targetReps + '回を目標に';
+      // きつかった日は回数を増やさず、まず同じ回数を余裕でこなす
+      targetReps = lastFeel === 'hard' ? lowest : Math.min(effMax, lowest + 1); belowStreak = 0;
+      reason = md(d) + ' はレンジ内（' + lowest + '回' + (lastFeel ? '・' + FEEL_JA[lastFeel] : '') + '）。同じ重量で ' +
+        (lastFeel === 'hard' ? 'もう一度 ' + targetReps + '回' : targetReps + '回を目標に');
     } else {
       belowStreak++;
       if (belowStreak >= 2) { if (!bw) { kg = roundStep(used * 0.9, step); kgChanged = true; } targetReps = p.min; belowStreak = 0;
@@ -692,15 +728,22 @@ function drawToday() {
       if (e.prog) h += '<div class="sug">今日の目安 <b>' + (e.bw ? '自重 ' + e.prog.targetReps + '回' : disp(e.prog.kg) + unit() + ' × ' + e.prog.targetReps + '回') + '</b>' +
         '<span class="why">' + esc(e.prog.reason) + '</span></div>';
       h += '</div>';
-      h += '<div class="rows">' + e.sets.map(s => '<div class="srow' + (s.done ? ' filled' : '') + '">' +
+      h += '<div class="rows">' + e.sets.map((s, si) => {
+        const sug = nextSetSug(e, si);
+        const phW = sug && sug.kg > 0 ? disp(sug.kg) : (e.prog && e.prog.kg > 0 ? disp(e.prog.kg) : '—');
+        const phR = sug ? sug.reps : (e.prog ? e.prog.targetReps : e.min);
+        return '<div class="srow' + (s.done ? ' filled' : '') + '">' +
         '<span class="n">' + s.no + '</span>' +
         (e.bw ? '<span class="lab bwtag">自重</span>'
-          : '<span class="lab"><input type="number" inputmode="decimal" step="any" min="0" data-w="' + e.id + '_' + s.no + '" value="' + esc(disp(s.weightKg)) + '" placeholder="' + esc(e.prog && e.prog.kg > 0 ? disp(e.prog.kg) : '—') + '" aria-label="' + esc(e.name) + ' ' + s.no + 'セット目の重量"><span class="u">' + unit() + '</span></span>') +
+          : '<span class="lab"><input type="number" inputmode="decimal" step="any" min="0" data-w="' + e.id + '_' + s.no + '" value="' + esc(disp(s.weightKg)) + '" placeholder="' + esc(phW) + '" aria-label="' + esc(e.name) + ' ' + s.no + 'セット目の重量"><span class="u">' + unit() + '</span></span>') +
         '<span class="x">×</span>' +
-        '<span class="lab"><input type="number" inputmode="numeric" step="1" min="0" data-r="' + e.id + '_' + s.no + '" value="' + esc(s.reps) + '" placeholder="' + (e.prog ? e.prog.targetReps : e.min) + '" aria-label="' + esc(e.name) + ' ' + s.no + 'セット目の回数"><span class="u">回</span></span>' +
-        '<span class="mk">' + (s.done ? '✓' : '○') + '</span></div>').join('') +
-        '<div class="rirrow"><span class="rl">最終セットのあと何回できた？</span><span class="chips">' +
-        [0, 1, 2, 3, 4, 5].map(v => '<button class="rc' + (e.rir === v ? ' on' : '') + '" data-rir="' + e.id + ':' + v + '">' + v + '</button>').join('') + '</span></div></div>';
+        '<span class="lab"><input type="number" inputmode="numeric" step="1" min="0" data-r="' + e.id + '_' + s.no + '" value="' + esc(s.reps) + '" placeholder="' + phR + '" aria-label="' + esc(e.name) + ' ' + s.no + 'セット目の回数"><span class="u">回</span></span>' +
+        '<span class="mk">' + (s.done ? '✓' : '○') + '</span>' +
+        (s.done
+          ? '<span class="feel' + (s.feel ? '' : ' ask') + '"><i>' + (s.feel ? '手応え' : 'どうだった？') + '</i>' +
+            FEELS.map(f => '<button class="fc' + (s.feel === f[0] ? ' on ' + f[0] : '') + '" data-feel="' + e.id + '_' + s.no + ':' + f[0] + '">' + f[1] + '</button>').join('') + '</span>'
+          : (sug ? '<span class="nsug">次は <b>' + (e.bw ? '自重 ' + sug.reps + '回' : disp(sug.kg) + unit() + ' × ' + sug.reps + '回') + '</b>　' + esc(sug.why) + '</span>' : '')) +
+        '</div>'; }).join('') + '</div>';
       h += '</div>';
     });
   }
@@ -763,9 +806,10 @@ function bindToday(date) {
     commit(el.dataset.r, { reps: v === '' || isNaN(n) || n <= 0 ? '' : n }); }; });
   $$('[data-howto]').forEach(b => { b.onclick = () => { const id = b.dataset.howto;
     if (UI.howto[id]) delete UI.howto[id]; else UI.howto[id] = true; render(); }; });
-  $$('[data-rir]').forEach(b => { b.onclick = () => { const [id, v] = b.dataset.rir.split(':'), wo = woDoc(date);
-    const rir = Object.assign({}, wo.rir); if (rir[id] === Number(v)) delete rir[id]; else rir[id] = Number(v);
-    store.set('log_workout', date, Object.assign({}, wo, { date, rir })); }; });
+  $$('[data-feel]').forEach(b => { b.onclick = () => { const [key, f] = b.dataset.feel.split(':'), wo = woDoc(date);
+    const sets = Object.assign({}, wo.sets); if (!sets[key]) return;
+    sets[key] = Object.assign({}, sets[key], { feel: sets[key].feel === f ? '' : f });
+    buzz([40]); store.set('log_workout', date, Object.assign({}, wo, { date, sets })); }; });
   $$('[data-meal]').forEach(el => { el.onclick = () => { const d = dietDoc(date), meals = Object.assign({}, d.meals);
     const id = el.dataset.meal; if (meals[id]) delete meals[id]; else meals[id] = isoNow();
     store.set('log_diet', date, Object.assign({}, d, { date, meals })); }; });
@@ -962,6 +1006,6 @@ render();
   finally { if (ST.mode === 'loading') ST.mode = 'mock'; render(); }
 })();
 // テスト用フック（純粋関数だけ）
-window.__log60 = { ST, EX, DAYS, HOWTO, HOWTO_COMMON, restState, paintRest, REST_MAIN_SEC, REST_OTHER_SEC, prescOn, basePresc, progression, sessionOf, rirOf, stepOf, plateKg, weekNoOf, isDeload, isDeloadCycle, nextDeloadCycle, setsFor, dayNoFor, cycleNoFor, assignOf, recordedOn, extrasOf, riceSuggestion, weeklyAvgs, mealsNow, sumMac, streak, trainedOn, dietOn, suppOn, hitTop, dayModel, lastSession, disp, toKg, rerender: render };
+window.__log60 = { ST, EX, DAYS, HOWTO, HOWTO_COMMON, FEELS, nextSetSug, restState, paintRest, REST_MAIN_SEC, REST_OTHER_SEC, prescOn, basePresc, progression, sessionOf, rirOf, stepOf, plateKg, weekNoOf, isDeload, isDeloadCycle, nextDeloadCycle, setsFor, dayNoFor, cycleNoFor, assignOf, recordedOn, extrasOf, riceSuggestion, weeklyAvgs, mealsNow, sumMac, streak, trainedOn, dietOn, suppOn, hitTop, dayModel, lastSession, disp, toKg, rerender: render };
 })();
 </script>
