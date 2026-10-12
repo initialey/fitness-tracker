@@ -449,16 +449,21 @@ function basePresc(exId, date) {
 function dayModel(date) {
   const plan = planOf(date), wo = woDoc(date);
   const exs = plan.ex.map(row => {
-    const id = row[0], e = EX[id], total = setsFor(row[1], date), bw = e[1] === 'bw';
+    const id = row[0], e = EX[id], bw = e[1] === 'bw';
+    const prog = progression(id, date);
+    // すでに記録した行は、推奨セット数が減っても消さない
+    let maxRec = 0; Object.keys(wo.sets || {}).forEach(k => { const u = k.lastIndexOf('_');
+      if (k.slice(0, u) === id) maxRec = Math.max(maxRec, Number(k.slice(u + 1)) || 0); });
+    const total = Math.max(setsFor(Math.max(2, row[1] + (prog ? prog.setsAdj : 0)), date), maxRec);
     const sets = []; for (let n = 1; n <= total; n++) { const l = wo.sets[id + '_' + n];
       sets.push({ no: n, weightKg: l ? l.weightKg : '', reps: l ? l.reps : '', feel: l ? l.feel || '' : '', done: !!l }); }
     const prev = lastSession(id, date), latest = lastSession(id, addDays(date, 1));
     const lp = latest ? prescOn(id, latest.date) || { sets: row[1], max: row[3] } : null;
-    const prog = progression(id, date);
+    const lprog = latest ? progression(id, latest.date) : null;
     return { id, name: e[0], kind: e[1], bw, note: EX_NOTE[id] || '', sets, total, planSets: row[1], min: row[2],
       max: bw && prog ? prog.maxReps : row[3], ss: row[4], main: !row[4], prev, prog, rir: rirOf(date, id),
       recorded: sets.filter(s => s.done).length, complete: sets.every(s => s.done),
-      upNext: hitTop(latest, lp ? lp.max : row[3], lp ? setsFor(lp.sets, latest.date) : 0) };
+      upNext: hitTop(latest, lp ? lp.max : row[3], lp ? setsFor(Math.max(2, lp.sets + (lprog ? lprog.setsAdj : 0)), latest.date) : 0) };
   });
   const a = assignOf(date);
   return { date, wd: wdOf(date), dayNo: a.dayNo, cycle: a.cycle, carriedFrom: a.carriedFrom, misses: a.misses, borrowed: a.borrowed,
@@ -526,9 +531,10 @@ function progression(exId, date) {
   const base = basePresc(exId, date);
   let kg = Number(e[2]) || 0, maxReps = base.max, targetReps = base.min, belowStreak = 0, n = 0, deloadSkipped = false;
   let reason = '初回です。まずはこの重量から', kgChanged = false;
+  let setsAdj = 0, stall = 0, prevLowest = null, prevKg = null; // セット数の増減（−1〜+1）と伸び悩み。どの Day の記録でも種目単位で引き継ぐ
   Object.keys(ST.log_workout).filter(d => d < date).sort().forEach(d => {
     const ses = sessionOf(exId, d); if (!ses) return;
-    const p = basePresc(exId, d), need = setsFor(p.sets, d);
+    const p = basePresc(exId, d), need = setsFor(Math.max(2, p.sets + setsAdj), d);
     if (isDeload(d)) { deloadSkipped = true; return; } // 疲労抜きの日
     n++;
     const effMax = bw ? maxReps : p.max;
@@ -543,23 +549,31 @@ function progression(exId, date) {
         reason = before >= 15 ? md(d) + ' に全セット15回。これ以上は加重を足す段階' : md(d) + ' に全セット上限到達' + (lastFeel === 'easy' ? '＋余裕あり' : '') + ' → 回数の上限を ' + maxReps + '回に';
       } else { const up = lastFeel === 'easy' ? 2 : 1; kg = r1(used + step * up); kgChanged = true; targetReps = p.min;
         reason = md(d) + ' に全セット上限到達' + (up === 2 ? '＋余裕あり → 2段階アップ' : (lastFeel ? '（' + FEEL_JA[lastFeel] + '）' : '') + ' → 1段階アップ') + '（' + stepText(kind) + (up === 2 ? '×2' : '') + '）'; }
-      belowStreak = 0;
+      belowStreak = 0; stall = 0; setsAdj = 0;
     } else if (lowest >= p.min) {
       if (!bw) kg = used;
       // きつかった日は回数を増やさず、まず同じ回数を余裕でこなす
       targetReps = lastFeel === 'hard' ? lowest : Math.min(effMax, lowest + 1); belowStreak = 0;
       reason = md(d) + ' はレンジ内（' + lowest + '回' + (lastFeel ? '・' + FEEL_JA[lastFeel] : '') + '）。同じ重量で ' +
         (lastFeel === 'hard' ? 'もう一度 ' + targetReps + '回' : targetReps + '回を目標に');
+      const sameLoad = bw || prevKg === used;
+      if (setsAdj < 0) { setsAdj = 0; stall = 0; reason += '。セット数は元に戻す'; }
+      else if (sameLoad && prevLowest !== null && lowest <= prevLowest && lastFeel !== 'hard') {
+        stall++;
+        if (stall >= 2 && setsAdj < 1) { setsAdj = 1; stall = 0; reason += '。回数が伸び悩んでいるので +1セット'; }
+      } else stall = 0;
     } else {
       belowStreak++;
-      if (belowStreak >= 2) { if (!bw) { kg = roundStep(used * 0.9, step); kgChanged = true; } targetReps = p.min; belowStreak = 0;
-        reason = md(d) + ' も下限未満（2回続けて）→ 10%下げる';
-      } else { if (!bw) kg = used; targetReps = p.min;
-        reason = md(d) + ' は下限未満（' + lowest + '回）。同じ重量でもう一度'; }
+      stall = 0;
+      if (belowStreak >= 2) { if (!bw) { kg = roundStep(used * 0.9, step); kgChanged = true; } targetReps = p.min; belowStreak = 0; setsAdj = 0;
+        reason = md(d) + ' も下限未満（2回続けて）→ 10%下げて、セット数は元に戻す';
+      } else { if (!bw) kg = used; targetReps = p.min; setsAdj = -1;
+        reason = md(d) + ' は下限未満（' + lowest + '回）。同じ重量で、疲労を抜くため −1セット'; }
     }
+    prevLowest = lowest; prevKg = used;
   });
   if (n === 0 && deloadSkipped) reason = '疲労抜きのあとなので、その前の重量から再開';
-  return { kind, bw, kg, maxReps, minReps: base.min, targetReps: targetReps || base.min, reason, step, stepText: stepText(kind), first: n === 0, up: kgChanged };
+  return { kind, bw, kg, maxReps, minReps: base.min, targetReps: targetReps || base.min, reason, step, stepText: stepText(kind), first: n === 0, up: kgChanged, setsAdj };
 }
 /** そのセッションの全セットがレンジ上限に届いたか（＝次回は重量アップ）。セット数が足りない日は対象外 */
 function hitTop(sess, max, need) {
@@ -608,7 +622,8 @@ function streak(fn) {
 /* ===== 休憩タイマー =====
  * セットを記入すると自動で始まる。メイン種目（各 Day の1種目目）は2分30秒、それ以外は75秒。
  * 次のセットを記入すると、新しい記録時刻から数え直す（＝リセット）。
- * スーパーセットの①は「休まず②へ」なので休憩を入れない。 */
+ * スーパーセットの①は「休まず②へ」なので休憩を入れない。
+ * その日の最後の種目の最終セット（＝もうやることがない）なら出さない。 */
 const REST_MAIN_SEC = 150, REST_OTHER_SEC = 75;
 let AC = null, restTick = null, restRang = '';
 /** 音は必ずユーザー操作のなかで用意する（あとから鳴らせるように） */
@@ -634,6 +649,9 @@ function restState() {
   if (i < 0) return null;
   const ex = m.exs[i], nextEx = m.exs[i + 1];
   if (ex.ss && nextEx && nextEx.ss === ex.ss) return null; // SS の①は休まず②へ
+  // きょうの分が終わったら休憩はいらない
+  if (m.exs.every(x => x.complete)) return null;
+  if (i === m.exs.length - 1 && ex.complete) return null;
   const sec = i === 0 ? REST_MAIN_SEC : REST_OTHER_SEC;
   const until = new Date(last.loggedAt).getTime() + sec * 1000;
   if (Date.now() > until + 180000) return null; // ずっと前の記録なら出さない
@@ -721,11 +739,11 @@ function drawToday() {
       h += '<div class="ex-h"><div class="nm">' + (e.ss ? '<span class="chip ss">SS ' + e.ss + '</span>' : '') +
         '<button class="nmbtn" data-howto="' + esc(e.id) + '" aria-expanded="' + hoOpen + '">' + esc(e.name) + '</button>' +
         (e.complete ? '<span class="chip done">完了</span>' : '') + (e.upNext ? '<span class="chip">次回 重量アップ</span>' : '') + '</div>';
-      h += '<div class="tgt">' + e.total + '×' + e.min + '-' + e.max + (m.deload && e.total !== e.planSets ? '<span class="mute"> 通常' + e.planSets + '</span>' : '') + '</div>';
+      h += '<div class="tgt">' + e.total + '×' + e.min + '-' + e.max + (e.total !== e.planSets ? '<span class="mute"> 通常' + e.planSets + '</span>' : '') + '</div>';
       h += '<div class="meta">' + (e.prev ? '前回 <b>' + esc(prevText(e.prev, e.bw)) + '</b>' : 'この種目はまだ記録がありません') +
         '　/　' + (e.ss ? 'SS ' + e.ss + ' は休まず続けて、終わってから休憩 75秒' : '休憩 ' + (i === 0 ? '2分30秒' : '75秒')) + (e.note ? '　/　' + esc(e.note) : '') + '</div>';
       if (hoOpen) h += '<div class="howto">' + esc(HOWTO[e.id] || 'やり方は未登録です') + '</div>';
-      if (e.prog) h += '<div class="sug">今日の目安 <b>' + (e.bw ? '自重 ' + e.prog.targetReps + '回' : disp(e.prog.kg) + unit() + ' × ' + e.prog.targetReps + '回') + '</b>' +
+      if (e.prog) h += '<div class="sug">今日の目安 <b>' + (e.bw ? '自重 ' + e.prog.targetReps + '回' : disp(e.prog.kg) + unit() + ' × ' + e.prog.targetReps + '回') + ' × ' + e.total + 'セット</b>' +
         '<span class="why">' + esc(e.prog.reason) + '</span></div>';
       h += '</div>';
       h += '<div class="rows">' + e.sets.map((s, si) => {
