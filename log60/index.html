@@ -342,12 +342,12 @@ const CARDIO = [
 const CARDIO_MIN = [30, 60, 90, 120];
 /** ご飯1g あたりの kcal（炊飯後）。有酸素の消費を補う量の計算に使う */
 const RICE_KCAL_PER_G = 1.56;
-/* 食事: 合計 1,760kcal ・ P154 F61 C162（指示書の表のとおり）。
+/* 食事: 合計 1,767kcal ・ P157 F62 C159（指示書の表のとおり）。
    調理で使った油は表に含めず、その日だけ「メニュー外の食事」として足す */
 const MEALS = [
   { id: 'breakfast', label: '朝', items: '卵4個', kcal: 300, p: 25, f: 21, c: 1, rice: 0 },
   { id: 'lunch', label: '昼', items: '鶏むね150g、ご飯{rice}、Baguio beans150g', kcal: 440, p: 42, f: 4, c: 66, rice: 150 },
-  { id: 'pre', label: 'トレ前', items: 'シリアル48g、牛乳200ml', kcal: 310, p: 25, f: 13, c: 26, rice: 0 },
+  { id: 'pre', label: 'トレ前', items: 'シリアル60g、牛乳150ml', kcal: 317, p: 28, f: 14, c: 23, rice: 0 },
   { id: 'post', label: 'トレ後', items: 'プロテイン30g（水）', kcal: 120, p: 24, f: 2, c: 3, rice: 0 },
   { id: 'dinner', label: '夕', items: 'サーモン150g、ご飯{rice}、Baguio beans150g', kcal: 590, p: 38, f: 21, c: 66, rice: 150 }
 ];
