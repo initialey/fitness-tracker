@@ -32,7 +32,7 @@ db が null のとき（ローカルで開いた・権限なし）はメモリ�
 
 | コレクション | doc id | 内容 |
 |---|---|---|
-| `settings` | `main` | startDate（週平均と疲労抜き週の起点）, unit(kg/lb), goalKg(60), riceAdjustG（ご飯の増減 g） |
+| `settings` | `main` | startDate（週平均と疲労抜き週の起点）, unit(kg/lb), goalKg(60), riceAdjustG（ご飯の増減 g）, plateKg, dbDial（DBの目盛り）, heightCm(170), age(31), soundOn |
 | `log_workout` | `YYYY-MM-DD` | sets{ "種目id_セット番号": {exerciseId, setNo, weightKg, reps, feel, loggedAt} }（`feel` は `easy`/`ok`/`hard`）、rir{ 種目id: 0〜5 }（旧データ。読むだけ） |
 | `log_weight` | `YYYY-MM-DD` | weightKg, bodyFatPct（任意・空可）, waistCm（週1・へその高さ）, loggedAt |
 | `log_diet` | `YYYY-MM-DD` | meals{ 食事id: 記録時刻 }, supps{ サプリid: 記録時刻 }, extras[{id, name, kcal, p, f, c, at}]（メニュー外の食事） |
@@ -80,7 +80,25 @@ DB の重量提案は必ず目盛りに丸める（`stepUpBy` / `stepDownBy` / `
 記録した時点の体重と kcal を保存するので、あとで体重が変わっても履歴は動かない。
 
 - その日の有酸素が**60分以上**なら「消費の半分をご飯で補う：+ご飯◯g」を出す（ご飯1g = 1.56kcal、5g 刻み）
-- 食事カードの下に**その日の収支**（摂取 kcal − 有酸素の消費 kcal）を出す
+- 食事カードの下に**その日のカロリー収支**を出す（下記）
+
+## カロリー収支
+
+| 項目 | 計算 |
+|---|---|
+| 摂取 | チェックした食事＋メニュー外の合計（**チェックしていない食事は数えない**） |
+| 基礎代謝 | Mifflin-St Jeor（男性）＝ 10×体重kg ＋ 6.25×身長cm − 5×年齢 ＋ 5（身長・年齢は設定） |
+| 消費 | 基礎代謝 × 1.3（日常の活動）＋ 筋トレ（記録した日だけ 5.0 METs × 体重 × 0.5h）＋ 有酸素 |
+| プラマイ | 摂取 − 消費（マイナス＝減量方向） |
+
+70kg・170cm・31歳なら基礎代謝 1,613 ・ 消費は約 2,270kcal、プラン通りに食べた日は約 −500kcal。
+今日タブは摂取・消費・プラマイの3つと内訳を出し、「目安」と明記する。
+
+記録タブの「カロリー収支」は日ごとの表（直近14日）と**開始日からの累計**。
+累計は脂肪換算（1kg = 7,200kcal）も出し、実際の体重の減り方と並べる。
+
+**食事をチェックしていない日は数えない**（摂取0で大赤字になってしまうので）。
+数えた日数を画面に出している。
 
 ## ウエスト
 

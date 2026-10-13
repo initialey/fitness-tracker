@@ -124,7 +124,13 @@ h2{margin:24px 0 10px;font:600 13px var(--jp);letter-spacing:.12em;color:var(--i
 .cardio .cbtn{flex:1 1 0;min-width:0;border:1px solid var(--rule);background:transparent;color:var(--ink2);border-radius:9px;padding:9px 4px;font:600 12.5px var(--jp);line-height:1.3}
 .cardio .cbtn small{display:block;font:500 10.5px var(--num);opacity:.8;margin-top:1px}
 .cardio .cbtn.on{background:var(--accent);border-color:var(--accent);color:var(--paper)}
-.bal{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-top:12px;padding-top:10px;border-top:1px solid var(--rule);font-size:12.5px;color:var(--ink2)}
+.bal{margin-top:12px;padding-top:10px;border-top:1px solid var(--rule);font-size:12.5px;color:var(--ink2)}
+.bal .b3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.bal .b3>div{min-width:0}
+.bal .b3 .v{font:600 22px/1.1 var(--num);color:var(--ink);font-variant-numeric:tabular-nums}
+.bal .b3 .l{font-size:11px;color:var(--ink2);letter-spacing:.04em;margin-top:2px;white-space:nowrap}
+.bal .b3 .minus .v{color:var(--ok)}
+.bal .b3 .plus .v{color:var(--signal)}
 .bal b{font:600 19px var(--num);color:var(--ink)}
 
 /* 見直しレポート */
@@ -361,7 +367,11 @@ const SUPPS = [
 ];
 /** 可変式ダンベル1組のダイヤルの目盛り（片手・kg）。設定で直せる */
 const DB_DIAL = [5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 34, 36, 38, 40];
-const DEFAULTS = { startDate: '', unit: 'kg', goalKg: 60, riceAdjustG: 0, plateKg: 5, soundOn: true, dbDial: '' };
+/* カロリー収支。基礎代謝は Mifflin-St Jeor（男性）、消費はそれに日常の活動・筋トレ・有酸素を足す */
+const ACTIVITY = 1.3;            // 日常の活動
+const TRAIN_METS = 5.0, TRAIN_H = 0.5; // 筋トレ（記録した日だけ）
+const FAT_KCAL_PER_KG = 7200;    // 脂肪1kg ぶんの kcal
+const DEFAULTS = { startDate: '', unit: 'kg', goalKg: 60, riceAdjustG: 0, plateKg: 5, soundOn: true, dbDial: '', heightCm: 170, age: 31 };
 
 /* ===== 小道具 ===== */
 const $ = (s, r) => (r || document).querySelector(s);
@@ -574,6 +584,40 @@ function cardioRice(date) {
   if (min < 60) return null;
   const kcal = cardioKcal(date);
   return { min, kcal, half: Math.round(kcal / 2), g: Math.round(kcal / 2 / RICE_KCAL_PER_G / 5) * 5 };
+}
+
+/* ===== カロリー収支 =====
+ * 摂取: チェックした食事＋メニュー外（チェックしていない食事は数えない）
+ * 消費: 基礎代謝 × 1.3 ＋ 筋トレ（記録した日だけ 5.0METs × 体重 × 0.5h）＋ 有酸素
+ * プラマイ: 摂取 − 消費（マイナス＝減量方向） */
+const heightCm = () => Number(ST.settings.heightCm) > 0 ? Number(ST.settings.heightCm) : 170;
+const ageOf = () => Number(ST.settings.age) > 0 ? Number(ST.settings.age) : 31;
+/** 基礎代謝（Mifflin-St Jeor・男性） */
+const bmrOf = kg => 10 * kg + 6.25 * heightCm() - 5 * ageOf() + 5;
+/** その日に食べたもの（チェックした食事＋メニュー外）の合計 */
+function intakeOf(date) {
+  const d = dietDoc(date), on = mealsNow().filter(x => d.meals && d.meals[x.id]);
+  const ex = extrasOf(date).map(x => ({ kcal: Number(x.kcal) || 0, p: Number(x.p) || 0, f: Number(x.f) || 0, c: Number(x.c) || 0 }));
+  return sumMac(on.concat(ex));
+}
+function balanceOf(date) {
+  const kg = weightAt(date), bmr = bmrOf(kg);
+  const base = bmr * ACTIVITY, train = recordedOn(date) ? TRAIN_METS * kg * TRAIN_H : 0, cardio = cardioKcal(date);
+  const out = base + train + cardio, eaten = intakeOf(date);
+  return { date, kg, bmr: Math.round(bmr), base: Math.round(base), train: Math.round(train), cardio: Math.round(cardio),
+    out: Math.round(out), eaten: eaten.kcal, net: Math.round(eaten.kcal - out), logged: eaten.kcal > 0 };
+}
+/** 開始日から今日までの収支。食事を記録していない日は数えない（摂取0で大赤字になってしまうので） */
+function balanceDays() {
+  const out = [], start = startDate(), today = todayYmd();
+  for (let d = start, i = 0; d <= today && i < 800; d = addDays(d, 1), i++) { const b = balanceOf(d); if (b.logged) out.push(b); }
+  return out;
+}
+function balanceTotal() {
+  const ds = balanceDays(), net = ds.reduce((a, b) => a + b.net, 0);
+  const pts = weightPoints(), real = pts.length >= 2 ? r1(pts[pts.length - 1].kg - pts[0].kg) : null;
+  return { days: ds.length, net: Math.round(net), fatKg: r1(net / FAT_KCAL_PER_KG), real,
+    from: pts.length ? pts[0] : null, to: pts.length ? pts[pts.length - 1] : null };
 }
 
 /* ===== ウエスト（週1・へその高さ） ===== */
@@ -900,7 +944,7 @@ function drawHeader() {
     h += '<div class="nav"><button data-shift="-1" aria-label="前の日">‹</button><div class="d">' + md(d) + '（' + WD_JA[m.wd] + '）' + (isToday ? ' 今日' : '') + '</div>' +
       (isToday ? '' : '<button class="today" data-today="1">今日へ</button>') + '<button data-shift="1" aria-label="次の日">›</button></div>';
   } else if (UI.tab === 'log') {
-    h += '<h1>体重</h1><div class="sub">毎朝おなじ条件で測る。体脂肪率は入れられるときだけ</div>';
+    h += '<h1>記録</h1><div class="sub">毎朝おなじ条件で測る。体脂肪率は入れられるときだけ</div>';
   } else {
     h += '<h1>振り返り</h1><div class="sub">' + (ST.settings.startDate ? '開始 ' + md(startDate()) + ' から ' + weekNoOf(todayYmd()) + '週目' : 'まだ開始日が決まっていません') + '</div>';
   }
@@ -912,7 +956,7 @@ function drawHeader() {
 function drawToday() {
   const d = UI.date, m = dayModel(d), diet = dietDoc(d), meals = mealsNow(), target = sumMac(meals);
   const extras = extrasOf(d);
-  const eaten = sumMac(meals.filter(x => diet.meals && diet.meals[x.id]).concat(extras.map(x => ({ kcal: Number(x.kcal) || 0, p: Number(x.p) || 0, f: Number(x.f) || 0, c: Number(x.c) || 0 }))));
+  const eaten = intakeOf(d), bal = balanceOf(d);
   let h = '';
   if (ST.mode === 'mock') h += '<div class="mode">保存されません（db につながっていません）</div>';
   if (m.borrowed) h += '<div class="small mute" style="margin:10px 0 0">今日は Day 7（休み）の予定でしたが、休んだ日のぶんを<b>前借りで消化</b>したので Day 1 です</div>';
@@ -977,8 +1021,13 @@ function drawToday() {
     '<div><div class="v">' + Math.round(eaten.p) + '<s> /' + Math.round(target.p) + '</s></div><div class="l">たんぱく質</div>' + bar(eaten.p, target.p) + '</div>' +
     '<div><div class="v">' + Math.round(eaten.f) + '<s> /' + Math.round(target.f) + '</s></div><div class="l">脂質</div>' + bar(eaten.f, target.f) + '</div>' +
     '<div><div class="v">' + Math.round(eaten.c) + '<s> /' + Math.round(target.c) + '</s></div><div class="l">炭水化物</div>' + bar(eaten.c, target.c) + '</div></div>';
-  h += '<div class="bal"><span>今日の収支</span><b class="num">' + fmtN(eaten.kcal - burn) + 'kcal</b>' +
-    '<span class="mute">摂取 ' + fmtN(eaten.kcal) + (burn ? ' − 有酸素 ' + fmtN(burn) : '') + '</span></div>';
+  h += '<div class="bal"><div class="b3">' +
+    '<div><div class="v">' + fmtN(bal.eaten) + '</div><div class="l">摂取</div></div>' +
+    '<div><div class="v">' + fmtN(bal.out) + '</div><div class="l">消費</div></div>' +
+    '<div class="' + (bal.net <= 0 ? 'minus' : 'plus') + '"><div class="v">' + (bal.net > 0 ? '+' : '') + fmtN(bal.net) + '</div><div class="l">プラマイ</div></div></div>' +
+    '<div class="small mute" style="margin-top:6px">消費 ' + fmtN(bal.out) + ' ＝ 基礎代謝 ' + fmtN(bal.bmr) + ' ×1.3（' + fmtN(bal.base) + '）' +
+    (bal.train ? ' ＋ 筋トレ ' + fmtN(bal.train) : '') + (bal.cardio ? ' ＋ 有酸素 ' + fmtN(bal.cardio) : '') + '</div>' +
+    '<div class="small mute" style="margin-top:2px">体重 ' + disp(bal.kg) + unit() + '・身長 ' + heightCm() + 'cm・' + ageOf() + '歳で計算した<b>目安</b>です（振り返りタブの設定で変えられます）</div></div>';
   if (extras.length) h += '<div class="small mute" style="margin-top:10px">メニュー外 ' + extras.length + '件 ・ ' + fmtN(sumMac(extras.map(x => ({ kcal: Number(x.kcal) || 0, p: Number(x.p) || 0, f: Number(x.f) || 0, c: Number(x.c) || 0 }))).kcal) + 'kcal を合計に足しています</div>';
   if (Number(ST.settings.riceAdjustG)) h += '<div class="small mute" style="margin-top:10px">ご飯は各食 ' + (ST.settings.riceAdjustG > 0 ? '+' : '') + ST.settings.riceAdjustG + 'g で計算しています（振り返りタブで戻せます）</div>';
   h += '</div>';
@@ -1157,6 +1206,26 @@ function drawLog() {
       '</div></div>';
   }
 
+  // カロリー収支
+  { const ds = balanceDays(), t = balanceTotal();
+    h += '<h2>カロリー収支</h2><div class="card">';
+    if (!ds.length) h += '<div class="empty">食事をチェックした日から、摂取・消費・プラマイが出ます</div>';
+    else {
+      h += '<div class="bal" style="margin-top:0;padding-top:0;border-top:0"><div class="b3">' +
+        '<div class="' + (t.net <= 0 ? 'minus' : 'plus') + '"><div class="v">' + (t.net > 0 ? '+' : '') + fmtN(t.net) + '</div><div class="l">累計のプラマイ</div></div>' +
+        '<div class="' + (t.fatKg <= 0 ? 'minus' : 'plus') + '"><div class="v">' + (t.fatKg > 0 ? '+' : '') + r1(t.fatKg) + '</div><div class="l">脂肪換算 kg</div></div>' +
+        '<div><div class="v">' + t.days + '</div><div class="l">数えた日数</div></div></div></div>';
+      h += '<div class="small mute" style="margin-top:8px">脂肪1kg ＝ ' + fmtN(FAT_KCAL_PER_KG) + 'kcal で換算。食事をチェックした日だけ数えています</div>';
+      if (t.real != null) h += '<div class="rvrow" style="margin-top:10px"><span>実際の体重</span><b>' + (t.real > 0 ? '+' : '') + disp(t.real) + unit() + '</b>' +
+        '<span class="mute">' + md(t.from.date) + ' ' + disp(t.from.kg) + ' → ' + md(t.to.date) + ' ' + disp(t.to.kg) + '　/　計算上は ' + (t.fatKg > 0 ? '+' : '') + r1(t.fatKg) + 'kg ぶん</span></div>';
+      h += '<div class="scroll" style="margin-top:12px"><table class="wk"><tr><th>日</th><th>摂取</th><th>消費</th><th>プラマイ</th></tr>' +
+        ds.slice(-14).reverse().map(x => '<tr><td>' + md(x.date) + '（' + WD_JA[wdOf(x.date)] + '）</td>' +
+          '<td class="d">' + fmtN(x.eaten) + '</td><td class="d">' + fmtN(x.out) + '</td>' +
+          '<td class="d ' + (x.net <= 0 ? 'dn' : 'up') + '">' + (x.net > 0 ? '+' : '') + fmtN(x.net) + '</td></tr>').join('') + '</table></div>';
+      if (ds.length > 14) h += '<div class="small mute" style="margin-top:8px">表は直近14日ぶん。累計は ' + t.days + '日ぶんすべてです</div>';
+    }
+    h += '</div>'; }
+
   h += '<h2>最近の記録</h2><div class="card">';
   const recent = pts.slice(-10).reverse();
   h += recent.length ? '<div class="scroll"><table class="wk"><tr><th>日</th><th>体重</th><th>体脂肪率</th></tr>' +
@@ -1325,10 +1394,12 @@ function drawReview() {
     '<div class="row2" style="margin-top:14px"><div><label class="lb" for="plateIn">ケーブル・マシンの1枚（kg）</label><div class="win"><input id="plateIn" type="number" inputmode="decimal" step="any" min="0.5" style="font-size:22px" value="' + esc(plateKg()) + '"><span class="u">kg</span></div></div></div>' +
     '<div style="margin-top:14px"><label class="lb" for="dialIn">ダンベルのダイヤル（片手・kg／カンマ区切り）</label>' +
     '<input id="dialIn" class="txtin" type="text" inputmode="numeric" value="' + esc(dbDial().join(', ')) + '"></div>' +
+    '<div class="row2" style="margin-top:14px"><div><label class="lb" for="htIn">身長（cm）</label><div class="win"><input id="htIn" type="number" inputmode="decimal" step="any" min="100" max="230" style="font-size:22px" value="' + esc(heightCm()) + '"><span class="u">cm</span></div></div>' +
+    '<div><label class="lb" for="ageIn">年齢</label><div class="win"><input id="ageIn" type="number" inputmode="numeric" step="1" min="10" max="100" style="font-size:22px" value="' + esc(ageOf()) + '"><span class="u">歳</span></div></div></div>' +
     '<div class="btns"><button class="btn" id="setSave">保存する</button></div>' +
     '<div class="btns"><button class="btn ghost" id="soundBtn">休憩おわりの音を ' + (ST.settings.soundOn === false ? 'オンにする' : 'オフにする') + '</button></div>' +
     '<div class="btns"><button class="btn ghost" id="unitBtn2">単位を ' + (unit() === 'kg' ? 'lb' : 'kg') + ' に切り替える</button></div>' +
-    '<div class="small mute" style="margin-top:10px">開始日は Day のサイクルと週平均の起点です。「1枚」はケーブル・マシンの1段階ぶん。ダイヤルは可変式ダンベルの目盛りで、DB の重量提案はこの数字に丸めます。開始日が空のままだと一番古い記録の日を使います' +
+    '<div class="small mute" style="margin-top:10px">開始日は Day のサイクルと週平均の起点です。「1枚」はケーブル・マシンの1段階ぶん。ダイヤルは可変式ダンベルの目盛りで、DB の重量提案はこの数字に丸めます。身長と年齢は基礎代謝（カロリー収支）に使います。開始日が空のままだと一番古い記録の日を使います' +
     (ST.settings.startDate ? '' : '（いま ' + md(startDate()) + '）') + '</div></div>';
 
   h += '<div class="card"><div class="small mute">写真・動画の記録と Telegram Bot からの入力はフェーズ2。このアプリにはまだありません</div></div>';
@@ -1339,12 +1410,14 @@ function drawReview() {
     saveSettings({ riceAdjustG: adj + dl }).then(() => toast('ご飯を各食 ' + (adj + dl > 0 ? '+' : '') + (adj + dl) + 'g にしました')); };
   const rr = $('#riceReset'); if (rr) rr.onclick = () => { saveSettings({ riceAdjustG: 0 }); toast('ご飯を基準の150gに戻しました'); };
   $('#setSave').onclick = () => { const sd = $('#sdIn').value, g = $('#goalIn').value.trim(), pl = $('#plateIn').value.trim(), dl = $('#dialIn').value;
-    $('#sdIn').blur(); $('#goalIn').blur(); $('#plateIn').blur(); $('#dialIn').blur(); pendingRender = false;
+    const ht = $('#htIn').value.trim(), ag = $('#ageIn').value.trim();
+    ['#sdIn', '#goalIn', '#plateIn', '#dialIn', '#htIn', '#ageIn'].forEach(q => { const el = $(q); if (el) el.blur(); }); pendingRender = false;
     if (sd && !/^\d{4}-\d{2}-\d{2}$/.test(sd)) return toast('開始日の形式が読めません');
     const dial = dl.split(/[^0-9.]+/).map(Number).filter(n => n > 0).sort((a, b) => a - b);
     if (dl.trim() !== '' && dial.length < 2) return toast('ダイヤルは2つ以上の数字で入れてください');
     saveSettings({ startDate: sd || '', goalKg: g === '' ? 60 : toKg(g), plateKg: Number(pl) > 0 ? r1(Number(pl)) : 5,
-      dbDial: dial.length >= 2 ? dial.join(',') : '' }).then(() => toast('設定を保存しました')); };
+      dbDial: dial.length >= 2 ? dial.join(',') : '',
+      heightCm: Number(ht) > 0 ? r1(Number(ht)) : 170, age: Number(ag) > 0 ? Math.round(Number(ag)) : 31 }).then(() => toast('設定を保存しました')); };
   $('#soundBtn').onclick = () => { const on = ST.settings.soundOn === false; if (on) primeAudio(); saveSettings({ soundOn: on }).then(() => toast('休憩おわりの音を ' + (on ? 'オン' : 'オフ') + ' にしました')); };
   $('#unitBtn2').onclick = () => saveSettings({ unit: unit() === 'kg' ? 'lb' : 'kg' });
 }
@@ -1358,6 +1431,6 @@ render();
   finally { if (ST.mode === 'loading') ST.mode = 'mock'; render(); }
 })();
 // テスト用フック（純粋関数だけ）
-window.__log60 = { ST, EX, DAYS, DB_DIAL, dbDial, dialStep, dialFloor, stepUpBy, stepDownBy, cutBy, stepText, CARDIO, CARDIO_MIN, RICE_KCAL_PER_G, blocksOf, splitOf, cardioOf, cardioKcal, cardioOn, cardioStreak, weightAt, burnKcal, cardioRice, waistPoints, waistThisWeek, reviewReport, isReviewDay, nextReviewDay, MAIN_IDS, HOWTO, HOWTO_COMMON, FEELS, nextSetSug, restState, paintRest, REST_MAIN_SEC, REST_OTHER_SEC, prescOn, basePresc, progression, sessionOf, rirOf, stepOf, plateKg, weekNoOf, isDeload, isDeloadCycle, nextDeloadCycle, setsFor, dayNoFor, cycleNoFor, assignOf, recordedOn, extrasOf, riceSuggestion, weeklyAvgs, mealsNow, sumMac, streak, trainedOn, dietOn, suppOn, hitTop, dayModel, lastSession, disp, toKg, rerender: render };
+window.__log60 = { ST, EX, DAYS, ACTIVITY, TRAIN_METS, TRAIN_H, FAT_KCAL_PER_KG, bmrOf, heightCm, ageOf, intakeOf, balanceOf, balanceDays, balanceTotal, DB_DIAL, dbDial, dialStep, dialFloor, stepUpBy, stepDownBy, cutBy, stepText, CARDIO, CARDIO_MIN, RICE_KCAL_PER_G, blocksOf, splitOf, cardioOf, cardioKcal, cardioOn, cardioStreak, weightAt, burnKcal, cardioRice, waistPoints, waistThisWeek, reviewReport, isReviewDay, nextReviewDay, MAIN_IDS, HOWTO, HOWTO_COMMON, FEELS, nextSetSug, restState, paintRest, REST_MAIN_SEC, REST_OTHER_SEC, prescOn, basePresc, progression, sessionOf, rirOf, stepOf, plateKg, weekNoOf, isDeload, isDeloadCycle, nextDeloadCycle, setsFor, dayNoFor, cycleNoFor, assignOf, recordedOn, extrasOf, riceSuggestion, weeklyAvgs, mealsNow, sumMac, streak, trainedOn, dietOn, suppOn, hitTop, dayModel, lastSession, disp, toKg, rerender: render };
 })();
 </script>
