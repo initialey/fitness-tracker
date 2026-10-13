@@ -2,10 +2,12 @@
 <!--
   70kg → 60kg のためのトレーニング＆食事ログ（単一ファイル・Claude Artifact 版）
   公開時に宣言する capabilities:
-    { db: { rules: [ { path: "", read: "owner", write: "owner" } ] } }
-  ・db  : 全データ（オーナーのみ読み書き）。固定プランはコード側の定数なので db には入れない
+    { db: { rules: [ { path: "", read: "owner", write: "owner" } ] }, sample: {} }
+  ・db     : 全データ（オーナーのみ読み書き）。固定プランはコード側の定数なので db には入れない
+  ・sample : メニュー外の食事を写真から推定するだけに使う。写真は送るだけで保存しない
   ・db が null のとき（ローカルで開いた・権限なし）はメモリ上で動き、「保存されません」と出す
-  フェーズ2（今回は作らない）: 写真・動画の記録、Telegram Bot からの入力
+  ・sample が使えない／写真を送れない環境では、写真のボタンを出さずプリセットと手入力だけにする
+  フェーズ2（今回は作らない）: 体の変化の写真の保存、Telegram Bot からの入力
 -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=M+PLUS+1:wght@400;500;700&display=swap">
 <style>
@@ -171,6 +173,9 @@ h2{margin:24px 0 10px;font:600 13px var(--jp);letter-spacing:.12em;color:var(--i
 .meter.full i{background:var(--ok)}
 .meter.over i{background:var(--signal)}
 .chk.ex-row{cursor:default}
+.chk.out{width:100%;text-align:left;background:transparent;border:1px solid var(--rule);border-radius:10px;padding:10px 12px;gap:4px 10px;border-bottom:1px solid var(--rule)}
+.chk.out.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 7%,transparent)}
+.chk.out .box{pointer-events:none}
 .chk.ex-row .box{border-color:var(--signal);background:var(--signal)}
 .chk .it .xbtn{background:transparent;border:0;color:var(--signal);font:500 12.5px var(--jp);padding:0 2px;text-decoration:underline;margin-left:6px}
 .txtin{width:100%;min-width:0;background:transparent;border:0;border-bottom:1.5px solid var(--rule);color:var(--ink);font:400 17px var(--jp);padding:5px 2px;outline:none;-moz-appearance:textfield}
@@ -371,6 +376,11 @@ const DB_DIAL = [5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 34, 36, 38
 const ACTIVITY = 1.3;            // 日常の活動
 const TRAIN_METS = 5.0, TRAIN_H = 0.5; // 筋トレ（記録した日だけ）
 const FAT_KCAL_PER_KG = 7200;    // 脂肪1kg ぶんの kcal
+/* メニュー外の食事のプリセット。PFC は P30%・F35%・C35%（残り）の比率で概算 */
+const EX_PRESETS = [['軽め', 600], ['普通', 900], ['がっつり', 1300]];
+const presetMacro = kcal => ({ kcal: kcal, p: r1(kcal * 0.30 / 4), f: r1(kcal * 0.35 / 9), c: r1(kcal * 0.35 / 4) });
+const EAT_OUT_MUL = 1.2;  // 外食は油・調味料の見えない分で +20%
+const PHOTO_MAX_EDGE = 1280;
 const DEFAULTS = { startDate: '', unit: 'kg', goalKg: 60, riceAdjustG: 0, plateKg: 5, soundOn: true, dbDial: '', heightCm: 170, age: 31 };
 
 /* ===== 小道具 ===== */
@@ -852,6 +862,68 @@ function reviewReport(date) {
     nextPhotoWeek: photo ? wk : wk + (4 - ((wk - 1) % 4)) };
 }
 
+/* ===== 写真から食事を推定（sample capability） =====
+ * 写真は AI に送るだけで保存しない。使えない環境ではボタンを出さない。 */
+const AI = { sample: null, images: false, accept: 'image/*', probed: false };
+const PHOTO_PROMPT = 'これは1人分の食事の写真です。写っているものと量を見積もって、栄養を推定してください。\n' +
+  '返事は次の形の JSON だけにしてください（他の文は書かないでください）:\n' +
+  '{"name":"料理名","kcal":600,"p":30,"f":25,"c":60}\n' +
+  'name は日本語の短い料理名（複数写っていれば「チキンとご飯」のようにまとめる）、' +
+  'kcal は整数、p（たんぱく質）・f（脂質）・c（炭水化物）はグラムで小数1桁まで。' +
+  '見えない油や調味料は含めず、見たままの量で見積もってください（見えない分はアプリ側で足します）。' +
+  '食べ物が写っていなければ {"name":"","kcal":0,"p":0,"f":0,"c":0} を返してください。';
+const AI_ERR = {
+  not_granted: 'AI の利用が許可されていません', sampling_disabled: 'この環境では AI が使えません',
+  not_declared: 'AI が使えません', capability_disabled: 'この画面では AI が使えません',
+  capability_removed: 'この画面では AI が使えません', images_unavailable: 'この環境では写真を送れません',
+  image_rejected: 'この写真は読めませんでした。別の写真でどうぞ', prompt_too_large: '写真が大きすぎます',
+  rate_limited: '回数の上限に達しました。少し待ってからどうぞ', session_expired: 'サインインし直してください',
+  refused: 'この写真からは推定できませんでした。手入力でどうぞ', empty_completion: '推定できませんでした。もう一度どうぞ',
+  invalid_json: '推定の答えが読めませんでした。もう一度どうぞ', upstream_error: '通信に失敗しました。もう一度どうぞ',
+  invalid_request: '写真を送れませんでした', transform_error: '写真を準備できませんでした', cancelled: ''
+};
+/** 写真を送れなくなるエラーはボタンごと引っ込める */
+const AI_GONE = ['not_granted', 'sampling_disabled', 'not_declared', 'capability_disabled', 'capability_removed', 'images_unavailable'];
+/** 長辺を縮めて送る（小さくできなければ元のまま） */
+function shrinkImage(file, maxEdge) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+      const long = Math.max(img.width, img.height), sc = long > maxEdge ? maxEdge / long : 1;
+      if (sc >= 1) { URL.revokeObjectURL(url); return res(file); }
+      try {
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        c.toBlob(b => { URL.revokeObjectURL(url); res(b || file); }, 'image/jpeg', 0.85);
+      } catch (e) { URL.revokeObjectURL(url); res(file); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej({ code: 'image_rejected', message: 'decode failed' }); };
+    img.src = url;
+  });
+}
+/** 起動時に一度だけ: AI と写真が使えるか確かめる */
+async function probeAI() {
+  if (AI.probed) return; AI.probed = true;
+  try {
+    const sp = window.claude && window.claude.use ? await window.claude.use('sample') : null;
+    if (!sp) return;
+    AI.sample = sp;
+    const lim = await sp.limits().catch(() => null);
+    AI.images = !!(lim && lim.images);
+    if (AI.images && lim.images.mediaTypes && lim.images.mediaTypes.length) AI.accept = lim.images.mediaTypes.join(',');
+    render();
+  } catch (e) { /* 使えない環境では黙ってボタンを出さない */ }
+}
+/** 写真1枚から料理名と栄養を推定する */
+async function estimateFromPhoto(file) {
+  const blob = await shrinkImage(file, PHOTO_MAX_EDGE);
+  const j = await AI.sample.json(PHOTO_PROMPT, { images: [blob], modelTier: 'default' });
+  const num = v => { const n = Number(v); return isFinite(n) && n >= 0 ? r1(n) : 0; };
+  return { name: String((j && j.name) || 'メニュー外の食事').slice(0, 40),
+    kcal: Math.round(num(j && j.kcal)), p: num(j && j.p), f: num(j && j.f), c: num(j && j.c) };
+}
+
 /* ===== 休憩タイマー =====
  * セットを記入すると自動で始まる。メイン種目（各 Day の1種目目）は2分30秒、それ以外は75秒。
  * 次のセットを記入すると、新しい記録時刻から数え直す（＝リセット）。
@@ -921,9 +993,19 @@ function paintRest() {
   restTick = setInterval(() => { const b = $('#restbar'); if (!b || b.hidden) { clearInterval(restTick); restTick = null; return; } draw(); }, 1000);
 }
 /* ===== 画面 ===== */
-const UI = { tab: 'today', date: todayYmd(), howto: {}, cardio: { type: 'jog', min: 30 } };
+const UI = { tab: 'today', date: todayYmd(), howto: {}, cardio: { type: 'jog', min: 30 },
+  ex: { open: false, out: true, src: 'manual', base: null, dirty: false, name: '', kcal: '', p: '', f: '', c: '', msg: '', busy: false } };
+/** プリセット・写真の値に「外食として+20%」を効かせて入力欄に入れる（手入力の値には足さない） */
+function exFill() {
+  const e = UI.ex, b = e.base; if (!b || e.dirty) return; // 手で直したあとは数字を触らない
+  const m = e.out && e.src !== 'manual' ? EAT_OUT_MUL : 1;
+  e.name = b.name; e.kcal = Math.round(b.kcal * m);
+  e.p = r1(b.p * m); e.f = r1(b.f * m); e.c = r1(b.c * m);
+}
 let pendingRender = false;
-const typing = () => { const a = document.activeElement; return !!(a && a.tagName === 'INPUT' && a.closest('#view')); };
+/** 数字や文字を入れている最中か（ファイル選択や非表示の input は数えない） */
+const typing = () => { const a = document.activeElement;
+  return !!(a && a.tagName === 'INPUT' && a.type !== 'file' && !a.hidden && a.closest('#view')); };
 function render() {
   // 数字を入れている最中に描き直すと入力欄からフォーカスが飛ぶので、離れるまで待つ
   if (typing()) { pendingRender = true; return; }
@@ -1003,18 +1085,36 @@ function drawToday() {
       '<span class="ttl"><span class="lb">' + esc(x.label) + '</span></span><span class="kc">' + fmtN(x.kcal) + 'kcal</span>' +
       '<span class="it">' + x.items + '　P' + r1(x.p) + ' F' + r1(x.f) + ' C' + r1(x.c) + '</span></div>'; }).join('') +
     extras.map(x => '<div class="chk ex-row"><span class="box on" aria-hidden="true">✓</span>' +
-      '<span class="ttl"><span class="lb">外</span>' + esc(x.name || 'メニュー外') + '</span><span class="kc">' + fmtN(x.kcal) + 'kcal</span>' +
+      '<span class="ttl"><span class="lb">' + (x.src === 'photo' ? '写真' : x.src === 'preset' ? '目安' : '外') + '</span>' + esc(x.name || 'メニュー外') +
+      (x.out ? '<span class="chip">外食</span>' : '') + '</span><span class="kc">' + fmtN(x.kcal) + 'kcal</span>' +
       '<span class="it">P' + r1(x.p || 0) + ' F' + r1(x.f || 0) + ' C' + r1(x.c || 0) +
       ' <button class="xbtn" data-exdel="' + esc(x.id) + '" aria-label="この記録を消す">消す</button></span></div>').join('') + '</div>';
   h += '<div class="small mute" style="margin-top:10px">調理で油を使った日は、下の「メニュー外の食事」に足してください（大さじ1/2 ＝ 約55kcal・F6）</div>';
-  h += '<button class="btn ghost" id="exOpen" style="margin-top:12px">＋ メニュー外の食事を追加</button>';
-  h += '<div id="exForm" hidden style="margin-top:12px;border-top:1px solid var(--rule);padding-top:12px">' +
-    '<label class="lb" for="exName">食品名</label><input id="exName" class="txtin" type="text" placeholder="例：ジョリビーのチキン">' +
-    '<div class="row2" style="margin-top:10px"><div><label class="lb" for="exK">kcal（必須）</label><input id="exK" class="txtin num" type="number" inputmode="decimal" step="any" min="0" placeholder="0"></div>' +
-    '<div><label class="lb" for="exP">P（任意）</label><input id="exP" class="txtin num" type="number" inputmode="decimal" step="any" min="0" placeholder="—"></div></div>' +
-    '<div class="row2" style="margin-top:10px"><div><label class="lb" for="exF">F（任意）</label><input id="exF" class="txtin num" type="number" inputmode="decimal" step="any" min="0" placeholder="—"></div>' +
-    '<div><label class="lb" for="exC">C（任意）</label><input id="exC" class="txtin num" type="number" inputmode="decimal" step="any" min="0" placeholder="—"></div></div>' +
-    '<div class="btns"><button class="btn ghost" id="exCancel">やめる</button><button class="btn" id="exAdd">合計に足す</button></div></div>';
+  { const e = UI.ex;
+    h += '<button class="btn ghost" id="exOpen"' + (e.open ? ' hidden' : '') + ' style="margin-top:12px">＋ メニュー外の食事を追加</button>';
+    h += '<div id="exForm"' + (e.open ? '' : ' hidden') + ' style="margin-top:12px;border-top:1px solid var(--rule);padding-top:12px">';
+    h += '<button class="chk out' + (e.out ? ' on' : '') + '" id="exOut" aria-pressed="' + e.out + '">' +
+      '<span class="box' + (e.out ? ' on' : '') + '">✓</span><span class="ttl">外食として +20%</span>' +
+      '<span class="it">油・調味料の見えない分。写真とプリセットの値に足します（手入力には足しません）</span></button>';
+    h += '<div class="lb" style="margin-top:12px">プリセット</div><div class="cardio">' +
+      EX_PRESETS.map(x => '<button class="cbtn' + (e.src === 'preset' && e.base && e.base.kcal === x[1] ? ' on' : '') + '" data-preset="' + x[1] + '">' +
+        esc(x[0]) + '<small>' + fmtN(x[1]) + 'kcal</small></button>').join('') + '</div>';
+    if (AI.sample && AI.images) {
+      h += '<div class="btns"><button class="btn ghost" id="exPhoto"' + (e.busy ? ' disabled' : '') + '>' +
+        (e.busy ? '推定中…' : '写真で推定する') + '</button></div>' +
+        '<input type="file" id="exFile" accept="' + esc(AI.accept) + '" capture="environment" hidden>';
+    }
+    if (e.msg) h += '<div class="small' + (e.busy ? ' mute' : '') + '" style="margin-top:8px;color:' + (e.busy ? 'var(--ink2)' : 'var(--signal)') + '">' + esc(e.msg) + '</div>';
+    h += '<div style="margin-top:12px"><label class="lb" for="exName">食品名</label>' +
+      '<input id="exName" class="txtin" type="text" placeholder="例：ジョリビーのチキン" value="' + esc(e.name) + '"></div>' +
+      '<div class="row2" style="margin-top:10px"><div><label class="lb" for="exK">kcal（必須）</label><input id="exK" class="txtin num" type="number" inputmode="decimal" step="any" min="0" placeholder="0" value="' + esc(e.kcal) + '"></div>' +
+      '<div><label class="lb" for="exP">P（任意）</label><input id="exP" class="txtin num" type="number" inputmode="decimal" step="any" min="0" placeholder="—" value="' + esc(e.p) + '"></div></div>' +
+      '<div class="row2" style="margin-top:10px"><div><label class="lb" for="exF">F（任意）</label><input id="exF" class="txtin num" type="number" inputmode="decimal" step="any" min="0" placeholder="—" value="' + esc(e.f) + '"></div>' +
+      '<div><label class="lb" for="exC">C（任意）</label><input id="exC" class="txtin num" type="number" inputmode="decimal" step="any" min="0" placeholder="—" value="' + esc(e.c) + '"></div></div>' +
+      '<div class="btns"><button class="btn ghost" id="exCancel">やめる</button><button class="btn" id="exAdd">合計に足す</button></div></div>'; }
+  // 外食を記録した日のヒント
+  if (extras.some(x => x.out)) h += '<div class="banner" style="margin-bottom:0"><b>外食した日のリカバリー</b>' +
+    '<div class="small mute" style="margin-top:4px">ご飯を1食分抜いて、タンパク質（鶏むね・サーモン・卵）は残す</div></div>';
   const bar = (v, t) => '<div class="meter' + (v > t ? ' over' : v >= t ? ' full' : '') + '"><i style="width:' + Math.min(100, t ? v / t * 100 : 0) + '%"></i></div>';
   h += '<div class="pfc">' +
     '<div><div class="v">' + fmtN(eaten.kcal) + '</div><div class="l">kcal / ' + fmtN(target.kcal) + '</div>' + bar(eaten.kcal, target.kcal) + '</div>' +
@@ -1074,17 +1174,55 @@ function bindToday(date) {
     const id = el.dataset.supp; if (supps[id]) delete supps[id]; else supps[id] = isoNow();
     store.set('log_diet', date, Object.assign({}, d, { date, supps })); }; });
   // メニュー外の食事
-  const form = $('#exForm'), open = $('#exOpen');
-  if (open) open.onclick = () => { form.hidden = false; open.hidden = true; const n = $('#exName'); if (n) n.focus(); };
-  const close = () => { form.hidden = true; open.hidden = false; ['#exName', '#exK', '#exP', '#exF', '#exC'].forEach(q => { const el = $(q); if (el) el.value = ''; }); };
-  const cx = $('#exCancel'); if (cx) cx.onclick = () => { pendingRender = false; close(); };
+  const XF = UI.ex;
+  const reset = () => { Object.assign(XF, { open: false, out: true, src: 'manual', base: null, dirty: false, name: '', kcal: '', p: '', f: '', c: '', msg: '', busy: false }); };
+  const open = $('#exOpen');
+  if (open) open.onclick = () => { XF.open = true; render(); const n = $('#exName'); if (n) n.focus(); };
+  const cx = $('#exCancel'); if (cx) cx.onclick = () => { pendingRender = false; reset(); render(); };
+  // 入力欄は下書きとして持っておく（描き直しで消えないように）
+  [['#exName', 'name'], ['#exK', 'kcal'], ['#exP', 'p'], ['#exF', 'f'], ['#exC', 'c']].forEach(([q, k]) => {
+    const el = $(q); if (!el) return;
+    el.oninput = () => { XF[k] = el.value; XF.dirty = true; }; // 出どころ（写真・プリセット）は残す
+  });
+  const ou = $('#exOut'); if (ou) ou.onclick = () => { XF.out = !XF.out; exFill(); render(); };
+  $$('[data-preset]').forEach(b => { b.onclick = () => {
+    const kcal = Number(b.dataset.preset), m = presetMacro(kcal);
+    XF.src = 'preset'; XF.dirty = false;
+    XF.base = Object.assign({ name: (EX_PRESETS.find(x => x[1] === kcal) || [''])[0] + 'の外食' }, m);
+    XF.msg = ''; exFill(); render(); }; });
+  const ph = $('#exPhoto'), fi = $('#exFile');
+  if (ph && fi) {
+    ph.onclick = () => { fi.value = ''; fi.click(); };
+    fi.onchange = async () => {
+      const f = fi.files && fi.files[0]; if (!f) return;
+      $$('#exForm input').forEach(el => el.blur()); pendingRender = false;
+      XF.busy = true; XF.msg = '写真から推定しています…（10〜30秒ほど）'; render();
+      try {
+        const got = await estimateFromPhoto(f);
+        XF.busy = false;
+        if (!(got.kcal > 0)) { XF.msg = '食べ物を見つけられませんでした。プリセットか手入力でどうぞ'; render(); return; }
+        XF.src = 'photo'; XF.base = got; XF.dirty = false;
+        XF.msg = '推定しました。おかしければ数字を直してください';
+        exFill(); render();
+      } catch (err) {
+        const code = (err && err.code) || 'upstream_error';
+        XF.busy = false; XF.base = null;
+        XF.msg = AI_ERR[code] || AI_ERR.upstream_error;
+        if (AI_GONE.indexOf(code) >= 0) { AI.images = false; XF.msg = (AI_ERR[code] || '') + '。プリセットか手入力でどうぞ'; }
+        render();
+      }
+    };
+  }
   const add = $('#exAdd'); if (add) add.onclick = () => {
-    const k = $('#exK').value.trim();
+    const k = String(XF.kcal).trim();
     if (k === '' || !(Number(k) >= 0)) return toast('kcal を入れてください');
-    const num = q => { const v = $(q).value.trim(); return v === '' ? 0 : r1(Number(v)) || 0; };
-    const row = { id: 'x' + Date.now().toString(36), name: $('#exName').value.trim() || 'メニュー外', kcal: r1(Number(k)), p: num('#exP'), f: num('#exF'), c: num('#exC'), at: isoNow() };
+    const num = v => { const t = String(v == null ? '' : v).trim(); return t === '' ? 0 : r1(Number(t)) || 0; };
+    const row = { id: 'x' + Date.now().toString(36), name: String(XF.name).trim() || 'メニュー外',
+      kcal: r1(Number(k)), p: num(XF.p), f: num(XF.f), c: num(XF.c),
+      src: XF.src, out: !!XF.out, at: isoNow() };
     $$('#exForm input').forEach(el => el.blur()); pendingRender = false;
     const d = dietDoc(date);
+    reset();
     store.set('log_diet', date, Object.assign({}, d, { date, extras: extrasOf(date).concat([row]) }))
       .then(() => toast(row.name + ' を合計に足しました'));
   };
@@ -1430,7 +1568,8 @@ render();
   try { await store.init(); } catch (e) { console.error('起動に失敗', e); ST.mode = 'mock'; }
   finally { if (ST.mode === 'loading') ST.mode = 'mock'; render(); }
 })();
+probeAI();
 // テスト用フック（純粋関数だけ）
-window.__log60 = { ST, EX, DAYS, ACTIVITY, TRAIN_METS, TRAIN_H, FAT_KCAL_PER_KG, bmrOf, heightCm, ageOf, intakeOf, balanceOf, balanceDays, balanceTotal, DB_DIAL, dbDial, dialStep, dialFloor, stepUpBy, stepDownBy, cutBy, stepText, CARDIO, CARDIO_MIN, RICE_KCAL_PER_G, blocksOf, splitOf, cardioOf, cardioKcal, cardioOn, cardioStreak, weightAt, burnKcal, cardioRice, waistPoints, waistThisWeek, reviewReport, isReviewDay, nextReviewDay, MAIN_IDS, HOWTO, HOWTO_COMMON, FEELS, nextSetSug, restState, paintRest, REST_MAIN_SEC, REST_OTHER_SEC, prescOn, basePresc, progression, sessionOf, rirOf, stepOf, plateKg, weekNoOf, isDeload, isDeloadCycle, nextDeloadCycle, setsFor, dayNoFor, cycleNoFor, assignOf, recordedOn, extrasOf, riceSuggestion, weeklyAvgs, mealsNow, sumMac, streak, trainedOn, dietOn, suppOn, hitTop, dayModel, lastSession, disp, toKg, rerender: render };
+window.__log60 = { ST, EX, DAYS, AI, EX_PRESETS, presetMacro, EAT_OUT_MUL, PHOTO_PROMPT, AI_ERR, AI_GONE, shrinkImage, estimateFromPhoto, probeAI, exFill, UI, ACTIVITY, TRAIN_METS, TRAIN_H, FAT_KCAL_PER_KG, bmrOf, heightCm, ageOf, intakeOf, balanceOf, balanceDays, balanceTotal, DB_DIAL, dbDial, dialStep, dialFloor, stepUpBy, stepDownBy, cutBy, stepText, CARDIO, CARDIO_MIN, RICE_KCAL_PER_G, blocksOf, splitOf, cardioOf, cardioKcal, cardioOn, cardioStreak, weightAt, burnKcal, cardioRice, waistPoints, waistThisWeek, reviewReport, isReviewDay, nextReviewDay, MAIN_IDS, HOWTO, HOWTO_COMMON, FEELS, nextSetSug, restState, paintRest, REST_MAIN_SEC, REST_OTHER_SEC, prescOn, basePresc, progression, sessionOf, rirOf, stepOf, plateKg, weekNoOf, isDeload, isDeloadCycle, nextDeloadCycle, setsFor, dayNoFor, cycleNoFor, assignOf, recordedOn, extrasOf, riceSuggestion, weeklyAvgs, mealsNow, sumMac, streak, trainedOn, dietOn, suppOn, hitTop, dayModel, lastSession, disp, toKg, rerender: render };
 })();
 </script>

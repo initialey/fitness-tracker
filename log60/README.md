@@ -9,11 +9,15 @@
 ## 公開時の capabilities
 
 ```json
-{ "db": { "rules": [ { "path": "", "read": "owner", "write": "owner" } ] } }
+{ "db": { "rules": [ { "path": "", "read": "owner", "write": "owner" } ] }, "sample": {} }
 ```
 
-`db` だけ。写真・動画（`assets`）と AI 推定（`sample`）はフェーズ2なので宣言しない。
+- `db` — 全データ。オーナーだけが読み書きできる（`interact` では読めないことを確認済み）
+- `sample` — **メニュー外の食事を写真から推定するためだけ**に使う。写真は送るだけで保存しない
+  （保存用の `assets` は宣言していない）
+
 db が null のとき（ローカルで開いた・権限なし）はメモリ上で動き、「保存されません」と出す。
+`sample` が使えない／写真を送れない環境では、写真のボタンを出さずプリセットと手入力だけにする。
 
 ## データ
 
@@ -35,7 +39,7 @@ db が null のとき（ローカルで開いた・権限なし）はメモリ�
 | `settings` | `main` | startDate（週平均と疲労抜き週の起点）, unit(kg/lb), goalKg(60), riceAdjustG（ご飯の増減 g）, plateKg, dbDial（DBの目盛り）, heightCm(170), age(31), soundOn |
 | `log_workout` | `YYYY-MM-DD` | sets{ "種目id_セット番号": {exerciseId, setNo, weightKg, reps, feel, loggedAt} }（`feel` は `easy`/`ok`/`hard`）、rir{ 種目id: 0〜5 }（旧データ。読むだけ） |
 | `log_weight` | `YYYY-MM-DD` | weightKg, bodyFatPct（任意・空可）, waistCm（週1・へその高さ）, loggedAt |
-| `log_diet` | `YYYY-MM-DD` | meals{ 食事id: 記録時刻 }, supps{ サプリid: 記録時刻 }, extras[{id, name, kcal, p, f, c, at}]（メニュー外の食事） |
+| `log_diet` | `YYYY-MM-DD` | meals{ 食事id: 記録時刻 }, supps{ サプリid: 記録時刻 }, extras[{id, name, kcal, p, f, c, src, out, at}]（メニュー外の食事。`src` は `photo`/`preset`/`manual`、`out` は外食マーク） |
 | `log_cardio` | `YYYY-MM-DD` | items[{id, type, min, mets, weightKg, kcal, at}]（消費 kcal は記録した時点の体重で確定させる） |
 
 `log_workout[date].split` は「その日だけ SS を通常セットに分ける」指定（`{A: true}`）。
@@ -81,6 +85,23 @@ DB の重量提案は必ず目盛りに丸める（`stepUpBy` / `stepDownBy` / `
 
 - その日の有酸素が**60分以上**なら「消費の半分をご飯で補う：+ご飯◯g」を出す（ご飯1g = 1.56kcal、5g 刻み）
 - 食事カードの下に**その日のカロリー収支**を出す（下記）
+
+## メニュー外の食事（3つの入れ方）
+
+| 入れ方 | 中身 |
+|---|---|
+| 写真で推定 | 写真を長辺1280pxに縮めて `sample.json()` に送り、`{name, kcal, p, f, c}` で受け取る。入力欄に入るので**保存前に直せる** |
+| プリセット | 軽め600 / 普通900 / がっつり1,300kcal。PFC は **P30%・F35%・C35%（残り）** の比率で概算（900kcal なら P67.5 F35 C78.8） |
+| 手入力 | チェーン店の公開値などをそのまま |
+
+- **「外食として +20%」**（初期値オン）は、写真とプリセットの値に ×1.2 して入力欄に入れる。
+  **手入力の値には足さない**。チェックを切り替えると元の値から入れ直す
+- 数字を手で直したあとは、チェックを切り替えても値を上書きしない（`dirty` フラグ）
+- 出どころは `src` に残るので、手で直しても「写真」バッジは消えない
+- 写真が食べ物でなければ（`kcal` が0）入力欄は埋めず、「プリセットか手入力でどうぞ」と出す
+- エラーは code ごとに日本語にする。`not_granted` / `images_unavailable` など**使えないことが確定するエラー**では
+  写真ボタンを引っ込める（`AI_GONE`）
+- 外食（`out`）を記録した日は「ご飯を1食分抜いて、タンパク質（鶏むね・サーモン・卵）は残す」と出す
 
 ## カロリー収支
 
