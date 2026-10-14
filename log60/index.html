@@ -517,6 +517,16 @@ function sumMac(list) { const t = { kcal: 0, p: 0, f: 0, c: 0 }; list.forEach(m 
 const dietDoc = date => ST.log_diet[date] || { date, meals: {}, supps: {}, extras: [] };
 /** メニュー外に食べたもの（その日の合計に足す） */
 const extrasOf = date => (dietDoc(date).extras || []).filter(x => x && Number(x.kcal) >= 0);
+/** これまでに記録したメニュー外の食事（名前ごとに最新の値・新しい順）。一度足したものを次から選ぶだけで足せるようにする */
+function pastExtras() {
+  const m = new Map();
+  Object.keys(ST.log_diet).filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort().forEach(d => extrasOf(d).forEach(x => {
+    const name = String(x.name || '').trim(); if (!name) return;
+    m.delete(name);
+    m.set(name, { name, kcal: r1(Number(x.kcal) || 0), p: r1(Number(x.p) || 0), f: r1(Number(x.f) || 0), c: r1(Number(x.c) || 0), src: x.src || '', out: !!x.out });
+  }));
+  return Array.from(m.values()).reverse();
+}
 const woDoc = date => ST.log_workout[date] || { date, sets: {} };
 /** その日に割り当てられている種目の処方（セット数・レンジ）。曜日でレンジが違う種目があるので日付から引く */
 const planOf = date => DAYS[dayNoFor(date)] || DAYS[7];
@@ -1085,7 +1095,7 @@ function drawToday() {
       '<span class="ttl"><span class="lb">' + esc(x.label) + '</span></span><span class="kc">' + fmtN(x.kcal) + 'kcal</span>' +
       '<span class="it">' + x.items + '　P' + r1(x.p) + ' F' + r1(x.f) + ' C' + r1(x.c) + '</span></div>'; }).join('') +
     extras.map(x => '<div class="chk ex-row"><span class="box on" aria-hidden="true">✓</span>' +
-      '<span class="ttl"><span class="lb">' + (x.src === 'photo' ? '写真' : x.src === 'preset' ? '目安' : '外') + '</span>' + esc(x.name || 'メニュー外') +
+      '<span class="ttl"><span class="lb">' + (x.src === 'photo' ? '写真' : x.src === 'preset' ? '目安' : x.src === 'history' ? '前回' : '外') + '</span>' + esc(x.name || 'メニュー外') +
       (x.out ? '<span class="chip">外食</span>' : '') + '</span><span class="kc">' + fmtN(x.kcal) + 'kcal</span>' +
       '<span class="it">P' + r1(x.p || 0) + ' F' + r1(x.f || 0) + ' C' + r1(x.c || 0) +
       ' <button class="xbtn" data-exdel="' + esc(x.id) + '" aria-label="この記録を消す">消す</button></span></div>').join('') + '</div>';
@@ -1096,6 +1106,10 @@ function drawToday() {
     h += '<button class="chk out' + (e.out ? ' on' : '') + '" id="exOut" aria-pressed="' + e.out + '">' +
       '<span class="box' + (e.out ? ' on' : '') + '">✓</span><span class="ttl">外食として +20%</span>' +
       '<span class="it">油・調味料の見えない分。写真とプリセットの値に足します（手入力には足しません）</span></button>';
+    const pasts = pastExtras();
+    if (pasts.length) h += '<label class="lb" for="exPast" style="display:block;margin-top:12px">前に足したもの（選ぶとそのまま合計に足します）</label>' +
+      '<select id="exPast" class="txtin"><option value="">選んでください（' + pasts.length + '件）</option>' +
+      pasts.map((x, i) => '<option value="' + i + '">' + esc(x.name) + '　' + fmtN(x.kcal) + 'kcal（P' + x.p + ' F' + x.f + ' C' + x.c + '）</option>').join('') + '</select>';
     h += '<div class="lb" style="margin-top:12px">プリセット</div><div class="cardio">' +
       EX_PRESETS.map(x => '<button class="cbtn' + (e.src === 'preset' && e.base && e.base.kcal === x[1] ? ' on' : '') + '" data-preset="' + x[1] + '">' +
         esc(x[0]) + '<small>' + fmtN(x[1]) + 'kcal</small></button>').join('') + '</div>';
@@ -1213,6 +1227,15 @@ function bindToday(date) {
       }
     };
   }
+  const past = $('#exPast'); if (past) past.onchange = () => {
+    const x = pastExtras()[Number(past.value)]; if (past.value === '' || !x) return;
+    const row = Object.assign({ id: 'x' + Date.now().toString(36) }, x, { src: 'history', at: isoNow() });
+    $$('#exForm input').forEach(el => el.blur()); pendingRender = false;
+    const d = dietDoc(date);
+    reset();
+    store.set('log_diet', date, Object.assign({}, d, { date, extras: extrasOf(date).concat([row]) }))
+      .then(() => toast(row.name + '（' + fmtN(row.kcal) + 'kcal）を合計に足しました'));
+  };
   const add = $('#exAdd'); if (add) add.onclick = () => {
     const k = String(XF.kcal).trim();
     if (k === '' || !(Number(k) >= 0)) return toast('kcal を入れてください');
@@ -1570,6 +1593,6 @@ render();
 })();
 probeAI();
 // テスト用フック（純粋関数だけ）
-window.__log60 = { ST, EX, DAYS, AI, EX_PRESETS, presetMacro, EAT_OUT_MUL, PHOTO_PROMPT, AI_ERR, AI_GONE, shrinkImage, estimateFromPhoto, probeAI, exFill, UI, ACTIVITY, TRAIN_METS, TRAIN_H, FAT_KCAL_PER_KG, bmrOf, heightCm, ageOf, intakeOf, balanceOf, balanceDays, balanceTotal, DB_DIAL, dbDial, dialStep, dialFloor, stepUpBy, stepDownBy, cutBy, stepText, CARDIO, CARDIO_MIN, RICE_KCAL_PER_G, blocksOf, splitOf, cardioOf, cardioKcal, cardioOn, cardioStreak, weightAt, burnKcal, cardioRice, waistPoints, waistThisWeek, reviewReport, isReviewDay, nextReviewDay, MAIN_IDS, HOWTO, HOWTO_COMMON, FEELS, nextSetSug, restState, paintRest, REST_MAIN_SEC, REST_OTHER_SEC, prescOn, basePresc, progression, sessionOf, rirOf, stepOf, plateKg, weekNoOf, isDeload, isDeloadCycle, nextDeloadCycle, setsFor, dayNoFor, cycleNoFor, assignOf, recordedOn, extrasOf, riceSuggestion, weeklyAvgs, mealsNow, sumMac, streak, trainedOn, dietOn, suppOn, hitTop, dayModel, lastSession, disp, toKg, rerender: render };
+window.__log60 = { ST, EX, DAYS, AI, pastExtras, EX_PRESETS, presetMacro, EAT_OUT_MUL, PHOTO_PROMPT, AI_ERR, AI_GONE, shrinkImage, estimateFromPhoto, probeAI, exFill, UI, ACTIVITY, TRAIN_METS, TRAIN_H, FAT_KCAL_PER_KG, bmrOf, heightCm, ageOf, intakeOf, balanceOf, balanceDays, balanceTotal, DB_DIAL, dbDial, dialStep, dialFloor, stepUpBy, stepDownBy, cutBy, stepText, CARDIO, CARDIO_MIN, RICE_KCAL_PER_G, blocksOf, splitOf, cardioOf, cardioKcal, cardioOn, cardioStreak, weightAt, burnKcal, cardioRice, waistPoints, waistThisWeek, reviewReport, isReviewDay, nextReviewDay, MAIN_IDS, HOWTO, HOWTO_COMMON, FEELS, nextSetSug, restState, paintRest, REST_MAIN_SEC, REST_OTHER_SEC, prescOn, basePresc, progression, sessionOf, rirOf, stepOf, plateKg, weekNoOf, isDeload, isDeloadCycle, nextDeloadCycle, setsFor, dayNoFor, cycleNoFor, assignOf, recordedOn, extrasOf, riceSuggestion, weeklyAvgs, mealsNow, sumMac, streak, trainedOn, dietOn, suppOn, hitTop, dayModel, lastSession, disp, toKg, rerender: render };
 })();
 </script>
