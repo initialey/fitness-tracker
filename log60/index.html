@@ -281,7 +281,7 @@ const EX = {
   cable_pushdown: ['ケーブルプレスダウン', 'stack', 25],
   db_bench: ['DBベンチプレス', 'db', 21],
   lat_pulldown: ['ラットプルダウン', 'stack', 45],
-  dip: ['ディップ', 'bw', 0],
+  cable_crossover: ['ケーブルクロスオーバー', 'stack', 10],
   db_row: ['DBロー', 'db', 23],
   bb_rdl: ['バーベルRDL', 'bar', 70],
   db_leg_curl: ['DBレッグカール', 'db', 7],
@@ -293,7 +293,7 @@ const EX = {
   hammer_curl: ['ハンマーカール', 'db', 9]
 };
 // DBオーバーヘッドエクステンションは両手で1個を持つので、初期重量もその1個の重さ
-const EX_NOTE = { db_oh_ext: '両手で1個', db_leg_curl: '両足で1個', db_bulgarian: '片手', db_ohp: '片手', db_side_raise: '片手', db_bench: '片手', db_row: '片手', incline_db_curl: '片手', db_rear_delt_raise: '片手', hammer_curl: '片手', cable_fly: '片側', cable_rear_fly: '片側', cable_side_raise: '片側' };
+const EX_NOTE = { db_oh_ext: '両手で1個', db_leg_curl: '両足で1個', db_bulgarian: '片手', db_ohp: '片手', db_side_raise: '片手', db_bench: '片手', db_row: '片手', incline_db_curl: '片手', db_rear_delt_raise: '片手', hammer_curl: '片手', cable_fly: '片側', cable_rear_fly: '片側', cable_side_raise: '片側', cable_crossover: '片側' };
 // 種目のやり方（種目名をタップすると出る）
 const HOWTO_COMMON = '下ろす2秒・上げる1秒、反動なし。メイン種目の前に軽い重量で1〜2セット';
 const HOWTO = {
@@ -312,7 +312,7 @@ const HOWTO = {
   cable_pushdown: '高い滑車。肘を脇に固定し、腕を伸ばし切る',
   db_bench: 'フラット。肩甲骨を寄せ、DBを胸の横まで下ろす。肘は体から45〜60度',
   lat_pulldown: '肩幅より広め。胸を張り、肘を下に引く意識で鎖骨まで引く',
-  dip: '上体をやや前傾。肩が肘の高さまで下ろす。肩が痛ければ浅めに',
+  cable_crossover: '滑車を一番上に。左右のDハンドルを持って一歩前に出て、やや前傾。肘を軽く曲げたまま、両手をおへその前で合わせるように斜め下へ引く',
   db_row: '片手片膝をベンチにつき、背中はまっすぐ。DBを腰の方へ引く',
   bb_rdl: '膝は軽く曲げて固定。お尻を後ろに引き、バーを太ももに沿わせて膝下まで。背中は丸めない',
   db_leg_curl: 'ベンチにうつ伏せ、膝から先をベンチの外に出す。ダンベル1個を両足の土踏まずで縦に挟み、膝を曲げてお尻へ寄せ、ゆっくり戻す',
@@ -337,7 +337,7 @@ const DAYS = {
     ['db_side_raise', 3, 12, 15, 'A'], ['ez_curl', 3, 10, 12, 'A'],
     ['db_rear_delt_raise', 3, 12, 15, 'B'], ['cable_pushdown', 3, 10, 12, 'B']] },
   4: { name: '上半身C', parts: '胸・背中', ex: [['db_bench', 3, 8, 12, ''], ['lat_pulldown', 3, 10, 12, ''],
-    ['dip', 3, 10, 12, 'A'], ['db_row', 3, 10, 12, 'A']] },
+    ['cable_crossover', 3, 10, 12, 'A'], ['db_row', 3, 10, 12, 'A']] },
   5: { name: '下半身B', parts: '脚（もも裏）・腹', ex: [['bb_rdl', 3, 6, 8, ''], ['db_leg_curl', 3, 10, 12, ''],
     ['hanging_leg_raise', 3, 10, 15, 'A'], ['smith_calf', 3, 10, 15, 'A']] },
   6: { name: '上半身D', parts: '肩・腕', ex: [
